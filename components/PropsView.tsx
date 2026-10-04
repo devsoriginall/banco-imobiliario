@@ -4,7 +4,6 @@ import { COMPANY_IDX, GROUPS, SHARE_PRICE, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
   bankShares,
-  buildBlock,
   canMortgage,
   canSellHouse,
   canUnmortgage,
@@ -55,14 +54,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
               const pr = state.props[i];
               const h = houses(state, i);
               const acts: React.ReactNode[] = [];
-              const block = pr?.owner === me ? buildBlock(state, i, me) : null;
               if (pr?.owner === me) {
-                if (h < 5)
-                  acts.push(
-                    <button key="b" className="btn small" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
-                      {h === 4 ? 'Hotel' : 'Casa'} {money(s.build)}
-                    </button>,
-                  );
                 if (canSellHouse(state, i, me))
                   acts.push(
                     <button key="s" className="btn small" onClick={() => ui.runWithReceipt({ type: 'sellHouse', idx: i })}>
@@ -101,9 +93,9 @@ export function PropsView({ ui }: { ui: GameUi }) {
                       {pr?.mortgaged && <span className="pill warn">Hipotecado</span>}
                       {h > 0 && <span className="pill ok">{h === 5 ? 'Hotel' : `${h} casa${h > 1 ? 's' : ''}`}</span>}
                     </div>
-                    {block && block !== 'Já tem hotel' && (
-                      <span className="build-why" data-testid={`build-why-${i}`}>
-                        Sem construir agora: {block}
+                    {pr?.owner === me && h < 5 && (
+                      <span className="build-hint" data-testid={`build-hint-${i}`}>
+                        Para construir, caia no imóvel
                       </span>
                     )}
                   </div>
@@ -134,8 +126,8 @@ export function PropsView({ ui }: { ui: GameUi }) {
         </button>
       </div>
       <div className="banner info">
-        Construir: em qualquer imóvel seu sem hipoteca, na sua vez, uma construção por rodada e não no imóvel comprado nesta rodada; hotel depois de 4 casas. Tirar hipoteca também só na sua vez. Vender casa e
-        hipotecar valem a qualquer momento.
+        Construir: só no imóvel seu onde você parou, na tela da Jogada; sem hipoteca, uma construção por vez e não no imóvel comprado nesta rodada; hotel depois de 4 casas. Tirar hipoteca só na sua vez. Vender
+        casa e hipotecar valem a qualquer momento.
       </div>
       {groups.length === 0 && comps.length === 0 && (
         <div className="card">

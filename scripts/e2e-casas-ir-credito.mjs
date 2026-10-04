@@ -140,11 +140,38 @@ const ir = { anaCarteira: await wallet(ana), renda: await text(ana.getByTestId('
 console.log('Depois do IR:', JSON.stringify(ir));
 expectEq(ir.anaCarteira, '$ 25.171', 'carteira depois do pró-labore e do IR'); // 23.784 + 2.000 − 613
 expectEq(ir.renda, 'Renda no ano 2: $ 0', 'renda do novo ano');
+
+// 6. Construção só no imóvel onde parou: Ana tira dupla, cai na própria 9 de Julho e amplia pelo "site da imobiliária"
+await ana.getByRole('button', { name: 'Tirei dupla: jogar de novo' }).click();
+await ana.locator('[data-space="1"]').click();
+const offer = ana.getByTestId('build-offer');
+await offer.waitFor();
+const nextRent = await text(ana.getByTestId('build-next-rent'));
+console.log('Aluguel com 1 casa (Alto padrão):', nextRent);
+expectEq(nextRent, '$ 420', 'aluguel com uma casa');
+await noToasts(ana);
+await ana.evaluate(() => document.querySelector('[data-testid="house-owned"]').scrollIntoView({ block: 'start' }));
+await ana.waitForTimeout(200);
+await shot(ana, 'casas-5-construir.png');
+await ana.getByRole('button', { name: /Construir casa · \$\s500/ }).click();
+await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
+await ana.getByText('Transação efetuada').waitFor();
+await ana.getByRole('button', { name: 'Fechar' }).click();
+const built = { why: await text(ana.getByTestId('build-why')), carteira: await wallet(ana) };
+console.log('Depois de construir:', JSON.stringify(built));
+expectEq(built.why, 'Sem construir agora: você já construiu nesta rodada.', 'motivo depois de construir');
+expectEq(built.carteira, '$ 24.671', 'carteira depois de construir');
+if (!(await ana.getByTestId('rent-table').textContent()).includes('1 casa · atual')) fail('aluguel atual com 1 casa');
+await ana.getByRole('tab', { name: /Imóveis/ }).click();
+expectEq(await ana.getByRole('button', { name: /^(Casa|Hotel) \$/ }).count(), 0, 'botão de construir em Imóveis');
+expectEq(await text(ana.getByTestId('build-hint-1')), 'Para construir, caia no imóvel', 'dica em Imóveis');
+await shot(ana, 'casas-6-imoveis-sem-construir.png');
+
 await ana.getByRole('tab', { name: /Extrato/ }).click();
 await ana.getByTestId('income-box').waitFor();
 await shot(ana, 'ir-3-extrato.png');
 
-// 6. Banco: taxa da rodada e score (500 + 20 por declarar o IR)
+// 7. Banco: taxa da rodada e score (500 + 20 por declarar o IR)
 await ana.getByRole('tab', { name: /Banco/ }).click();
 const bank = {
   taxa: await text(ana.getByTestId('bank-rate')),
@@ -165,7 +192,7 @@ await ana.getByTestId('loan-card').scrollIntoViewIfNeeded();
 await ana.waitForTimeout(200);
 await shot(ana, 'credito-2-emprestimo.png');
 
-// 7. Placar no celular do Beto mostra o score de cada um
+// 8. Placar no celular do Beto mostra o score de cada um
 await front(beto);
 await noToasts(beto);
 await beto.getByRole('tab', { name: /Placar/ }).click();

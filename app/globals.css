@@ -237,3 +237,11 @@ a{color:inherit}
 .credit-rules summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px;display:flex;align-items:center}
 .ir-head{display:flex;flex-direction:column;gap:4px}
 .receipt-top.ir-passed{background:var(--warn-soft);color:var(--warn)}
+.build-offer{display:flex;flex-direction:column;gap:10px;border:1.5px solid var(--accent);border-radius:14px;padding:12px;background:var(--accent-soft)}
+.build-rents{display:flex;align-items:center;gap:12px}
+.build-rents>div{display:flex;flex-direction:column;flex:1;background:var(--surface);border-radius:12px;padding:8px 10px}
+.build-rents span{font-size:12px;color:var(--muted)}
+.build-rents b{font-family:var(--display);font-size:18px}
+.build-rents .arrow{color:var(--accent);font-weight:700;flex:0;font-size:18px}
+.build-why{font-size:13px;color:var(--warn);font-weight:600}
+.li .main span.build-hint{color:var(--muted);font-style:italic}

@@ -242,26 +242,51 @@ describe('hipoteca', () => {
 });
 
 describe('construção (regra da casa)', () => {
-  it('constrói em qualquer imóvel seu, sem precisar do grupo completo', () => {
-    const st = act(give(game(), 'ana', [NOVE_JULHO]), 'ana', { type: 'build', idx: NOVE_JULHO });
+  /** Ana para no imóvel `i` (atalho: só marca a casa onde parou). */
+  const on = (st: GameState, i: number) => {
+    const s = structuredClone(st);
+    s.turnInfo = { ...s.turnInfo, landed: i, resolved: true };
+    s.players[s.turn].pos = i;
+    return s;
+  };
+
+  it('constrói no imóvel seu onde parou, sem precisar do grupo completo', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO]);
+    st = act(st, 'ana', { type: 'land', idx: NOVE_JULHO });
+    expect(st.turnInfo.resolved).toBe(true);
+    st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO });
     expect(st.props[NOVE_JULHO].houses).toBe(1);
     expect(bal(st, 'ana')).toBe(24500);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 500, kind: 'build' });
   });
 
-  it('uma construção por rodada no total, em todos os imóveis', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO, PAULISTA_IDX]);
+  it('não constrói em outro imóvel seu, nem antes de escolher a casa', () => {
+    const st = give(game(), 'ana', [NOVE_JULHO, PAULISTA_IDX]);
+    expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Só no imóvel onde você parou');
+    const landed = on(st, NOVE_JULHO);
+    expect(canBuild(landed, NOVE_JULHO, 'ana')).toBe(true);
+    expect(buildBlock(landed, PAULISTA_IDX, 'ana')).toBe('Só no imóvel onde você parou');
+    expect(() => act(landed, 'ana', { type: 'build', idx: PAULISTA_IDX })).toThrow(/só no imóvel onde você parou/);
+  });
+
+  it('uma construção por vez (por rodada, mesmo com dupla)', () => {
+    let st = on(give(game(), 'ana', [NOVE_JULHO, PAULISTA_IDX]), NOVE_JULHO);
     st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO });
     expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Já construiu nesta rodada');
+    expect(() => act(st, 'ana', { type: 'build', idx: NOVE_JULHO })).toThrow(/já construiu nesta rodada/);
+    // tirar dupla e cair em outro imóvel seu não libera outra construção
+    st = act(st, 'ana', { type: 'endTurn', again: true });
+    st = act(st, 'ana', { type: 'land', idx: PAULISTA_IDX });
     expect(buildBlock(st, PAULISTA_IDX, 'ana')).toBe('Já construiu nesta rodada');
-    expect(() => act(st, 'ana', { type: 'build', idx: PAULISTA_IDX })).toThrow(/já construiu nesta rodada/);
-    // tirar dupla e jogar de novo não libera outra construção
-    st = act(act(st, 'ana', { type: 'land', idx: 20 }), 'ana', { type: 'endTurn', again: true });
-    expect(canBuild(st, PAULISTA_IDX, 'ana')).toBe(false);
-    // na rodada seguinte pode de novo
-    st = act(act(st, 'ana', { type: 'land', idx: 20 }), 'ana', { type: 'endTurn', again: false });
+    // na rodada seguinte, caindo nele, pode de novo
+    st = act(st, 'ana', { type: 'endTurn', again: false });
     st = act(act(st, 'beto', { type: 'land', idx: 20 }), 'beto', { type: 'endTurn', again: false });
     expect(st.round).toBe(2);
+    st = act(act(st, 'ana', { type: 'land', idx: 20 }), 'ana', { type: 'endTurn', again: true });
+    expect(st.players[0].pos).toBe(20);
+    st = act(st, 'ana', { type: 'land', idx: 10 });
+    st = act(st, 'ana', { type: 'endTurn', again: true });
+    st = act(st, 'ana', { type: 'land', idx: PAULISTA_IDX });
     st = act(st, 'ana', { type: 'build', idx: PAULISTA_IDX });
     expect(st.props[PAULISTA_IDX].houses).toBe(1);
   });
@@ -281,17 +306,17 @@ describe('construção (regra da casa)', () => {
     st = act(st, 'beto', { type: 'proposeTrade', to: 'ana', give: { money: 0, props: [NOVE_JULHO], shares: {} }, get: { money: 100, props: [], shares: {} } });
     st = act(st, 'ana', { type: 'acceptTrade', id: st.trades![0].id });
     expect(st.props[NOVE_JULHO].round).toBe(3);
-    expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Comprado nesta rodada');
+    expect(buildBlock(on(st, NOVE_JULHO), NOVE_JULHO, 'ana')).toBe('Comprado nesta rodada');
   });
 
   it('hotel depois de 4 casas no mesmo imóvel; hipotecado e fora da vez não', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO], 4);
+    let st = on(give(game(), 'ana', [NOVE_JULHO], 4), NOVE_JULHO);
     st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO });
     expect(st.props[NOVE_JULHO].houses).toBe(5);
     expect(st.tx[0].reason).toMatch(/^Hotel/);
     st.players[0].builtRound = 0;
     expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Já tem hotel');
-    const m = give(game(), 'ana', [NOVE_JULHO]);
+    const m = on(give(game(), 'ana', [NOVE_JULHO]), NOVE_JULHO);
     m.props[NOVE_JULHO].mortgaged = true;
     expect(buildBlock(m, NOVE_JULHO, 'ana')).toBe('Hipotecado');
     m.props[NOVE_JULHO].mortgaged = false;

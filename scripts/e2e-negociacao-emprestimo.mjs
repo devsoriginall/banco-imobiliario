@@ -126,12 +126,13 @@ expectEq(t.anaVeBeto, '$ 24.750', 'Beto no celular da Ana');
 for (const k of ['noveJulhoNaAna', 'noveJulhoNoBeto']) expectEq(t[k], 'Beto', k);
 for (const k of ['brasilNaAna', 'brasilNoBeto']) expectEq(t[k], 'Ana', k);
 
-// Regra da casa: imóvel recebido na negociação conta como adquirido nesta rodada
+// Regra da casa: em Imóveis não se constrói (só caindo no imóvel, na tela da Jogada)
 await front(ana);
 await ana.getByRole('tab', { name: /Imóveis/ }).click();
-const why = norm(await ana.getByTestId('build-why-2').textContent());
-console.log('Construção na Av. Brasil:', why);
-expectEq(why, 'Sem construir agora: Comprado nesta rodada', 'motivo de não construir');
+const hint = norm(await ana.getByTestId('build-hint-2').textContent());
+console.log('Construção na Av. Brasil:', hint);
+expectEq(hint, 'Para construir, caia no imóvel', 'dica de construção em Imóveis');
+expectEq(await ana.getByRole('button', { name: /^(Casa|Hotel) \$/ }).count(), 0, 'botão de construir em Imóveis');
 
 // 7. Ana pega $ 2.000 emprestado
 await front(ana);

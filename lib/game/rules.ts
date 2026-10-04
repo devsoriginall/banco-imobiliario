@@ -305,8 +305,9 @@ const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st
 
 /**
  * Por que não dá para construir neste imóvel agora (null = pode).
- * Regra da casa: qualquer imóvel seu, sem hipoteca, na sua vez; uma construção por rodada no total;
- * não no imóvel adquirido nesta rodada; hotel depois de 4 casas no mesmo imóvel. Não precisa do grupo completo.
+ * Regra da casa: só no imóvel seu onde você parou nesta jogada, sem hipoteca, na sua vez; uma construção por
+ * vez (por rodada, mesmo tirando dupla); não no imóvel adquirido nesta rodada; hotel depois de 4 casas no mesmo
+ * imóvel. Não precisa do grupo completo.
  */
 export function buildBlock(st: GameState, i: number, actor: string): string | null {
   const s = SPACES[i];
@@ -315,6 +316,7 @@ export function buildBlock(st: GameState, i: number, actor: string): string | nu
   if (houses(st, i) >= 5) return 'Já tem hotel';
   if (pr.mortgaged) return 'Hipotecado';
   if (!isMyTurn(st, actor)) return 'Só na sua vez';
+  if (st.turnInfo.landed !== i) return 'Só no imóvel onde você parou';
   if (findPlayer(st, actor)?.builtRound === st.round) return 'Já construiu nesta rodada';
   if (pr.round === st.round) return 'Comprado nesta rodada';
   return null;

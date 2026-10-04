@@ -6,6 +6,7 @@ import { houseListing, listingFacts } from '@/lib/game/listings';
 import {
   bankShares,
   boughtShareThisRound,
+  buildBlock,
   controller,
   currentPlayer,
   feeTotal,
@@ -357,7 +358,7 @@ function LandedView({ ui }: { ui: GameUi }) {
           </>
         );
       else action = <div className="banner info">{who} não comprou. Continua à venda.</div>;
-    } else if (owner === p.id) action = <div className="banner info">Este imóvel já é de {mine ? 'você' : p.name}.</div>;
+    } else if (owner === p.id) action = mine ? <BuildOffer ui={ui} i={i} /> : <div className="banner info">Este imóvel já é de {p.name}.</div>;
     else {
       const r = rentOf(state, i);
       if (r === 0) action = <div className="banner info">Imóvel hipotecado: não há aluguel a pagar.</div>;
@@ -619,6 +620,47 @@ function LandedView({ ui }: { ui: GameUi }) {
             </button>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** "Site da imobiliária": no imóvel seu onde você parou, ampliar com mais uma casa (ou o hotel). */
+function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
+  const { state, me } = ui;
+  const s = SPACES[i];
+  if (s.type !== 'street') return null;
+  const h = state.props[i]?.houses || 0;
+  const tier = tierOf(state, i);
+  if (h >= 5) return <div className="banner info">Seu imóvel já tem hotel: está no máximo. Aluguel de {money(rentOf(state, i))}.</div>;
+  const block = buildBlock(state, i, me);
+  const rents = tierRents(state, i, tier);
+  const what = h === 4 ? 'hotel' : 'casa';
+  return (
+    <div className="build-offer" data-testid="build-offer">
+      <span className="label">Ampliar seu imóvel · casa {tierName(tier)}</span>
+      <div className="build-rents">
+        <div>
+          <span>Aluguel agora</span>
+          <b className="num">{money(rents[h])}</b>
+        </div>
+        <span className="arrow" aria-hidden="true">
+          →
+        </span>
+        <div>
+          <span>Com {h === 4 ? 'hotel' : h === 0 ? '1 casa' : `${h + 1} casas`}</span>
+          <b className="num" data-testid="build-next-rent">
+            {money(rents[h + 1])}
+          </b>
+        </div>
+      </div>
+      <button className="btn primary" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
+        Construir {what} · {money(s.build)}
+      </button>
+      {block && (
+        <span className="build-why" data-testid="build-why">
+          Sem construir agora: {block === 'Já construiu nesta rodada' ? 'você já construiu nesta rodada' : block.toLowerCase()}.
+        </span>
       )}
     </div>
   );
