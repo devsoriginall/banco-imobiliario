@@ -34,5 +34,8 @@ begin
 exception when duplicate_object then null;
 end $$;
 
+-- Faz a API do Supabase enxergar a tabela nova na hora.
+notify pgrst, 'reload schema';
+
 -- Opcional: apagar salas paradas há mais de 30 dias (rode quando quiser, ou agende com pg_cron).
 -- delete from public.rooms where updated_at < now() - interval '30 days';
