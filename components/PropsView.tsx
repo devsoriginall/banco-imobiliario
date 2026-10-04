@@ -2,7 +2,28 @@
 import { useState } from 'react';
 import { COMPANY_IDX, GROUPS, SHARE_PRICE, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankShares, buildBlock, canMortgage, canSellHouse, canUnmortgage, controller, groupIdx, houses, pname, rentOf, sharesOf, street, unmortgageCost } from '@/lib/game/rules';
+import {
+  bankShares,
+  canMortgage,
+  canSellHouse,
+  canUnmortgage,
+  controller,
+  groupIdx,
+  hoodLabel,
+  hoodMult,
+  houses,
+  lotTier,
+  pname,
+  rentOf,
+  sharesOf,
+  street,
+  tierMortgage,
+  tierName,
+  tierOf,
+  tierPrice,
+  tierRents,
+  unmortgageCost,
+} from '@/lib/game/rules';
 import type { GroupId } from '@/lib/game/types';
 import type { GameUi } from './Game';
 
@@ -15,11 +36,17 @@ export function PropsView({ ui }: { ui: GameUi }) {
     .map((g) => {
       const idxs = groupIdx(g).filter((i) => filter === 'todos' || state.props[i]?.owner === me);
       if (!idxs.length) return null;
+      const hood = hoodLabel(hoodMult(state, g));
       return (
         <div className="card" key={g}>
           <div className="group-head">
             <span className="swatch" style={{ background: `var(${GROUPS[g].c})` }} />
             <h3>{GROUPS[g].name}</h3>
+            {hood && (
+              <span className={`pill ${hoodMult(state, g) > 1 ? 'ok' : 'warn'}`} style={{ marginLeft: 'auto' }}>
+                {hood}
+              </span>
+            )}
           </div>
           <div className="list">
             {idxs.map((i) => {
@@ -27,14 +54,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
               const pr = state.props[i];
               const h = houses(state, i);
               const acts: React.ReactNode[] = [];
-              const block = pr?.owner === me ? buildBlock(state, i, me) : null;
               if (pr?.owner === me) {
-                if (h < 5)
-                  acts.push(
-                    <button key="b" className="btn small" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
-                      {h === 4 ? 'Hotel' : 'Casa'} {money(s.build)}
-                    </button>,
-                  );
                 if (canSellHouse(state, i, me))
                   acts.push(
                     <button key="s" className="btn small" onClick={() => ui.runWithReceipt({ type: 'sellHouse', idx: i })}>
@@ -44,7 +64,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
                 if (canMortgage(state, i, me))
                   acts.push(
                     <button key="m" className="btn small" onClick={() => ui.runWithReceipt({ type: 'mortgage', idx: i })}>
-                      Hipotecar +{money(s.mortgage)}
+                      Hipotecar +{money(tierMortgage(state, i))}
                     </button>,
                   );
                 if (canUnmortgage(state, i, me))
@@ -59,16 +79,23 @@ export function PropsView({ ui }: { ui: GameUi }) {
                   <div className="main">
                     <b>{s.name}</b>
                     <span>
-                      Casa {i} · {money(s.price)} · aluguel atual {money(pr ? rentOf(state, i) : s.rent[0])}
+                      {pr || lotTier(state, i)
+                        ? `Casa ${i} · ${pr ? '' : `terreno com casa ${tierName(tierOf(state, i))} · `}${money(tierPrice(state, i))} · aluguel atual ${money(pr ? rentOf(state, i) : tierRents(state, i)[0])}`
+                        : `Casa ${i} · 3 casas de ${money(tierPrice(state, i, 'basica'))} a ${money(tierPrice(state, i, 'alto'))}`}
                     </span>
                     <div className="row" style={{ gap: 6, marginTop: 4 }}>
                       {!pr ? <span className="pill ok">À venda</span> : <span className="pill info">{pr.owner === me ? 'Seu' : pname(state, pr.owner)}</span>}
+                      {pr && (
+                        <span className="pill tier-pill" data-testid={`tier-${i}`}>
+                          {tierName(tierOf(state, i))}
+                        </span>
+                      )}
                       {pr?.mortgaged && <span className="pill warn">Hipotecado</span>}
                       {h > 0 && <span className="pill ok">{h === 5 ? 'Hotel' : `${h} casa${h > 1 ? 's' : ''}`}</span>}
                     </div>
-                    {block && block !== 'Já tem hotel' && (
-                      <span className="build-why" data-testid={`build-why-${i}`}>
-                        Sem construir agora: {block}
+                    {pr?.owner === me && h < 5 && (
+                      <span className="build-hint" data-testid={`build-hint-${i}`}>
+                        Para construir, caia no imóvel
                       </span>
                     )}
                   </div>
@@ -99,8 +126,8 @@ export function PropsView({ ui }: { ui: GameUi }) {
         </button>
       </div>
       <div className="banner info">
-        Construir: em qualquer imóvel seu sem hipoteca, na sua vez, uma construção por rodada e não no imóvel comprado nesta rodada; hotel depois de 4 casas. Tirar hipoteca também só na sua vez. Vender casa e
-        hipotecar valem a qualquer momento.
+        Construir: só no imóvel seu onde você parou, na tela da Jogada; sem hipoteca, uma construção por vez e não no imóvel comprado nesta rodada; hotel depois de 4 casas. Tirar hipoteca só na sua vez. Vender
+        casa e hipotecar valem a qualquer momento.
       </div>
       {groups.length === 0 && comps.length === 0 && (
         <div className="card">

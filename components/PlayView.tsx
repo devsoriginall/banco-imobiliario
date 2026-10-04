@@ -1,10 +1,33 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_RATE, GROUPS, NEWS, SHARE_PRICE, SPACES } from '@/lib/game/data';
+import { COMPANY_RATE, GROUPS, NEWS, SHARE_PRICE, SPACES, TIER_IDS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankShares, boughtShareThisRound, controller, currentPlayer, feeTotal, othersHoldShares, ownedBy, pname, rentOf, sharesOf, transfersFor } from '@/lib/game/rules';
-import type { GameState, Space } from '@/lib/game/types';
+import { houseListing, listingFacts } from '@/lib/game/listings';
+import {
+  bankShares,
+  boughtShareThisRound,
+  buildBlock,
+  controller,
+  currentPlayer,
+  feeTotal,
+  hoodLabel,
+  hoodMult,
+  lotTier,
+  othersHoldShares,
+  ownedBy,
+  pname,
+  rentOf,
+  sharesOf,
+  tierMortgage,
+  tierName,
+  tierOf,
+  tierPrice,
+  tierRents,
+  transfersFor,
+} from '@/lib/game/rules';
+import type { GameState, Space, TierId } from '@/lib/game/types';
 import type { GameUi } from './Game';
+import { HouseArt } from './HouseArt';
 
 const groupColor = (g: keyof typeof GROUPS) => `var(${GROUPS[g].c})`;
 const spaceColor = (s: Space) => (s.type === 'street' ? groupColor(s.group) : s.type === 'company' ? 'var(--g-empresa)' : 'var(--g-especial)');
@@ -157,11 +180,16 @@ export function Board({ state, onPick }: { state: GameState; onPick?: (i: number
 
 const LABELS = ['Sem casa', '1 casa', '2 casas', '3 casas', '4 casas', 'Hotel'];
 
-export function Listing({ state, i }: { state: GameState; i: number }) {
+/** Anúncio do imóvel. Sem dono, mostra a casa em destaque (`tier`); com dono, a casa dele. */
+export function Listing({ state, i, tier: shown, children }: { state: GameState; i: number; tier?: TierId; children?: React.ReactNode }) {
   const s = SPACES[i];
   if (s.type !== 'street') return null;
   const pr = state.props[i];
   const h = pr?.houses || 0;
+  const tier = pr ? tierOf(state, i) : (shown ?? tierOf(state, i));
+  const rents = tierRents(state, i, tier);
+  const hood = hoodLabel(hoodMult(state, s.group));
+  const house = houseListing(i, tier);
   return (
     <div className="listing">
       <div className="hero" style={{ background: groupColor(s.group) }}>
@@ -180,11 +208,32 @@ export function Listing({ state, i }: { state: GameState; i: number }) {
             {s.city} · grupo {GROUPS[s.group].name.toLowerCase()}
           </span>
         </span>
-        <span className="amt num" style={{ fontSize: 20 }}>
-          {money(s.price)}
-        </span>
+        {pr && (
+          <span className="amt num" style={{ fontSize: 20 }}>
+            {money(tierPrice(state, i))}
+          </span>
+        )}
       </div>
+      {hood && (
+        <span className={`pill ${hoodMult(state, s.group) > 1 ? 'ok' : 'warn'}`} style={{ alignSelf: 'flex-start' }} data-testid="hood">
+          {hood}
+        </span>
+      )}
       <p style={{ margin: 0 }}>{s.desc}</p>
+      {children}
+      {pr && (
+        <div className="house-owned" data-testid="house-owned">
+          <HouseArt kind={house.kind} tier={tier} color={groupColor(s.group)} size={96} />
+          <div className="main">
+            <span className="label">Casa {tierName(tier)}</span>
+            <b>{house.title}</b>
+            <span className="muted">
+              {listingFacts(house)}
+              {house.perk ? ` · ${house.perk}` : ''}
+            </span>
+          </div>
+        </div>
+      )}
       <div className="kv">
         <div>
           <span>Casa ou hotel</span>
@@ -192,15 +241,15 @@ export function Listing({ state, i }: { state: GameState; i: number }) {
         </div>
         <div>
           <span>Hipoteca</span>
-          <span className="num">{money(s.mortgage)}</span>
+          <span className="num">{money(pr?.mortgageValue ?? tierMortgage(state, i, tier))}</span>
         </div>
         <div>
           <span>Dono</span>
           <span>{pr ? pname(state, pr.owner) : 'À venda'}</span>
         </div>
       </div>
-      <div className="rent num">
-        {s.rent.map((r, k) => {
+      <div className="rent num" data-testid="rent-table">
+        {rents.map((r, k) => {
           const cur = pr && k === h ? 'cur' : '';
           return (
             <span key={k} style={{ display: 'contents' }}>
@@ -213,11 +262,51 @@ export function Listing({ state, i }: { state: GameState; i: number }) {
           );
         })}
       </div>
+      {!pr && (
+        <span className="muted" style={{ fontSize: 12 }}>
+          Tabela de aluguel da casa {tierName(tier)}.
+        </span>
+      )}
       {pr?.mortgaged && (
         <span className="pill warn" style={{ alignSelf: 'flex-start' }}>
           Hipotecado: não cobra aluguel
         </span>
       )}
+    </div>
+  );
+}
+
+/** As 3 casas à venda no terreno, como num site de imóveis. Terreno que voltou ao banco tem uma casa só. */
+function TierPicker({ state, i, value, onChange, disabled }: { state: GameState; i: number; value: TierId; onChange: (t: TierId) => void; disabled?: boolean }) {
+  const s = SPACES[i];
+  if (s.type !== 'street') return null;
+  const forced = lotTier(state, i);
+  const options = forced ? [forced] : TIER_IDS;
+  return (
+    <div className="tiers" role="radiogroup" aria-label="Escolha a casa">
+      {forced && <div className="banner info">Este terreno voltou ao banco com a casa {tierName(forced)} já construída. Quem comprar leva esta casa.</div>}
+      {options.map((t) => {
+        const l = houseListing(i, t);
+        return (
+          <button key={t} className="tier" role="radio" aria-checked={value === t} disabled={disabled} onClick={() => onChange(t)} data-tier={t}>
+            <HouseArt kind={l.kind} tier={t} color={groupColor(s.group)} size={104} />
+            <span className="main">
+              <span className="label">{tierName(t)}</span>
+              <b>{l.title}</b>
+              <span className="muted">
+                {listingFacts(l)}
+                {l.perk ? ` · ${l.perk}` : ''}
+              </span>
+              <span className="tier-nums">
+                <span className="amt num" data-testid={`tier-price-${t}`}>
+                  {money(tierPrice(state, i, t))}
+                </span>
+                <span className="muted num">aluguel {money(tierRents(state, i, t)[0])}</span>
+              </span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -230,38 +319,53 @@ function LandedView({ ui }: { ui: GameUi }) {
   const i = ti.landed!;
   const s = SPACES[i];
   const [dice, setDice] = useState<number | null>(null);
+  const [tier, setTier] = useState<TierId>(() => (s.type === 'street' ? (lotTier(state, i) ?? 'intermediaria') : 'intermediaria'));
   const who = mine ? 'Você' : p.name;
 
   let inner: React.ReactNode = null;
   if (s.type === 'street') {
     const owner = ownedBy(state, i);
     let action: React.ReactNode = null;
+    let picker: React.ReactNode = null;
+    const chosen = lotTier(state, i) ?? tier;
+    const price = tierPrice(state, i, chosen);
     if (!owner) {
       if (!ti.resolved)
-        action = mine ? (
+        picker = (
           <>
-            <div className="row">
-              <button className="btn primary" disabled={p.balance < s.price} onClick={() => ui.pix({ type: 'buy' }, 'Comprar imóvel')}>
-                Comprar por {money(s.price)}
-              </button>
-              <button className="btn" onClick={() => ui.run({ type: 'skipBuy' })}>
-                Não comprar
-              </button>
-            </div>
-            {p.balance < s.price && <div className="banner warn">Saldo insuficiente para comprar.</div>}
+            <span className="label">{lotTier(state, i) ? 'Casa à venda' : 'Escolha uma das 3 casas'}</span>
+            <TierPicker state={state} i={i} value={chosen} onChange={setTier} disabled={!mine} />
           </>
-        ) : (
-          <Waiting text={`${p.name} está decidindo se compra.`} />
+        );
+      if (!ti.resolved)
+        action = (
+          <>
+            {mine ? (
+              <>
+                <div className="row">
+                  <button className="btn primary" disabled={p.balance < price} onClick={() => ui.pix({ type: 'buy', tier: chosen }, `Comprar casa ${tierName(chosen)}`)}>
+                    Comprar {tierName(chosen)} por {money(price)}
+                  </button>
+                  <button className="btn" onClick={() => ui.run({ type: 'skipBuy' })}>
+                    Não comprar
+                  </button>
+                </div>
+                {p.balance < price && <div className="banner warn">Saldo insuficiente para esta casa.</div>}
+              </>
+            ) : (
+              <Waiting text={`${p.name} está escolhendo a casa.`} />
+            )}
+          </>
         );
       else action = <div className="banner info">{who} não comprou. Continua à venda.</div>;
-    } else if (owner === p.id) action = <div className="banner info">Este imóvel já é de {mine ? 'você' : p.name}.</div>;
+    } else if (owner === p.id) action = mine ? <BuildOffer ui={ui} i={i} /> : <div className="banner info">Este imóvel já é de {p.name}.</div>;
     else {
       const r = rentOf(state, i);
       if (r === 0) action = <div className="banner info">Imóvel hipotecado: não há aluguel a pagar.</div>;
       else if (ti.resolved)
         action = (
           <div className="banner info">
-            Aluguel de {money(r)} pago a {owner === me ? 'você' : pname(state, owner)}.
+            Aluguel de {money(r)} (casa {tierName(tierOf(state, i))}) pago a {owner === me ? 'você' : pname(state, owner)}.
           </div>
         );
       else
@@ -269,9 +373,9 @@ function LandedView({ ui }: { ui: GameUi }) {
           <div className="row between">
             <div>
               <div className="muted" style={{ fontSize: 13 }}>
-                Aluguel a pagar para {owner === me ? 'você' : pname(state, owner)}
+                Aluguel da casa {tierName(tierOf(state, i))} para {owner === me ? 'você' : pname(state, owner)}
               </div>
-              <div className="amt num" style={{ fontSize: 24 }}>
+              <div className="amt num" style={{ fontSize: 24 }} data-testid="rent-due">
                 {money(r)}
               </div>
             </div>
@@ -287,8 +391,11 @@ function LandedView({ ui }: { ui: GameUi }) {
     }
     inner = (
       <>
-        <Listing state={state} i={i} />
-        {action}
+        <Listing state={state} i={i} tier={chosen}>
+          {picker}
+          {picker && mine && action}
+        </Listing>
+        {!(picker && mine) && action}
       </>
     );
   } else if (s.type === 'company') {
@@ -513,6 +620,47 @@ function LandedView({ ui }: { ui: GameUi }) {
             </button>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** "Site da imobiliária": no imóvel seu onde você parou, ampliar com mais uma casa (ou o hotel). */
+function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
+  const { state, me } = ui;
+  const s = SPACES[i];
+  if (s.type !== 'street') return null;
+  const h = state.props[i]?.houses || 0;
+  const tier = tierOf(state, i);
+  if (h >= 5) return <div className="banner info">Seu imóvel já tem hotel: está no máximo. Aluguel de {money(rentOf(state, i))}.</div>;
+  const block = buildBlock(state, i, me);
+  const rents = tierRents(state, i, tier);
+  const what = h === 4 ? 'hotel' : 'casa';
+  return (
+    <div className="build-offer" data-testid="build-offer">
+      <span className="label">Ampliar seu imóvel · casa {tierName(tier)}</span>
+      <div className="build-rents">
+        <div>
+          <span>Aluguel agora</span>
+          <b className="num">{money(rents[h])}</b>
+        </div>
+        <span className="arrow" aria-hidden="true">
+          →
+        </span>
+        <div>
+          <span>Com {h === 4 ? 'hotel' : h === 0 ? '1 casa' : `${h + 1} casas`}</span>
+          <b className="num" data-testid="build-next-rent">
+            {money(rents[h + 1])}
+          </b>
+        </div>
+      </div>
+      <button className="btn primary" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
+        Construir {what} · {money(s.build)}
+      </button>
+      {block && (
+        <span className="build-why" data-testid="build-why">
+          Sem construir agora: {block === 'Já construiu nesta rodada' ? 'você já construiu nesta rodada' : block.toLowerCase()}.
+        </span>
       )}
     </div>
   );

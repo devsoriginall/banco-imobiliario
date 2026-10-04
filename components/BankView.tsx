@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { LOAN } from '@/lib/game/data';
+import { BANK_RATES, CREDIT, CREDIT_BANDS, LOAN } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { currentPlayer, equity, findPlayer, loanInterest, loanLimit, loanOf, loanOwed, loanRoundsLeft, tradesOf } from '@/lib/game/rules';
+import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, loanInterest, loanLimit, loanOf, loanOwed, loanRate, loanRateFor, loanRoundsLeft, pct, tradesOf } from '@/lib/game/rules';
+import { CreditGauge } from './Credit';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
@@ -23,9 +24,85 @@ export function BankView({ ui, onTrade }: { ui: GameUi; onTrade: (pid: string) =
     );
   return (
     <>
+      <RateCard ui={ui} />
+      <CreditCard ui={ui} />
       <LoanCard ui={ui} />
       <TradeCardList ui={ui} onTrade={onTrade} />
     </>
+  );
+}
+
+const pp = (r: number) => (r === 0 ? '0 pp' : `${r > 0 ? '+' : '−'}${Math.round(Math.abs(r) * 100)} pp`);
+
+/** Taxa de juros sorteada nesta rodada. */
+function RateCard({ ui }: { ui: GameUi }) {
+  const { state } = ui;
+  return (
+    <div className="rate-card" data-testid="bank-rate-card">
+      <span className="lbl">Rodada {state.round}</span>
+      <div className="rate-line" data-testid="bank-rate">
+        Taxa do banco nesta rodada: <b className="num">{pct(bankRate(state))}</b>
+      </div>
+      <span className="lbl">Sorteada no começo de cada rodada entre {BANK_RATES.options.map((r) => pct(r)).join(', ')}. O empréstimo trava a taxa do dia em que foi pego.</span>
+    </div>
+  );
+}
+
+/** Score de crédito com medidor, efeito no empréstimo e últimas mudanças. */
+function CreditCard({ ui }: { ui: GameUi }) {
+  const { state, me } = ui;
+  const p = findPlayer(state, me)!;
+  const score = creditOf(p);
+  const band = creditBand(score);
+  return (
+    <div className="card" data-testid="credit-card">
+      <div className="row between">
+        <h2>Score de crédito</h2>
+        <span className="muted" style={{ fontSize: 13 }}>
+          0 a {CREDIT.max}
+        </span>
+      </div>
+      <CreditGauge score={score} />
+      <div className="kv">
+        <div>
+          <span>Limite</span>
+          <span className="num">{score < CREDIT.noLoanBelow ? 'Bloqueado' : `${Math.round(band.limitRate * 100)}% do patrimônio`}</span>
+        </div>
+        <div>
+          <span>Ajuste da taxa</span>
+          <span className="num">{pp(band.rateOffset)}</span>
+        </div>
+        <div>
+          <span>Sua taxa agora</span>
+          <span className="num" data-testid="my-rate">
+            {pct(loanRateFor(state, me))}
+          </span>
+        </div>
+      </div>
+      {p.creditLog?.length ? (
+        <ul className="credit-log">
+          {p.creditLog.slice(0, 4).map((e, k) => (
+            <li key={k}>
+              <span>
+                {e.reason} · rodada {e.round}
+              </span>
+              <b className={`num ${e.delta >= 0 ? 'up' : 'down'}`}>
+                {e.delta >= 0 ? '+' : '−'}
+                {Math.abs(e.delta)}
+              </b>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <details className="credit-rules">
+        <summary>Como o score muda</summary>
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+          Quitar empréstimo em dia ou antes +{CREDIT.loanPaid} · pagamento parcial +{CREDIT.partialPay} (uma vez por rodada, a partir de {money(LOAN.step)}) · declarar o IR +{CREDIT.irDeclared} · ficar sem
+          saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina} · empréstimo vencido com penhora {CREDIT.penhora}. Faixas:{' '}
+          {CREDIT_BANDS.map((b) => `${b.name} (${b.from}+: ${Math.round(b.limitRate * 100)}%, ${pp(b.rateOffset)})`).join(' · ')}. Abaixo de {CREDIT.noLoanBelow}, o banco não empresta.
+        </p>
+      </details>
+    </div>
   );
 }
 
@@ -68,7 +145,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
             <span className="num">{money(loan.principal)}</span>
           </div>
           <div>
-            <span>Juros ({Math.round(LOAN.interest * 100)}%)</span>
+            <span>Juros ({pct(loanRate(loan))}, travados)</span>
             <span className="num">{money(loan.interest)}</span>
           </div>
           <div>
@@ -111,6 +188,9 @@ function LoanCard({ ui }: { ui: GameUi }) {
   }
 
   const q = Math.max(LOAN.min, Math.min(amount, limit));
+  const score = creditOf(p);
+  const band = creditBand(score);
+  const rate = loanRateFor(state, me);
   return (
     <div className="card" data-testid="loan-card">
       <span className="row" style={{ gap: 10 }}>
@@ -120,7 +200,9 @@ function LoanCard({ ui }: { ui: GameUi }) {
         <h2>Pedir empréstimo</h2>
       </span>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Até {Math.round(LOAN.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Juros de {Math.round(LOAN.interest * 100)}% sobre o valor. Vence em {rodadas(LOAN.rounds)}; dá para pagar antes, inteiro ou em partes, na sua vez. Um empréstimo por vez.
+        Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Juros de {pct(rate)} sobre o
+        valor (taxa da rodada {pct(bankRate(state))}
+        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ', sem ajuste pelo score'}), travados ao pegar. Vence em {rodadas(LOAN.rounds)}; dá para pagar antes, inteiro ou em partes, na sua vez. Um empréstimo por vez.
       </p>
       <div className="kv">
         <div>
@@ -138,7 +220,9 @@ function LoanCard({ ui }: { ui: GameUi }) {
           <span className="num">Rodada {state.round + LOAN.rounds}</span>
         </div>
       </div>
-      {limit === 0 ? (
+      {score < CREDIT.noLoanBelow ? (
+        <div className="banner bad">Seu score está abaixo de {CREDIT.noLoanBelow}: o banco não empresta. Pague o que deve e declare o IR para subir.</div>
+      ) : limit === 0 ? (
         <div className="banner warn">Seu patrimônio não permite empréstimo agora.</div>
       ) : myTurn ? (
         <div className="stack" style={{ gap: 8 }}>
@@ -155,7 +239,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
               </button>
             </div>
             <span className="muted" style={{ fontSize: 13 }}>
-              Devolve {money(q + loanInterest(q))}
+              Devolve {money(q + loanInterest(q, rate))}
             </span>
           </div>
           <button className="btn primary" onClick={() => ui.runWithReceipt({ type: 'takeLoan', amount: q }, 'Empréstimo liberado')}>

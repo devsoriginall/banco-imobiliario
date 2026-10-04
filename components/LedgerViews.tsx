@@ -1,10 +1,37 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_IDX, SHARE_PRICE } from '@/lib/game/data';
+import { COMPANY_IDX, IR, SHARE_PRICE } from '@/lib/game/data';
 import { fmtTime, money } from '@/lib/game/format';
-import { debtOf, equity, pname, sharesOf } from '@/lib/game/rules';
+import { creditOf, debtOf, equity, findPlayer, incomeOf, irTax, pname, sharesOf } from '@/lib/game/rules';
 import type { GameState } from '@/lib/game/types';
+import { CreditPill } from './Credit';
 import { Avatar } from './ui';
+
+const IR_TXT: Record<string, string> = { isento: 'isento', declarou: 'declarado', pego: 'malha fina', passou: 'entregue' };
+
+/** Renda do ano (desde a última volta) e o IR que ela daria agora. */
+function IncomeBox({ state, me }: { state: GameState; me: string }) {
+  const p = findPlayer(state, me);
+  if (!p || p.out) return null;
+  const inc = incomeOf(p);
+  const last = p.irLast;
+  return (
+    <div className="kv" data-testid="income-box">
+      <div>
+        <span>Renda no ano {(p.year || 0) + 1}</span>
+        <span className="num">{money(inc)}</span>
+      </div>
+      <div>
+        <span>IR estimado ({Math.round(IR.rate * 100)}% acima de {money(IR.exempt)})</span>
+        <span className="num">{money(irTax(inc))}</span>
+      </div>
+      <div>
+        <span>Último IR</span>
+        <span>{last ? `Ano ${last.year}: ${IR_TXT[last.outcome]}` : 'Nenhum ainda'}</span>
+      </div>
+    </div>
+  );
+}
 
 export function TxView({ state, me }: { state: GameState; me: string }) {
   const [onlyMine, setOnlyMine] = useState(false);
@@ -17,6 +44,7 @@ export function TxView({ state, me }: { state: GameState; me: string }) {
           Só os meus
         </button>
       </div>
+      <IncomeBox state={state} me={me} />
       {list.length === 0 ? (
         <p className="muted" style={{ margin: 0 }}>
           Nenhuma transação ainda. Cada Pix da partida aparece aqui, para todos verem.
@@ -71,6 +99,7 @@ export function ScoreView({ state }: { state: GameState }) {
                     Dinheiro {money(p.balance)} · {props} imóveis · {cotas} cotas
                     {d > 0 ? ` · dívida ${money(d)}` : ''}
                   </span>
+                  <CreditPill score={creditOf(p)} />
                 </div>
               </div>
               <span className="amt num">{money(w)}</span>
@@ -79,7 +108,7 @@ export function ScoreView({ state }: { state: GameState }) {
         })}
       </div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Patrimônio: dinheiro + imóveis pelo preço (menos a hipoteca) + casas pelo custo + cotas a {money(SHARE_PRICE)}, menos a dívida com o banco.
+        Patrimônio: dinheiro + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas a {money(SHARE_PRICE)}, menos a dívida com o banco.
       </p>
     </div>
   );

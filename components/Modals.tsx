@@ -1,8 +1,10 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { fmtTime, money } from '@/lib/game/format';
-import { currentPlayer, loanLimit, pname, shortPayers, transfersFor } from '@/lib/game/rules';
-import type { Action, GameState, Transfer, Tx } from '@/lib/game/types';
+import { CREDIT, IR } from '@/lib/game/data';
+import { houseListing } from '@/lib/game/listings';
+import { currentPlayer, loanLimit, pname, shortPayers, tierName, transfersFor } from '@/lib/game/rules';
+import type { Action, GameState, IrPending, Transfer, Tx } from '@/lib/game/types';
 import { Icon } from './Icon';
 
 export function Sheet({ label, children }: { label: string; children: ReactNode }) {
@@ -141,6 +143,14 @@ export function ReceiptModal({ state, receipt, title = 'Transação efetuada', o
               <span>Valor</span>
               <span className="num">{money(t.amount)}</span>
             </div>
+            {t.tier && t.space !== undefined && (
+              <div>
+                <span>Casa</span>
+                <span data-testid="receipt-tier">
+                  {tierName(t.tier)} · {houseListing(t.space, t.tier).title}
+                </span>
+              </div>
+            )}
             <div>
               <span>ID da transação</span>
               <span className="num">{t.id}</span>
@@ -178,6 +188,95 @@ export function ConfirmModal({ title, text, confirm, onConfirm, onCancel }: { ti
       </button>
       <button className="btn block" onClick={onCancel}>
         Continuar jogando
+      </button>
+    </Sheet>
+  );
+}
+
+const pctTxt = (r: number) => `${Math.round(r * 100)}%`;
+
+/** Declaração do IR ao completar a volta: declarar (paga) ou sonegar (arrisca a malha fina). */
+export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: () => void; onEvade: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const base = Math.max(0, ir.income - IR.exempt);
+  if (ir.caught)
+    return (
+      <Sheet label="Malha fina">
+        <h2>Malha fina!</h2>
+        <div className="banner bad">A Receita cruzou os dados: você sonegou o IR do ano {ir.year}. Pague o imposto com {pctTxt(IR.fine)} de multa.</div>
+        <div style={{ textAlign: 'center' }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Imposto + multa
+          </div>
+          <div className="amt num" style={{ fontSize: 36 }}>
+            {money(ir.due)}
+          </div>
+        </div>
+        <button className="btn primary block" onClick={onDeclare}>
+          Pagar {money(ir.due)}
+        </button>
+      </Sheet>
+    );
+  return (
+    <Sheet label="Declaração do IR">
+      <div className="ir-head">
+        <span className="label">Receita Federal · ano {ir.year}</span>
+        <h2>Declaração do IR</h2>
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+          Você completou uma volta no tabuleiro. Hora de acertar o imposto sobre a renda deste ano.
+        </p>
+      </div>
+      <div className="lines" data-testid="ir-lines">
+        <div>
+          <span>Renda do ano (aluguéis, empresas, notícias)</span>
+          <span className="num">{money(ir.income)}</span>
+        </div>
+        <div>
+          <span>Isenção</span>
+          <span className="num">− {money(IR.exempt)}</span>
+        </div>
+        <div>
+          <span>Base de cálculo</span>
+          <span className="num">{money(base)}</span>
+        </div>
+        <div>
+          <span>Imposto ({pctTxt(IR.rate)})</span>
+          <span className="num" data-testid="ir-tax">
+            {money(ir.tax)}
+          </span>
+        </div>
+      </div>
+      <button className="btn primary block" disabled={busy} onClick={onDeclare}>
+        Declarar e pagar {money(ir.tax)}
+      </button>
+      <button
+        className="btn danger block"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await onEvade();
+          setBusy(false);
+        }}
+      >
+        Sonegar
+      </button>
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+        Declarar em dia dá +{CREDIT.irDeclared} no score de crédito. Sonegar não paga nada agora, mas tem {pctTxt(IR.catchChance)} de chance de cair na malha fina: aí paga o imposto com {pctTxt(IR.fine)} de
+        multa e perde {-CREDIT.malhaFina} pontos de score.
+      </p>
+    </Sheet>
+  );
+}
+
+export function IrPassedModal({ tax, onClose }: { tax: number; onClose: () => void }) {
+  return (
+    <Sheet label="Malha fina">
+      <div className="receipt-top ir-passed">
+        <b style={{ fontFamily: 'var(--display)', fontSize: 18 }}>Passou pela malha fina… por enquanto</b>
+        <span style={{ fontSize: 14 }}>Você deixou de pagar {money(tax)} de IR. A Receita não percebeu desta vez.</span>
+      </div>
+      <button className="btn dark block" onClick={onClose}>
+        Fechar
       </button>
     </Sheet>
   );

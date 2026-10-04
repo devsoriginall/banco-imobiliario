@@ -198,3 +198,50 @@ a{color:inherit}
 .pick:disabled{opacity:.5;cursor:not-allowed}
 .pick.static{justify-content:space-between}
 .li .main span.build-why{color:var(--warn);font-weight:600}
+
+/* ---------- Casas, IR, score e juros ---------- */
+.house-art{display:block;border-radius:12px;flex-shrink:0}
+.tiers{display:flex;flex-direction:column;gap:8px}
+.tier{display:flex;gap:12px;align-items:center;width:100%;padding:10px;border-radius:14px;border:1.5px solid var(--line);background:var(--surface);text-align:left}
+.tier .main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.tier .main b{font-size:14px;line-height:1.25}
+.tier .main .muted{font-size:12px}
+.tier .label{font-size:11px}
+.tier-nums{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:2px}
+.tier-nums .amt{font-size:18px}
+.tier-nums .muted{font-size:12px}
+.tier[aria-checked="true"]{border:2px solid var(--accent);padding:9.5px;background:var(--accent-soft)}
+.tier:disabled{cursor:default;opacity:1}
+.tier:disabled[aria-checked="false"]{opacity:.75}
+@media (max-width:360px){.tier .house-art{width:80px;height:auto}}
+.house-owned{display:flex;gap:12px;align-items:center;background:var(--surface-2);border-radius:14px;padding:10px}
+.house-owned .main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.house-owned .main b{font-size:14px}
+.house-owned .main .muted{font-size:12px}
+.pill.tier-pill{background:var(--surface-2);color:var(--fg)}
+.rate-card{background:var(--ink);color:var(--on-ink);border-radius:18px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.rate-card .lbl{font-size:12px;color:var(--ink-muted)}
+.rate-card .rate-line{font-size:15px}
+.rate-card .rate-line b{font-family:var(--display);font-size:22px;font-weight:600}
+.gauge{display:flex;flex-direction:column;align-items:center;gap:2px}
+.gauge svg{max-width:100%;height:auto}
+.gauge-read{display:flex;align-items:center;gap:8px}
+.gauge-read .amt{font-size:30px}
+.credit-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700}
+.credit-pill i{width:8px;height:8px;border-radius:4px;display:inline-block}
+.credit-log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.credit-log li{display:flex;justify-content:space-between;gap:12px}
+.credit-log li span{color:var(--muted)}
+.credit-log .up{color:var(--accent)}
+.credit-log .down{color:var(--bad)}
+.credit-rules summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px;display:flex;align-items:center}
+.ir-head{display:flex;flex-direction:column;gap:4px}
+.receipt-top.ir-passed{background:var(--warn-soft);color:var(--warn)}
+.build-offer{display:flex;flex-direction:column;gap:10px;border:1.5px solid var(--accent);border-radius:14px;padding:12px;background:var(--accent-soft)}
+.build-rents{display:flex;align-items:center;gap:12px}
+.build-rents>div{display:flex;flex-direction:column;flex:1;background:var(--surface);border-radius:12px;padding:8px 10px}
+.build-rents span{font-size:12px;color:var(--muted)}
+.build-rents b{font-family:var(--display);font-size:18px}
+.build-rents .arrow{color:var(--accent);font-weight:700;flex:0;font-size:18px}
+.build-why{font-size:13px;color:var(--warn);font-weight:600}
+.li .main span.build-hint{color:var(--muted);font-style:italic}

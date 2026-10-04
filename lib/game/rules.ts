@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { COMPANY_IDX, COMPANY_RATE, CONTROL, DEFAULTS, GROUPS, JAIL_POS, LOAN, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES } from './data';
-import type { Action, ActionContext, CompanySpace, GameState, GroupId, Loan, Player, StreetSpace, Trade, TradeSide, Transfer, TurnInfo } from './types';
+import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DEFAULT_TIER, DEFAULTS, GROUPS, HOOD, IR, JAIL_POS, LOAN, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES, TIERS } from './data';
+import type { Action, ActionContext, CompanySpace, GameState, GroupId, Loan, Player, StreetSpace, TierId, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -57,11 +57,41 @@ export function newRoom(code: string, host: { id: string; name: string }, now = 
     trades: [],
     tradeCount: 0,
     loans: {},
+    hood: {},
+    lots: {},
+    irPending: null,
   };
 }
 
 function makePlayer(id: string, name: string, i: number, balance: number): Player {
-  return { id, name, color: PLAYER_COLORS[i % PLAYER_COLORS.length], balance, pos: 0, jailed: false, jailTries: 0, freeCards: 0, out: false };
+  return { id, name, color: PLAYER_COLORS[i % PLAYER_COLORS.length], balance, pos: 0, jailed: false, jailTries: 0, freeCards: 0, out: false, income: 0, year: 0, credit: CREDIT.start };
+}
+
+// ---------- Sorteio determinístico ----------
+
+/** Hash inteiro (FNV-1a) de um texto. */
+function hashStr(x: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < x.length; i++) {
+    h ^= x.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Próximo número do sorteio da sala, em [0, 1). Usa mulberry32 com o estado guardado em `st.seed`,
+ * então todos os celulares (e a reaplicação depois de conflito, e o desfazer) chegam ao mesmo resultado.
+ * Salas antigas sem semente derivam uma do próprio estado.
+ */
+export function nextRandom(st: GameState): number {
+  const seed = st.seed ?? hashStr(`${st.code}|${st.createdAt}|${st.txCount}|${st.feedCount}|${st.round}`);
+  const a = (seed + 0x6d2b79f5) >>> 0;
+  st.seed = a;
+  let t = a;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
 // ---------- Consultas ----------
@@ -90,24 +120,78 @@ export const controller = (st: GameState, i: number) => {
   const sh = sharesOf(st, i);
   return Object.keys(sh).find((pid) => sh[pid] >= CONTROL) || null;
 };
-export const unmortgageCost = (st: GameState, i: number) => Math.round(street(i).mortgage * (1 + st.settings.mortgageRate));
 export const groupName = (g: GroupId) => GROUPS[g].name;
 
-/** Aluguel atual: tabela pelo número de casas; hipotecado não cobra.
+// ---------- Casas (Básica, Intermediária, Alto padrão) e valorização do bairro ----------
+
+const round10 = (x: number) => Math.round(x / 10) * 10;
+const round4 = (x: number) => Math.round(x * 10000) / 10000;
+
+/** Multiplicador de preço e aluguel do bairro (grupo de cor); 1 = sem mudança. */
+export const hoodMult = (st: GameState, g: GroupId) => st.hood?.[g] ?? HOOD.start;
+/** Texto da valorização, ex.: "Bairro valorizado +10%" (null quando o bairro está no preço normal). */
+export function hoodLabel(mult: number): string | null {
+  const pct = Math.round((mult - 1) * 100);
+  if (!pct) return null;
+  return pct > 0 ? `Bairro valorizado +${pct}%` : `Bairro desvalorizado −${-pct}%`;
+}
+/** Casa que o terreno já tem por ter voltado ao banco (quem comprar leva esta); null = escolhe na compra. */
+export const lotTier = (st: GameState, i: number): TierId | null => st.lots?.[i] ?? null;
+/** Casa do imóvel: a escolhida pelo dono, a que ficou no terreno, ou a Intermediária (salas antigas). */
+export const tierOf = (st: GameState, i: number): TierId => st.props[i]?.tier ?? lotTier(st, i) ?? DEFAULT_TIER;
+export const tierName = (t: TierId) => TIERS[t].name;
+/** Preço da casa: preço do tabuleiro × nível da casa × bairro, arredondado a $ 10. */
+export function tierPrice(st: GameState, i: number, tier: TierId = tierOf(st, i)): number {
+  const s = street(i);
+  return round10(s.price * TIERS[tier].price * hoodMult(st, s.group));
+}
+/** Tabela de aluguel [sem casa, 1..4 casas, hotel] da casa: tabela do tabuleiro × nível × bairro. */
+export function tierRents(st: GameState, i: number, tier: TierId = tierOf(st, i)): number[] {
+  const s = street(i);
+  const m = TIERS[tier].rent * hoodMult(st, s.group);
+  return s.rent.map((r) => Math.round(r * m));
+}
+/** Valor de hipoteca: acompanha o preço da casa. */
+export function tierMortgage(st: GameState, i: number, tier: TierId = tierOf(st, i)): number {
+  const s = street(i);
+  return round10(s.mortgage * TIERS[tier].price * hoodMult(st, s.group));
+}
+/** Quanto a hipoteca rendeu (ou renderia agora). */
+export const mortgageValueOf = (st: GameState, i: number) => st.props[i]?.mortgageValue ?? tierMortgage(st, i);
+export const unmortgageCost = (st: GameState, i: number) => Math.round(mortgageValueOf(st, i) * (1 + st.settings.mortgageRate));
+
+/**
+ * Valorização do bairro (gancho para as Notícias/Jornal): soma `pct` pontos percentuais ao multiplicador
+ * do grupo (ex.: +10 → 1,1), dentro de HOOD.min..HOOD.max. Afeta preço, aluguéis e hipoteca das casas do bairro.
+ */
+export function applyNeighbourhoodChange(state: GameState, group: GroupId, pct: number, now = new Date()): GameState {
+  if (!GROUPS[group]) throw new RuleError('Bairro inválido.');
+  if (!Number.isFinite(pct)) throw new RuleError('Variação inválida.');
+  const st = clone(state);
+  const before = hoodMult(st, group);
+  const after = Math.min(HOOD.max, Math.max(HOOD.min, round4(before + pct / 100)));
+  st.hood = { ...(st.hood || {}), [group]: after };
+  const delta = Math.round((after - before) * 100);
+  if (delta) log(st, `Bairro ${GROUPS[group].name.toLowerCase()} ${delta > 0 ? 'valorizou' : 'desvalorizou'} ${Math.abs(delta)}%: preços e aluguéis ${delta > 0 ? 'sobem' : 'caem'}`, now, undefined, true);
+  return st;
+}
+
+/** Aluguel atual: tabela da casa pelo número de construções; hipotecado não cobra.
  * O jogo da mesa não dobra o aluguel por grupo completo, então aqui também não. */
 export function rentOf(st: GameState, i: number): number {
-  const s = street(i);
   const p = st.props[i];
   if (!p || p.mortgaged) return 0;
-  return s.rent[p.houses || 0];
+  return tierRents(st, i)[p.houses || 0];
 }
 
 export function netWorth(st: GameState, p: Player): number {
   let w = p.balance;
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== p.id) continue;
-    const s = street(Number(k));
-    w += pr.mortgaged ? s.price - s.mortgage : s.price;
+    const i = Number(k);
+    const s = street(i);
+    const price = tierPrice(st, i);
+    w += pr.mortgaged ? price - mortgageValueOf(st, i) : price;
     w += (pr.houses || 0) * s.build;
   }
   COMPANY_IDX.forEach((i) => (w += (sharesOf(st, i)[p.id] || 0) * SHARE_PRICE));
@@ -124,7 +208,22 @@ export const debtOf = (st: GameState, pid: string) => {
 };
 /** Patrimônio líquido: patrimônio menos a dívida com o banco. */
 export const equity = (st: GameState, p: Player) => netWorth(st, p) - debtOf(st, p.id);
-export const loanInterest = (principal: number) => Math.round(principal * LOAN.interest);
+// ---------- Score de crédito e juros ----------
+
+export const creditOf = (p: Player | undefined) => p?.credit ?? CREDIT.start;
+/** Faixa do score: Ruim (<300), Regular (300–599), Bom (600–799), Excelente (800+). */
+export const creditBand = (score: number) => [...CREDIT_BANDS].reverse().find((b) => score >= b.from) ?? CREDIT_BANDS[0];
+/** Taxa do banco nesta rodada (salas antigas, antes do primeiro sorteio: LOAN.interest). */
+export const bankRate = (st: GameState) => st.bankRate ?? LOAN.interest;
+/** Taxa de um empréstimo novo agora: taxa da rodada + ajuste do score, nunca abaixo do mínimo. */
+export function loanRateFor(st: GameState, pid: string): number {
+  const band = creditBand(creditOf(findPlayer(st, pid)));
+  return Math.max(BANK_RATES.minLoanRate, round4(bankRate(st) + band.rateOffset));
+}
+/** Taxa travada no empréstimo (salas antigas: juros ÷ principal). */
+export const loanRate = (l: Loan) => l.rate ?? (l.principal ? round4(l.interest / l.principal) : LOAN.interest);
+export const loanInterest = (principal: number, rate: number = LOAN.interest) => Math.round(principal * rate);
+export const pct = (r: number) => `${Math.round(r * 1000) / 10}%`.replace('.', ',');
 /** Rodadas até o vencimento (0 = vence no início da vez nesta rodada). */
 export const loanRoundsLeft = (st: GameState, pid: string) => {
   const l = loanOf(st, pid);
@@ -134,7 +233,9 @@ export const loanRoundsLeft = (st: GameState, pid: string) => {
 export function loanLimit(st: GameState, pid: string): number {
   const p = findPlayer(st, pid);
   if (!p || p.out || loanOf(st, pid)) return 0;
-  const raw = Math.floor((equity(st, p) * LOAN.limitRate) / LOAN.step) * LOAN.step;
+  const score = creditOf(p);
+  if (score < CREDIT.noLoanBelow) return 0;
+  const raw = Math.floor((equity(st, p) * creditBand(score).limitRate) / LOAN.step) * LOAN.step;
   return raw >= LOAN.min ? raw : 0;
 }
 
@@ -181,21 +282,32 @@ export function tradeProblem(st: GameState, from: string, to: string, give: Trad
   return sideProblem(st, give, from) || sideProblem(st, get, to);
 }
 
-/** Resumo de um lado, ex.: "$ 1.000 + Av. Paulista (hipotecada) + 2 cotas da Banco Aurora". */
-export function describeSide(side: TradeSide): string {
+/** Resumo de um lado, ex.: "$ 1.000 + Av. Paulista (Alto padrão) + 2 cotas da Banco Aurora". Com o estado, mostra a casa. */
+export function describeSide(side: TradeSide, st?: GameState): string {
   const parts: string[] = [];
   if (side.money) parts.push(money(side.money));
-  for (const i of side.props) parts.push(street(i).name);
+  for (const i of side.props) parts.push(st ? `${street(i).name} (${tierName(tierOf(st, i))})` : street(i).name);
   for (const [k, q] of Object.entries(side.shares)) if (q > 0) parts.push(`${q} cota${q > 1 ? 's' : ''} da ${company(Number(k)).name}`);
   return parts.join(' + ') || 'nada';
 }
+
+// ---------- Imposto de renda ----------
+
+/** IR do ano: alíquota sobre a renda acima da isenção. */
+export const irTax = (income: number) => Math.max(0, Math.round((income - IR.exempt) * IR.rate));
+/** Renda tributável desde a última volta. */
+export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
+/** Tipos de transação que contam como renda para o IR. */
+const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news']);
+export const isIncome = (kind: TxKind) => INCOME_KINDS.has(kind) || (IR.salaryIsIncome && kind === 'salary');
 
 const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
 
 /**
  * Por que não dá para construir neste imóvel agora (null = pode).
- * Regra da casa: qualquer imóvel seu, sem hipoteca, na sua vez; uma construção por rodada no total;
- * não no imóvel adquirido nesta rodada; hotel depois de 4 casas no mesmo imóvel. Não precisa do grupo completo.
+ * Regra da casa: só no imóvel seu onde você parou nesta jogada, sem hipoteca, na sua vez; uma construção por
+ * vez (por rodada, mesmo tirando dupla); não no imóvel adquirido nesta rodada; hotel depois de 4 casas no mesmo
+ * imóvel. Não precisa do grupo completo.
  */
 export function buildBlock(st: GameState, i: number, actor: string): string | null {
   const s = SPACES[i];
@@ -204,6 +316,7 @@ export function buildBlock(st: GameState, i: number, actor: string): string | nu
   if (houses(st, i) >= 5) return 'Já tem hotel';
   if (pr.mortgaged) return 'Hipotecado';
   if (!isMyTurn(st, actor)) return 'Só na sua vez';
+  if (st.turnInfo.landed !== i) return 'Só no imóvel onde você parou';
   if (findPlayer(st, actor)?.builtRound === st.round) return 'Já construiu nesta rodada';
   if (pr.round === st.round) return 'Comprado nesta rodada';
   return null;
@@ -260,6 +373,13 @@ export function shortPayers(st: GameState, list: Transfer[]): string[] {
   return Object.keys(owed).filter((pid) => (findPlayer(st, pid)?.balance ?? 0) < owed[pid]);
 }
 
+/** Casa da compra: a que já está no terreno (voltou ao banco) ou a escolhida (padrão: Intermediária). */
+export function buyTier(st: GameState, i: number, chosen?: TierId): TierId {
+  const forced = lotTier(st, i);
+  if (forced) return forced;
+  return chosen && TIERS[chosen] ? chosen : DEFAULT_TIER;
+}
+
 /**
  * As transferências que uma ação faria agora (para mostrar a prévia do Pix).
  * Retorna [] para ações sem dinheiro. Não valida saldo: quem chama mostra o aviso.
@@ -270,13 +390,15 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
   switch (action.type) {
     case 'buy': {
       const s = street(landed ?? -1);
-      return [{ from: p.id, to: BANK, amount: s.price, reason: `Compra da ${s.name}`, kind: 'buy', space: landed! }];
+      const tier = buyTier(st, landed!, action.tier);
+      return [{ from: p.id, to: BANK, amount: tierPrice(st, landed!, tier), reason: `Compra da ${s.name} · casa ${tierName(tier)}`, kind: 'buy', space: landed!, tier }];
     }
     case 'payRent': {
       const s = street(landed ?? -1);
       const owner = ownedBy(st, landed!);
       if (!owner) return [];
-      return [{ from: p.id, to: owner, amount: rentOf(st, landed!), reason: `Aluguel da ${s.name}`, kind: 'rent', space: landed! }];
+      const tier = tierOf(st, landed!);
+      return [{ from: p.id, to: owner, amount: rentOf(st, landed!), reason: `Aluguel da ${s.name} (${tierName(tier)})`, kind: 'rent', space: landed!, tier }];
     }
     case 'payFee':
       return feeTransfers(st, landed ?? -1, action.dice, p.id);
@@ -316,11 +438,19 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
     }
     case 'mortgage': {
       const s = street(action.idx);
-      return [{ from: BANK, to: actor, amount: s.mortgage, reason: `Hipoteca da ${s.name}`, kind: 'mortgage', space: action.idx }];
+      return [{ from: BANK, to: actor, amount: tierMortgage(st, action.idx), reason: `Hipoteca da ${s.name}`, kind: 'mortgage', space: action.idx }];
     }
     case 'unmortgage': {
       const s = street(action.idx);
       return [{ from: actor, to: BANK, amount: unmortgageCost(st, action.idx), reason: `Fim da hipoteca da ${s.name} (+20%)`, kind: 'unmortgage', space: action.idx }];
+    }
+    case 'declareIR': {
+      const ir = st.irPending;
+      if (!ir || ir.pid !== actor) return [];
+      const reason = ir.caught
+        ? `Malha fina: IR do ano ${ir.year} + multa de ${Math.round(IR.fine * 100)}%`
+        : `Imposto de renda do ano ${ir.year}: ${Math.round(IR.rate * 100)}% de ${money(Math.max(0, ir.income - IR.exempt))}`;
+      return [{ from: actor, to: BANK, amount: ir.due, reason, kind: 'ir' }];
     }
     case 'payLoan': {
       const owed = debtOf(st, actor);
@@ -336,7 +466,11 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
 function applyTransfers(st: GameState, list: Transfer[], now: Date) {
   for (const t of list) {
     if (t.from !== BANK) findPlayer(st, t.from)!.balance -= t.amount;
-    if (t.to !== BANK) findPlayer(st, t.to)!.balance += t.amount;
+    if (t.to !== BANK) {
+      const to = findPlayer(st, t.to)!;
+      to.balance += t.amount;
+      if (isIncome(t.kind)) to.income = (to.income || 0) + t.amount;
+    }
     st.txCount += 1;
     const id = `${st.code}-R${String(st.round).padStart(2, '0')}-${String(st.txCount).padStart(4, '0')}`;
     st.tx.unshift({ id, seq: st.txCount, at: now.toISOString(), round: st.round, ...t });
@@ -356,9 +490,53 @@ function log(st: GameState, text: string, now: Date, by?: string, important = fa
   if (st.feed.length > MAX_FEED) st.feed = st.feed.slice(0, MAX_FEED);
 }
 
+/** Muda o score de crédito (0 a 1000) e guarda o motivo nas últimas mudanças. */
+function changeCredit(st: GameState, p: Player, delta: number, reason: string) {
+  const before = creditOf(p);
+  p.credit = Math.min(CREDIT.max, Math.max(CREDIT.min, before + delta));
+  p.creditLog = [{ delta: p.credit - before, reason, round: st.round }, ...(p.creditLog || [])].slice(0, 6);
+}
+
+/** Faltou saldo para um pagamento obrigatório: −30 no score, uma vez por jogada para cada jogador. */
+function shortfall(st: GameState, p: Player, what: string) {
+  const list = st.turnInfo.short || [];
+  if (list.includes(p.id)) return;
+  st.turnInfo.short = [...list, p.id];
+  changeCredit(st, p, CREDIT.shortfall, `Sem saldo para ${what}`);
+}
+
+/** Sorteia a taxa de juros do banco para a rodada atual (sorteio da sala, igual em todos os celulares). */
+function drawBankRate(st: GameState, now: Date) {
+  const prev = st.bankRate;
+  const opts = BANK_RATES.options;
+  const r = opts[Math.min(opts.length - 1, Math.floor(nextRandom(st) * opts.length))];
+  st.bankRate = r;
+  st.bankRateRound = st.round;
+  if (prev === undefined) log(st, `Taxa do banco nesta rodada: ${pct(r)}`, now);
+  else if (prev === r) log(st, `Rodada ${st.round}: taxa do banco mantida em ${pct(r)}`, now);
+  else log(st, `Rodada ${st.round}: taxa do banco ${r > prev ? 'subiu' : 'caiu'} para ${pct(r)} (era ${pct(prev)})`, now, undefined, true);
+}
+
+/** Volta completa no Início: fecha o ano do IR. Abaixo da isenção, nada a declarar. */
+function completeYear(st: GameState, p: Player, now: Date) {
+  const income = incomeOf(p);
+  const year = (p.year || 0) + 1;
+  p.year = year;
+  p.income = 0;
+  const tax = irTax(income);
+  if (!tax) {
+    p.irLast = { year, income, tax: 0, outcome: 'isento', paid: 0, round: st.round };
+    log(st, `${p.name} fechou o ano ${year}: isento de IR (renda de ${money(income)})`, now, p.id);
+    return;
+  }
+  st.irPending = { pid: p.id, year, income, tax, due: tax };
+  log(st, `${p.name} completou a volta: hora da declaração do IR do ano ${year}`, now, p.id);
+}
+
 function nextTurn(st: GameState, now: Date) {
   const n = st.players.length;
   let i = st.turn;
+  const roundBefore = st.round;
   for (let k = 0; k < n; k++) {
     i = (i + 1) % n;
     if (i === 0) st.round += 1;
@@ -366,6 +544,7 @@ function nextTurn(st: GameState, now: Date) {
   }
   st.turn = i;
   st.turnInfo = emptyTurn();
+  if (st.round !== roundBefore) drawBankRate(st, now);
   // Início da vez: empréstimo vencido é cobrado antes de qualquer jogada
   const p = st.players[i];
   const l = loanOf(st, p.id);
@@ -393,7 +572,7 @@ function collectLoan(st: GameState, p: Player, now: Date) {
   while (p.balance < owed) {
     const built = mine().filter((i) => houses(st, i) > 0);
     if (!built.length) break;
-    built.sort((a, b) => houses(st, b) - houses(st, a) || street(a).price - street(b).price || a - b);
+    built.sort((a, b) => houses(st, b) - houses(st, a) || tierPrice(st, a) - tierPrice(st, b) || a - b);
     const i = built[0];
     const s = street(i);
     const hotel = houses(st, i) === 5;
@@ -402,13 +581,15 @@ function collectLoan(st: GameState, p: Player, now: Date) {
     applyTransfers(st, [{ from: BANK, to: p.id, amount: s.build / 2, reason: `Penhora: venda de ${hotel ? 'hotel' : 'casa'} na ${s.name} (metade do custo)`, kind: 'penhora', space: i }], now);
   }
   if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true);
+  let taken = 0;
   while (p.balance < owed) {
-    const props = mine().sort((a, b) => street(a).price - street(b).price || a - b);
+    const props = mine().sort((a, b) => tierPrice(st, a) - tierPrice(st, b) || a - b);
     if (!props.length) break;
     const i = props[0];
     const s = street(i);
-    const value = st.props[i].mortgaged ? 0 : s.mortgage;
-    delete st.props[i];
+    const value = st.props[i].mortgaged ? 0 : tierMortgage(st, i);
+    toBank(st, i);
+    taken += 1;
     applyTransfers(
       st,
       [{ from: BANK, to: p.id, amount: value, reason: `Penhora: ${s.name} tomada pelo banco (${value ? 'valor de hipoteca' : 'já hipotecada, sem valor'})`, kind: 'penhora', space: i }],
@@ -418,6 +599,8 @@ function collectLoan(st: GameState, p: Player, now: Date) {
   }
   const amount = Math.min(p.balance, owed);
   if (amount > 0) applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: 'Cobrança do empréstimo vencido', kind: 'loanpay' }], now);
+  if (sold || taken || amount < owed) changeCredit(st, p, CREDIT.penhora, 'Empréstimo vencido com penhora');
+  else changeCredit(st, p, CREDIT.loanPaid, 'Empréstimo pago no vencimento');
   if (amount >= owed) {
     delete st.loans![p.id];
     log(st, `${p.name} pagou o empréstimo vencido`, now, undefined, true);
@@ -432,8 +615,8 @@ function collectLoan(st: GameState, p: Player, now: Date) {
 function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: string | undefined) {
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== d.id) continue;
-    if (creditor === BANK || pr.mortgaged) delete st.props[Number(k)];
-    else Object.assign(pr, { owner: creditor, round: st.round });
+    if (creditor === BANK || pr.mortgaged) toBank(st, Number(k));
+    else Object.assign(pr, { owner: creditor, round: st.round }); // a casa (tier) vai junto
   }
   COMPANY_IDX.forEach((i) => {
     const sh = st.shares[i];
@@ -446,10 +629,18 @@ function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: s
   d.out = true;
   d.jailed = false;
   if (st.loans) delete st.loans[d.id];
+  if (st.irPending?.pid === d.id) st.irPending = null;
   st.trades = tradesOf(st).filter((t) => t.from !== d.id && t.to !== d.id);
   log(st, `${d.name} faliu e saiu do jogo`, now, by, true);
   checkWinner(st);
   if (st.winner) log(st, `${pname(st, st.winner)} venceu a partida!`, now, by, true);
+}
+
+/** Imóvel volta ao banco: o terreno fica com a casa (quem comprar depois leva a mesma casa). */
+function toBank(st: GameState, i: number) {
+  const tier = tierOf(st, i);
+  delete st.props[i];
+  st.lots = { ...(st.lots || {}), [i]: tier };
 }
 
 function sendToJail(p: Player) {
@@ -510,7 +701,10 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       st.deckPtr = 0;
       st.round = 1;
       st.turn = 0;
+      st.seed = Math.floor(rng() * 4294967296) >>> 0;
+      st.irPending = null;
       log(st, `Partida começou com ${st.players.length} jogadores`, now, actor, true);
+      drawBankRate(st, now);
       return keep(state, st);
     }
     case 'reset': {
@@ -563,7 +757,10 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       p.pos = idx;
       ti.landed = idx;
       log(st, `${p.name} parou em ${s.name}`, now, actor);
-      if (passed) applyTransfers(st, [{ from: BANK, to: p.id, amount: st.settings.salary, reason: 'Pró-labore do Início', kind: 'salary' }], now);
+      if (passed) {
+        applyTransfers(st, [{ from: BANK, to: p.id, amount: st.settings.salary, reason: 'Pró-labore do Início', kind: 'salary' }], now);
+        completeYear(st, p, now);
+      }
       if (s.type === 'gotojail') {
         sendToJail(p);
         ti.resolved = true;
@@ -575,6 +772,16 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
         if (pr && (pr.owner === p.id || pr.mortgaged)) ti.resolved = true;
       }
       if (s.type === 'company' && !othersHoldShares(st, idx, p.id)) ti.resolved = true;
+      // falta de saldo para o que é obrigatório pagar aqui (aluguel, imposto, a menor taxa da empresa)
+      const dueHere =
+        s.type === 'street' && !ti.resolved && ownedBy(st, idx)
+          ? rentOf(st, idx)
+          : s.type === 'tax'
+            ? s.amount
+            : s.type === 'company' && !ti.resolved
+              ? feeTransfers(st, idx, 2, p.id).reduce((a, t) => a + t.amount, 0)
+              : 0;
+      if (dueHere > p.balance) shortfall(st, p, s.type === 'street' ? 'o aluguel' : s.type === 'tax' ? 'o imposto' : 'a taxa da empresa');
       break;
     }
     case 'buy': {
@@ -582,10 +789,16 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const s = landedSpace();
       need(s.type === 'street' && !ownedBy(st, ti.landed!), 'Este imóvel não está à venda.');
       need(!ti.resolved, 'Esta casa já foi resolvida.');
-      pay(st, transfersFor(state, action, actor), now);
-      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round };
+      need(!action.tier || TIERS[action.tier], 'Escolha uma das 3 casas.');
+      const forced = lotTier(st, ti.landed!);
+      need(!forced || !action.tier || action.tier === forced, `Este terreno já tem uma casa ${forced && tierName(forced)}.`);
+      const tier = buyTier(st, ti.landed!, action.tier);
+      const list = transfersFor(state, action, actor);
+      pay(st, list, now);
+      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round, tier };
+      if (st.lots) delete st.lots[ti.landed!];
       ti.resolved = true;
-      log(st, `${p.name} comprou ${s.name} por ${money(s.price)}`, now, actor);
+      log(st, `${p.name} comprou ${s.name} (casa ${tierName(tier)}) por ${money(list[0].amount)}`, now, actor);
       break;
     }
     case 'skipBuy': {
@@ -648,6 +861,9 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       ti.news = st.deck[st.deckPtr];
       st.deckPtr += 1;
       log(st, `${p.name} abriu o jornal: ${NEWS[ti.news].t}`, now, actor);
+      const card = NEWS[ti.news];
+      if (card.k === 'pay' && card.v > p.balance) shortfall(st, p, 'pagar a notícia');
+      if (card.k === 'each') for (const x of st.players) if (x.id !== p.id && !x.out && x.balance < card.v) shortfall(st, x, 'a aposta da mesa');
       break;
     }
     case 'applyNews': {
@@ -735,8 +951,10 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
     }
     case 'mortgage': {
       need(canMortgage(state, action.idx, actor), 'Não dá para hipotecar este imóvel.');
-      pay(st, transfersFor(state, action, actor), now);
+      const list = transfersFor(state, action, actor);
+      pay(st, list, now);
       st.props[action.idx].mortgaged = true;
+      st.props[action.idx].mortgageValue = list[0].amount;
       log(st, `${me.name} hipotecou ${street(action.idx).name}`, now, actor);
       break;
     }
@@ -744,12 +962,14 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(canUnmortgage(state, action.idx, actor), 'Tirar hipoteca só na sua vez, em imóvel seu hipotecado.');
       pay(st, transfersFor(state, action, actor), now);
       st.props[action.idx].mortgaged = false;
+      delete st.props[action.idx].mortgageValue;
       log(st, `${me.name} tirou a hipoteca da ${street(action.idx).name}`, now, actor);
       break;
     }
     case 'endTurn': {
       turnOnly();
       need(ti.landed !== null && ti.resolved, 'Resolva a casa antes de passar a vez.');
+      need(st.irPending?.pid !== p.id, 'Entregue a declaração do IR antes de passar a vez.');
       if (action.again) {
         need(!p.jailed, 'Na detenção não se joga de novo.');
         st.turnInfo = emptyTurn();
@@ -806,7 +1026,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const problem = tradeProblem(st, t.from, t.to, t.give, t.get);
       need(!problem, `A proposta não vale mais: ${problem}`);
       const a = findPlayer(st, t.from)!;
-      const reason = `Negociação ${t.id}: ${a.name} deu ${describeSide(t.give)} e recebeu ${describeSide(t.get)}`;
+      const reason = `Negociação ${t.id}: ${a.name} deu ${describeSide(t.give, st)} e recebeu ${describeSide(t.get, st)}`;
       const list: Transfer[] = [];
       if (t.give.money) list.push({ from: t.from, to: t.to, amount: t.give.money, reason, kind: 'trade', ref: t.id });
       if (t.get.money) list.push({ from: t.to, to: t.from, amount: t.get.money, reason, kind: 'trade', ref: t.id });
@@ -826,7 +1046,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       move(t.give, t.from, t.to);
       move(t.get, t.to, t.from);
       st.trades = tradesOf(st).filter((x) => x.id !== t.id);
-      log(st, `Negociação fechada entre ${a.name} e ${me.name}: ${describeSide(t.give)} por ${describeSide(t.get)}`, now, actor);
+      log(st, `Negociação fechada entre ${a.name} e ${me.name}: ${describeSide(t.give, st)} por ${describeSide(t.get, st)}`, now, actor);
       break;
     }
     case 'takeLoan': {
@@ -834,14 +1054,16 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(!loanOf(st, actor), 'Você já tem um empréstimo ativo. Quite antes de pedir outro.');
       const amt = action.amount;
       const limit = loanLimit(st, actor);
+      need(creditOf(me) >= CREDIT.noLoanBelow, `Seu score de crédito (${creditOf(me)}) está abaixo de ${CREDIT.noLoanBelow}: o banco não empresta.`);
       need(limit > 0, `Seu patrimônio não permite empréstimo agora (mínimo ${money(LOAN.min)}).`);
       need(Number.isInteger(amt) && amt >= LOAN.min && amt % LOAN.step === 0, `Peça a partir de ${money(LOAN.min)}, em múltiplos de ${money(LOAN.step)}.`);
       need(amt <= limit, `Seu limite é ${money(limit)}.`);
-      const interest = loanInterest(amt);
+      const rate = loanRateFor(st, actor);
+      const interest = loanInterest(amt, rate);
       const due = st.round + LOAN.rounds;
-      st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due } };
-      applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco: devolver ${money(amt + interest)} até a rodada ${due}`, kind: 'loan' }], now);
-      log(st, `${me.name} pegou ${money(amt)} emprestado no banco`, now, actor);
+      st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, rate } };
+      applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(amt + interest)} até a rodada ${due}`, kind: 'loan' }], now);
+      log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)}`, now, actor);
       break;
     }
     case 'payLoan': {
@@ -854,9 +1076,62 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(amt <= owed, `Você deve só ${money(owed)}.`);
       const full = amt === owed;
       pay(st, transfersFor(state, action, actor), now);
-      if (full) delete st.loans![actor];
-      else l.paid += amt;
+      if (full) {
+        delete st.loans![actor];
+        changeCredit(st, me, CREDIT.loanPaid, st.round < l.dueRound ? 'Empréstimo quitado antes do vencimento' : 'Empréstimo quitado em dia');
+      } else {
+        l.paid += amt;
+        // pagamento parcial conta para o score uma vez por rodada, a partir de LOAN.step
+        if (amt >= LOAN.step && l.partRound !== st.round) {
+          l.partRound = st.round;
+          changeCredit(st, me, CREDIT.partialPay, 'Pagamento parcial do empréstimo');
+        }
+      }
       log(st, full ? `${me.name} quitou o empréstimo` : `${me.name} pagou ${money(amt)} do empréstimo`, now, actor);
+      break;
+    }
+    case 'declareIR': {
+      turnOnly();
+      const ir = st.irPending;
+      need(ir && ir.pid === actor, 'Não há declaração de IR pendente.');
+      pay(st, transfersFor(state, action, actor), now);
+      st.irPending = null;
+      if (ir.caught) {
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: ir.due, round: st.round };
+        log(st, `${p.name} pagou o IR do ano ${ir.year} com a multa da malha fina`, now, actor);
+      } else {
+        changeCredit(st, p, CREDIT.irDeclared, 'IR declarado em dia');
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'declarou', paid: ir.tax, round: st.round };
+        log(st, `${p.name} declarou o IR do ano ${ir.year} e pagou ${money(ir.tax)}`, now, actor);
+      }
+      break;
+    }
+    case 'evadeIR': {
+      turnOnly();
+      const ir = st.irPending;
+      need(ir && ir.pid === actor, 'Não há declaração de IR pendente.');
+      need(!ir.caught, 'Você já caiu na malha fina: pague o imposto e a multa.');
+      const caught = nextRandom(st) < IR.catchChance;
+      if (!caught) {
+        st.irPending = null;
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'passou', paid: 0, round: st.round };
+        // ninguém mais fica sabendo da sonegação
+        log(st, `${p.name} entregou a declaração do ano ${ir.year}`, now, actor);
+        break;
+      }
+      const due = Math.round(ir.tax * (1 + IR.fine));
+      changeCredit(st, p, CREDIT.malhaFina, 'Caiu na malha fina');
+      log(st, `${p.name} sonegou o IR e caiu na malha fina: imposto + multa de ${money(due)}`, now, actor, true);
+      if (p.balance >= due) {
+        applyTransfers(st, [{ from: p.id, to: BANK, amount: due, reason: `Malha fina: IR do ano ${ir.year} + multa de ${Math.round(IR.fine * 100)}%`, kind: 'ir' }], now);
+        st.irPending = null;
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: due, round: st.round };
+      } else {
+        // sem saldo: fica devendo e paga pelo Pix (vendendo, hipotecando ou declarando falência)
+        shortfall(st, p, 'a multa da malha fina');
+        st.irPending = { ...ir, caught: true, due };
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: 0, round: st.round };
+      }
       break;
     }
     default: {
