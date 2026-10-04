@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { BANK_RATES, CREDIT, IR, SPACES, TIERS } from './data';
 import { houseListing, listingFacts, priceLevel } from './listings';
+import { HOUSE_PHOTOS, housePhotos } from './photos';
 import {
   applyAction,
   applyNeighbourhoodChange,
@@ -226,8 +227,21 @@ describe('terreno na compra e três padrões de casa na construção', () => {
     }
     // varia entre bairros
     expect(new Set(streets.map((i) => houseListing(i, 'intermediaria').title)).size).toBeGreaterThan(4);
-    expect(listingFacts({ kind: 'sobrado', title: '', area: 120, rooms: 3, suites: 1, vagas: 2 })).toBe('120 m² · 3 quartos (1 suíte) · 2 vagas');
+    expect(listingFacts({ kind: 'sobrado', title: '', area: 120, rooms: 3, suites: 1, vagas: 2, baths: 2, extras: [] })).toBe('120 m² · 3 quartos (1 suíte) · 2 vagas');
     expect(houseListing(35, 'alto').perk).toBe('vista para o mar'); // Av. Vieira Souto
+    expect(houseListing(35, 'alto').extras).toContain('vista para o mar');
+    for (const i of streets) for (const t of ['basica', 'intermediaria', 'alto'] as TierId[]) expect(houseListing(i, t).baths).toBeGreaterThanOrEqual(1);
+  });
+
+  it('fotos do anúncio: escolha determinística por imóvel e padrão; sem fotos, lista vazia (usa a ilustração)', () => {
+    const list = ['/a.jpg', '/b.jpg', '/c.jpg'];
+    const a = housePhotos(NOVE_JULHO, 'alto', list);
+    expect(housePhotos(NOVE_JULHO, 'alto', list)).toEqual(a);
+    expect([...a].sort()).toEqual(list);
+    const covers = new Set(SPACES.map((s, i) => (s.type === 'street' ? housePhotos(i, 'alto', list)[0] : null)).filter(Boolean));
+    expect(covers.size).toBeGreaterThan(1); // imóveis diferentes começam em fotos diferentes
+    expect(housePhotos(NOVE_JULHO, 'basica', [])).toEqual([]);
+    expect(housePhotos(NOVE_JULHO, 'intermediaria')).toEqual(HOUSE_PHOTOS.intermediaria);
   });
 });
 

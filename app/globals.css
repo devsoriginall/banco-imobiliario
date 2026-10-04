@@ -262,3 +262,34 @@ a{color:inherit}
 .rent-compare{display:grid;grid-template-columns:1fr repeat(3,auto);gap:4px 12px;font-size:13px;background:var(--surface-2);border-radius:12px;padding:10px 12px}
 .rent-compare>b{font-size:11px;text-align:right;color:var(--muted)}
 .rent-compare>span>span:not(:first-child){text-align:right}
+.house-owned{border:none;font:inherit;color:inherit;text-align:left;width:100%;cursor:pointer}
+.see-ad{font-size:12px;font-weight:700;color:var(--accent)}
+.tier-wrap{display:flex;flex-direction:column;gap:4px}
+.see-ad-btn{align-self:flex-end;background:none;border:none;color:var(--accent);font:inherit;font-size:13px;font-weight:700;padding:6px 4px;min-height:32px;cursor:pointer}
+.house-thumb{position:relative;display:block;flex-shrink:0;border-radius:10px;overflow:hidden;background:var(--surface-2)}
+.house-sheet{position:fixed;inset:0;z-index:30;background:var(--surface);display:flex;flex-direction:column;overflow:auto;max-width:600px;margin:0 auto}
+.hs-photo{position:relative;flex-shrink:0;width:100%;aspect-ratio:4/3;max-height:52vh;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:pan-y}
+.hs-photo .house-art{width:100%;height:100%}
+.hs-close,.hs-arrow{position:absolute;border:none;background:rgba(10,14,18,.55);color:#fff;border-radius:999px;width:40px;height:40px;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.hs-close{top:12px;right:12px}
+.hs-arrow{top:50%;transform:translateY(-50%);font-size:28px}
+.hs-arrow.left{left:10px}
+.hs-arrow.right{right:10px}
+.hs-dots{position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:6px}
+.hs-dots i{width:7px;height:7px;border-radius:4px;background:rgba(255,255,255,.55)}
+.hs-dots i.on{background:#fff}
+.hs-body{padding:16px;display:flex;flex-direction:column;gap:12px}
+.hs-title{margin:0;font-size:22px;line-height:1.2}
+.tier-badge{background:var(--surface-2);color:var(--fg)}
+.tier-badge.t-alto{background:var(--ink);color:var(--on-ink)}
+.tier-badge.t-intermediaria{background:var(--info-soft);color:var(--info)}
+.hs-facts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.hs-facts div{background:var(--surface-2);border-radius:12px;padding:8px 4px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.hs-facts b{font-size:16px}
+.hs-facts span{font-size:11px;color:var(--muted)}
+.hs-extras{display:flex;flex-wrap:wrap;gap:6px}
+.hs-extras .pill{background:var(--accent-soft);color:var(--accent)}
+.hs-hood{display:flex;gap:10px;align-items:flex-start}
+.hs-hood .swatch{margin-top:5px;flex-shrink:0}
+.hs-foot{position:sticky;bottom:0;margin-top:auto;background:var(--surface);border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px}
+.hs-foot .btn{width:100%}

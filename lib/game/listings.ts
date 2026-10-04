@@ -13,8 +13,33 @@ export interface HouseListing {
   rooms: number;
   suites: number;
   vagas: number;
+  /** banheiros (suítes + social, e lavabo nas casas de alto padrão) */
+  baths: number;
+  /** diferenciais, ex.: piscina, quintal, vista para o mar */
+  extras: string[];
   /** detalhe extra, ex.: "vista para o mar" */
   perk?: string;
+}
+
+/** Diferenciais tirados do tipo e do título do anúncio. */
+function extrasOf(kind: HouseKind, title: string, tier: TierId, perk?: string): string[] {
+  const t = title.toLowerCase();
+  const out: string[] = [];
+  const add = (cond: boolean, x: string) => cond && !out.includes(x) && out.push(x);
+  add(kind === 'piscina' || t.includes('piscina'), 'piscina');
+  add(t.includes('quintal'), 'quintal');
+  add(t.includes('jardim'), 'jardim');
+  add(t.includes('churrasqueira'), 'churrasqueira');
+  add(t.includes('varanda') || t.includes('sacada'), 'varanda');
+  add(t.includes('terraço'), 'terraço');
+  add(t.includes('edícula'), 'edícula');
+  add(t.includes('lazer') || kind === 'cobertura', 'área de lazer');
+  add(t.includes('metrô'), 'perto do metrô');
+  add(t.includes('rua fechada'), 'rua fechada');
+  add(t.includes('andar alto'), 'vista da cidade');
+  add(kind === 'apto' && tier !== 'basica', 'portaria 24h');
+  if (perk) add(true, perk);
+  return out;
 }
 
 interface Tpl {
@@ -106,7 +131,8 @@ export function houseListing(idx: number, tier: TierId): HouseListing {
   const [lo, hi] = tpl.area;
   const area = Math.round((lo + ((h >>> 8) % (hi - lo + 1))) / 5) * 5;
   const perk = COAST.includes(name) && tier !== 'basica' ? 'vista para o mar' : undefined;
-  return { kind: tpl.kind, title: tpl.title, area, rooms: tpl.rooms, suites: tpl.suites, vagas: tpl.vagas, perk };
+  const baths = Math.max(1, tpl.suites + (tpl.rooms > tpl.suites ? 1 : 0)) + (tier === 'alto' && tpl.kind !== 'apto' ? 1 : 0);
+  return { kind: tpl.kind, title: tpl.title, area, rooms: tpl.rooms, suites: tpl.suites, vagas: tpl.vagas, baths, extras: extrasOf(tpl.kind, tpl.title, tier, perk), perk };
 }
 
 /** Resumo curto, ex.: "120 m² · 3 quartos (1 suíte) · 2 vagas". */

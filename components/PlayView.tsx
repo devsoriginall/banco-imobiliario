@@ -28,7 +28,7 @@ import {
 } from '@/lib/game/rules';
 import type { GameState, Space, TierId } from '@/lib/game/types';
 import type { GameUi } from './Game';
-import { HouseArt } from './HouseArt';
+import { HouseSheet, HouseThumb, type SheetAction } from './HouseSheet';
 
 const groupColor = (g: keyof typeof GROUPS) => `var(${GROUPS[g].c})`;
 const spaceColor = (s: Space) => (s.type === 'street' ? groupColor(s.group) : s.type === 'company' ? 'var(--g-empresa)' : 'var(--g-especial)');
@@ -203,7 +203,8 @@ function RentCompare({ state, i }: { state: GameState; i: number }) {
 }
 
 /** Anúncio do imóvel: o terreno (preço, aluguel sem casa, hipoteca) e, com casas, a casa do padrão escolhido. */
-export function Listing({ state, i, children }: { state: GameState; i: number; children?: React.ReactNode }) {
+export function Listing({ state, i, action, children }: { state: GameState; i: number; action?: SheetAction; children?: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
   const s = SPACES[i];
   if (s.type !== 'street') return null;
   const pr = state.props[i];
@@ -244,17 +245,36 @@ export function Listing({ state, i, children }: { state: GameState; i: number; c
       <p style={{ margin: 0 }}>{s.desc}</p>
       {children}
       {pr && house && tier && (
-        <div className="house-owned" data-testid="house-owned">
-          <HouseArt kind={house.kind} tier={tier} color={groupColor(s.group)} size={96} />
-          <div className="main">
+        <button className="house-owned" data-testid="house-owned" onClick={() => setOpen(true)} aria-label={`Ver anúncio: casa ${tierName(tier)}, ${house.title}`}>
+          <HouseThumb i={i} tier={tier} size={96} />
+          <span className="main">
             <span className="label">Casa {tierName(tier)}</span>
             <b>{house.title}</b>
             <span className="muted">
               {listingFacts(house)}
               {house.perk ? ` · ${house.perk}` : ''}
             </span>
-          </div>
-        </div>
+            <span className="see-ad">Ver anúncio</span>
+          </span>
+        </button>
+      )}
+      {open && pr && tier && (
+        <HouseSheet
+          state={state}
+          i={i}
+          tier={tier}
+          houses={h}
+          onClose={() => setOpen(false)}
+          action={
+            action && {
+              ...action,
+              onClick: () => {
+                setOpen(false);
+                action.onClick();
+              },
+            }
+          }
+        />
       )}
       {pr && !tier && (
         <div className="banner info" data-testid="lot-only">
@@ -311,8 +331,8 @@ export function Listing({ state, i, children }: { state: GameState; i: number; c
   );
 }
 
-/** "Site da imobiliária": as 3 opções da primeira casa no terreno. */
-function TierPicker({ state, i, value, onChange, disabled }: { state: GameState; i: number; value: TierId | null; onChange: (t: TierId) => void; disabled?: boolean }) {
+/** "Site da imobiliária": as 3 opções da primeira casa no terreno; cada uma abre o anúncio completo. */
+function TierPicker({ state, i, value, onChange, onOpen, disabled }: { state: GameState; i: number; value: TierId | null; onChange: (t: TierId) => void; onOpen: (t: TierId) => void; disabled?: boolean }) {
   const s = SPACES[i];
   if (s.type !== 'street') return null;
   return (
@@ -320,23 +340,28 @@ function TierPicker({ state, i, value, onChange, disabled }: { state: GameState;
       {TIER_IDS.map((t) => {
         const l = houseListing(i, t);
         return (
-          <button key={t} className="tier" role="radio" aria-checked={value === t} disabled={disabled} onClick={() => onChange(t)} data-tier={t}>
-            <HouseArt kind={l.kind} tier={t} color={groupColor(s.group)} size={104} />
-            <span className="main">
-              <span className="label">{tierName(t)}</span>
-              <b>{l.title}</b>
-              <span className="muted">
-                {listingFacts(l)}
-                {l.perk ? ` · ${l.perk}` : ''}
-              </span>
-              <span className="tier-nums">
-                <span className="amt num" data-testid={`tier-price-${t}`}>
-                  {money(buildPrice(state, i, t))}
+          <div key={t} className="tier-wrap">
+            <button className="tier" role="radio" aria-checked={value === t} disabled={disabled} onClick={() => onChange(t)} data-tier={t}>
+              <HouseThumb i={i} tier={t} size={104} />
+              <span className="main">
+                <span className="label">{tierName(t)}</span>
+                <b>{l.title}</b>
+                <span className="muted">
+                  {listingFacts(l)}
+                  {l.perk ? ` · ${l.perk}` : ''}
                 </span>
-                <span className="muted num">aluguel {money(tierRents(state, i, t)[1])}</span>
+                <span className="tier-nums">
+                  <span className="amt num" data-testid={`tier-price-${t}`}>
+                    {money(buildPrice(state, i, t))}
+                  </span>
+                  <span className="muted num">aluguel {money(tierRents(state, i, t)[1])}</span>
+                </span>
               </span>
-            </span>
-          </button>
+            </button>
+            <button className="see-ad-btn" onClick={() => onOpen(t)} data-ad={t} aria-label={`Ver anúncio da casa ${tierName(t)}`}>
+              Ver anúncio
+            </button>
+          </div>
         );
       })}
     </div>
@@ -430,9 +455,20 @@ function LandedView({ ui }: { ui: GameUi }) {
           </div>
         );
     }
+    const h = state.props[i]?.houses || 0;
+    const ownTier = tierOf(state, i);
+    const buildAction: SheetAction | undefined =
+      mine && owner === me && ownTier && h < 5
+        ? {
+            label: `Construir ${h === 4 ? 'hotel' : 'casa'} · ${money(buildPrice(state, i))}`,
+            disabled: !!buildBlock(state, i, me) || p.balance < buildPrice(state, i),
+            note: buildBlock(state, i, me) ? `Sem construir agora: ${buildBlock(state, i, me)!.toLowerCase()}.` : undefined,
+            onClick: () => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa'),
+          }
+        : undefined;
     inner = (
       <>
-        <Listing state={state} i={i}>
+        <Listing state={state} i={i} action={buildAction}>
           {offer}
         </Listing>
         {action}
@@ -672,6 +708,7 @@ function LandedView({ ui }: { ui: GameUi }) {
 function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
   const { state, me } = ui;
   const [pick, setPick] = useState<TierId | null>(null);
+  const [ad, setAd] = useState<TierId | null>(null);
   const s = SPACES[i];
   if (s.type !== 'street') return null;
   const p = findPlayer(state, me)!;
@@ -692,7 +729,25 @@ function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
         <span className="muted" style={{ fontSize: 13 }}>
           Seu terreno rende {money(rentOf(state, i))} de aluguel. O padrão escolhido vale para as próximas casas e o hotel.
         </span>
-        <TierPicker state={state} i={i} value={pick} onChange={setPick} disabled={!!block} />
+        <TierPicker state={state} i={i} value={pick} onChange={setPick} onOpen={setAd} disabled={!!block} />
+        {ad && (
+          <HouseSheet
+            state={state}
+            i={i}
+            tier={ad}
+            onClose={() => setAd(null)}
+            action={{
+              label: `Construir casa ${tierName(ad)} · ${money(buildPrice(state, i, ad))}`,
+              disabled: !!block || p.balance < buildPrice(state, i, ad),
+              note: block ? `Sem construir agora: ${block.toLowerCase()}.` : p.balance < buildPrice(state, i, ad) ? 'Saldo insuficiente para esta casa.' : undefined,
+              onClick: () => {
+                setAd(null);
+                setPick(ad);
+                ui.pix({ type: 'build', idx: i, tier: ad }, `Construir casa ${tierName(ad)}`);
+              },
+            }}
+          />
+        )}
         <button className="btn primary" disabled={!!block || !pick || p.balance < price} onClick={() => pick && ui.pix({ type: 'build', idx: i, tier: pick }, `Construir casa ${tierName(pick)}`)}>
           {pick ? `Construir casa ${tierName(pick)} · ${money(price)}` : 'Escolha uma das 3 casas'}
         </button>
