@@ -94,7 +94,7 @@ h3{font-size:15px;font-weight:600}
 
 /* Abas */
 .tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:6px 8px calc(8px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;z-index:5}
-.tabs .inner{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;width:100%;max-width:760px}
+.tabs .inner{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:100%;max-width:760px}
 .tab{border:none;background:transparent;min-height:52px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;color:var(--muted)}
 .tab[aria-selected="true"]{color:var(--accent);font-weight:700;background:var(--accent-soft)}
 
@@ -177,3 +177,23 @@ a{color:inherit}
 .space:disabled{cursor:default;opacity:1}
 .board.readonly .space{cursor:default}
 .theme-btn{border:1.5px solid var(--line);background:var(--surface);border-radius:12px;min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
+
+/* ---------- Negociação e empréstimo ---------- */
+.wallet .debt{display:inline-block;margin-top:6px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--warn-soft);color:var(--warn)}
+.wallet .debt.urgent{background:var(--bad-soft);color:var(--bad)}
+.bank-mark{width:36px;height:36px;border-radius:12px;background:var(--ink);color:var(--on-ink);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.card.trade.incoming{border:2px solid var(--accent);padding:15px}
+.trade-sides{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.trade-sides>div{background:var(--surface-2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.trade-items{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600}
+.trade-items li{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.trade-block{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+.pick{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:8px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);text-align:left}
+.pick .main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.pick .main b{font-size:14px}
+.pick .main span{font-size:12px;color:var(--muted)}
+.pick .box{width:24px;height:24px;border-radius:8px;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pick[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.pick[aria-pressed="true"] .box{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.pick:disabled{opacity:.5;cursor:not-allowed}
+.pick.static{justify-content:space-between}

@@ -129,7 +129,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
             })}
           </div>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Cotas só se compram da empresa, ao cair nela. Com 6 ou mais cotas você é o dono e recebe toda a taxa.
+            Cotas se compram da empresa só ao cair nela, ou de outro jogador negociando na aba Banco. Com 6 ou mais cotas você é o dono e recebe toda a taxa.
           </p>
         </div>
       )}
