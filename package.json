@@ -11,7 +11,8 @@
     "e2e": "node scripts/e2e-dois-jogadores.mjs",
     "e2e:banco": "node scripts/e2e-negociacao-emprestimo.mjs",
     "e2e:fase2": "node scripts/e2e-casas-ir-credito.mjs",
-    "e2e:mercado": "node scripts/e2e-jornal-bolsa.mjs"
+    "e2e:mercado": "node scripts/e2e-jornal-bolsa.mjs",
+    "e2e:poupanca": "node scripts/e2e-poupanca-seguro.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { GROUPS, NEWS, SPACES, TIER_IDS } from '@/lib/game/data';
+import { GROUPS, MAX_DOUBLES, NEWS, SPACES, TIER_IDS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import { houseListing, listingFacts } from '@/lib/game/listings';
 import {
@@ -11,6 +11,11 @@ import {
   currentPlayer,
   feeRate,
   feeTotal,
+  finBadge,
+  financeBlock,
+  financeEntrada,
+  finOf,
+  insuredUntil,
   marketOn,
   priceChange,
   sharePrice,
@@ -30,7 +35,9 @@ import {
 } from '@/lib/game/rules';
 import type { GameState, Space, TierId } from '@/lib/game/types';
 import type { GameUi } from './Game';
+import { FinanceChooser } from './Finance';
 import { HouseSheet, HouseThumb, type SheetAction } from './HouseSheet';
+import { ConfirmModal } from './Modals';
 import { fmtChange } from './MercadoView';
 import { HoodPills } from './ui';
 
@@ -330,6 +337,11 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
           Hipotecado: não cobra aluguel
         </span>
       )}
+      {pr && (insuredUntil(state, i) !== null || finOf(state, i)) && (
+        <div className="row" style={{ gap: 6 }}>
+          <PropBadges state={state} i={i} />
+        </div>
+      )}
     </div>
   );
 }
@@ -379,7 +391,11 @@ function LandedView({ ui }: { ui: GameUi }) {
   const i = ti.landed!;
   const s = SPACES[i];
   const [dice, setDice] = useState<number | null>(null);
+  const [financing, setFinancing] = useState(false);
+  const [confirmJail, setConfirmJail] = useState(false);
   const who = mine ? 'Você' : p.name;
+  /** esta seria a dupla número `nextDouble` seguida nesta vez */
+  const nextDouble = (ti.doubles ?? 0) + 1;
 
   let inner: React.ReactNode = null;
   if (s.type === 'street') {
@@ -408,17 +424,24 @@ function LandedView({ ui }: { ui: GameUi }) {
               Compre só o terreno. Numa próxima vez que cair aqui, escolha a primeira casa entre 3 padrões no site da imobiliária.
             </span>
             {mine ? (
-              <>
-                <div className="row">
-                  <button className="btn primary" disabled={p.balance < price} onClick={() => ui.pix({ type: 'buy' }, 'Comprar terreno')}>
-                    Comprar terreno por {money(price)}
-                  </button>
-                  <button className="btn" onClick={() => ui.run({ type: 'skipBuy' })}>
-                    Não comprar
-                  </button>
-                </div>
-                {p.balance < price && <div className="banner warn">Saldo insuficiente para o terreno.</div>}
-              </>
+              financing ? (
+                <FinanceChooser ui={ui} price={price} what={`o terreno da ${s.name}`} action={(plan) => ({ type: 'buy', finance: plan })} onCancel={() => setFinancing(false)} />
+              ) : (
+                <>
+                  <div className="row">
+                    <button className="btn primary" disabled={p.balance < price} onClick={() => ui.pix({ type: 'buy' }, 'Comprar terreno')}>
+                      Comprar terreno por {money(price)}
+                    </button>
+                    <button className="btn" onClick={() => setFinancing(true)}>
+                      Financiar · entrada {money(financeEntrada(price))}
+                    </button>
+                    <button className="btn" onClick={() => ui.run({ type: 'skipBuy' })}>
+                      Não comprar
+                    </button>
+                  </div>
+                  {p.balance < price && <div className="banner warn">Saldo insuficiente para o terreno à vista.{financeBlock(state, me, price) ? '' : ' Dá para financiar com 20% de entrada.'}</div>}
+                </>
+              )
             ) : (
               <Waiting text={`${p.name} está decidindo se compra o terreno.`} />
             )}
@@ -700,8 +723,13 @@ function LandedView({ ui }: { ui: GameUi }) {
           <button className="btn primary" disabled={!ti.resolved} onClick={() => ui.run({ type: 'endTurn', again: false })}>
             Passar a vez
           </button>
-          <button className="btn" disabled={!ti.resolved || p.jailed} onClick={() => ui.run({ type: 'endTurn', again: true })}>
-            Tirei dupla: jogar de novo
+          <button
+            className="btn"
+            disabled={!ti.resolved || p.jailed}
+            data-testid="double-btn"
+            onClick={() => (nextDouble >= MAX_DOUBLES ? setConfirmJail(true) : ui.run({ type: 'endTurn', again: true }))}
+          >
+            {nextDouble === 1 ? 'Tirei dupla: jogar de novo' : `Tirei dupla (${nextDouble}ª seguida)`}
           </button>
           {state.prev && state.prevBy === me && state.prev.turnInfo.landed === null && (
             <button className="btn small" onClick={() => ui.run({ type: 'undo' })}>
@@ -709,6 +737,18 @@ function LandedView({ ui }: { ui: GameUi }) {
             </button>
           )}
         </div>
+      )}
+      {confirmJail && (
+        <ConfirmModal
+          title={`${MAX_DOUBLES}ª dupla seguida`}
+          text={`Quem tira ${MAX_DOUBLES} duplas seguidas na mesma vez vai direto para a detenção, sem jogar de novo, e a vez passa para o próximo jogador.`}
+          confirm="Tirei a 3ª dupla: ir para a detenção"
+          onConfirm={async () => {
+            setConfirmJail(false);
+            await ui.run({ type: 'endTurn', again: true });
+          }}
+          onCancel={() => setConfirmJail(false)}
+        />
       )}
     </div>
   );
@@ -722,6 +762,7 @@ function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
   const { state, me } = ui;
   const [pick, setPick] = useState<TierId | null>(null);
   const [ad, setAd] = useState<TierId | null>(null);
+  const [financing, setFinancing] = useState(false);
   const s = SPACES[i];
   if (s.type !== 'street') return null;
   const p = findPlayer(state, me)!;
@@ -761,10 +802,21 @@ function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
             }}
           />
         )}
-        <button className="btn primary" disabled={!!block || !pick || p.balance < price} onClick={() => pick && ui.pix({ type: 'build', idx: i, tier: pick }, `Construir casa ${tierName(pick)}`)}>
-          {pick ? `Construir casa ${tierName(pick)} · ${money(price)}` : 'Escolha uma das 3 casas'}
-        </button>
-        {pick && !block && p.balance < price && <div className="banner warn">Saldo insuficiente para esta casa.</div>}
+        {pick && financing && !block ? (
+          <FinanceChooser ui={ui} price={price} idx={i} what={`a casa ${tierName(pick)}`} action={(plan) => ({ type: 'build', idx: i, tier: pick, finance: plan })} onCancel={() => setFinancing(false)} />
+        ) : (
+          <div className="row">
+            <button className="btn primary" disabled={!!block || !pick || p.balance < price} onClick={() => pick && ui.pix({ type: 'build', idx: i, tier: pick }, `Construir casa ${tierName(pick)}`)}>
+              {pick ? `Construir casa ${tierName(pick)} · ${money(price)}` : 'Escolha uma das 3 casas'}
+            </button>
+            {pick && !block && (
+              <button className="btn" onClick={() => setFinancing(true)}>
+                Financiar · entrada {money(financeEntrada(price))}
+              </button>
+            )}
+          </div>
+        )}
+        {pick && !block && !financing && p.balance < price && <div className="banner warn">Saldo insuficiente para esta casa à vista.</div>}
         {why}
       </div>
     );
@@ -790,11 +842,42 @@ function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
           </b>
         </div>
       </div>
-      <button className="btn primary" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
-        Construir {what} · {money(price)}
-      </button>
+      {financing && !block ? (
+        <FinanceChooser ui={ui} price={price} idx={i} what={h === 4 ? 'o hotel' : 'a casa'} action={(plan) => ({ type: 'build', idx: i, finance: plan })} onCancel={() => setFinancing(false)} />
+      ) : (
+        <div className="row">
+          <button className="btn primary" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
+            Construir {what} · {money(price)}
+          </button>
+          {!block && !finOf(state, i) && (
+            <button className="btn" onClick={() => setFinancing(true)}>
+              Financiar · entrada {money(financeEntrada(price))}
+            </button>
+          )}
+        </div>
+      )}
       {why}
     </div>
+  );
+}
+
+/** Selos de seguro e financiamento do imóvel (só as pílulas, para entrar numa linha de selos). */
+export function PropBadges({ state, i }: { state: GameState; i: number }) {
+  const u = insuredUntil(state, i);
+  const f = finOf(state, i);
+  return (
+    <>
+      {u !== null && (
+        <span className="pill info" data-testid={`insured-${i}`}>
+          Segurado até a rodada {u}
+        </span>
+      )}
+      {f && (
+        <span className="pill warn" data-testid={`financed-${i}`}>
+          {finBadge(f)}
+        </span>
+      )}
+    </>
   );
 }
 

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { COMPANY_IDX, GROUPS, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { describeSide, emptySide, findPlayer, lotPrice, pname, sharePrice, sharesOf, street, tradeBlock, tradeProblem, tradesOf } from '@/lib/game/rules';
+import { describeSide, emptySide, findPlayer, finOf, lotPrice, pname, sharePrice, sharesOf, street, tradeBlock, tradeProblem, tradesOf } from '@/lib/game/rules';
 import type { GameState, Trade, TradeSide } from '@/lib/game/types';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
@@ -159,7 +159,7 @@ function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; 
               <span>
                 Terreno · {money(lotPrice(state, i))}
                 {state.props[i].mortgaged ? ' · hipotecado' : ''}
-                {block ? ' · com casas' : ''}
+                {block ? (finOf(state, i) ? ' · financiado, alienado ao banco' : ' · com casas') : ''}
               </span>
             </span>
             <span className="box" aria-hidden="true">
