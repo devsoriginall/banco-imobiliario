@@ -6,7 +6,7 @@ import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
 import { ScoreView, TxView } from './LedgerViews';
-import { ConfirmModal, IrModal, IrPassedModal, PixModal, ReceiptModal, type PixRequest } from './Modals';
+import { ConfirmModal, IrExemptModal, IrModal, IrPassedModal, PixModal, ReceiptModal, type PixRequest } from './Modals';
 import { PlayView } from './PlayView';
 import { PropsView } from './PropsView';
 import type { PushedReceipt, Run } from './Room';
@@ -46,6 +46,18 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   const irMine = state.irPending?.pid === me && !state.winner ? state.irPending : null;
   const mine = findPlayer(state, me);
   const cur = currentPlayer(state);
+  /** ano isento que acabou de fechar: mostra a declaração uma vez neste celular */
+  const lastIr = mine?.irLast;
+  const exemptKey = lastIr && lastIr.outcome === 'isento' && lastIr.round === state.round ? `ir-isento:${state.code}:${me}:${lastIr.year}` : null;
+  const [seenExempt, setSeenExempt] = useState<string[]>([]);
+  const irExempt = exemptKey && lastIr && !seenExempt.includes(exemptKey) && !wasSeen(exemptKey) ? lastIr : null;
+  const closeExempt = () => {
+    if (!exemptKey) return;
+    try {
+      sessionStorage.setItem(exemptKey, '1');
+    } catch {}
+    setSeenExempt((xs) => [...xs, exemptKey]);
+  };
 
   const ui: GameUi = {
     state,
@@ -184,6 +196,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
         />
       )}
       {irPassed !== null && !pixReq && !receipt && <IrPassedModal tax={irPassed} onClose={() => setIrPassed(null)} />}
+      {irExempt && !irMine && !pixReq && !receipt && !pushed && <IrExemptModal year={irExempt.year} income={irExempt.income} onClose={closeExempt} />}
       {confirmReset && (
         <ConfirmModal
           title="Começar uma nova partida?"
@@ -219,4 +232,12 @@ function DebtLine({ state, me }: { state: GameState; me: string }) {
       Dívida {money(loanOwed(loan))} · {left <= 1 ? 'vence na próxima rodada' : `vence em ${left} rodadas`}
     </div>
   );
+}
+
+function wasSeen(key: string): boolean {
+  try {
+    return typeof window !== 'undefined' && sessionStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
 }
