@@ -268,6 +268,41 @@ export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: 
   );
 }
 
+/** Fim do ano sem imposto a pagar: mostra a declaração mesmo assim, para o jogador saber que o IR foi calculado. */
+export function IrExemptModal({ year, income, onClose }: { year: number; income: number; onClose: () => void }) {
+  return (
+    <Sheet label="Declaração do IR">
+      <div className="ir-head">
+        <span className="label">Receita Federal · ano {year}</span>
+        <h2>Declaração do IR</h2>
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+          Você completou uma volta no tabuleiro e o ano {year} foi fechado.
+        </p>
+      </div>
+      <div className="lines" data-testid="ir-exempt-lines">
+        <div>
+          <span>Renda do ano (aluguéis, empresas, notícias)</span>
+          <span className="num">{money(income)}</span>
+        </div>
+        <div>
+          <span>Isenção</span>
+          <span className="num">− {money(IR.exempt)}</span>
+        </div>
+        <div>
+          <span>Imposto a pagar</span>
+          <span className="num">{money(0)}</span>
+        </div>
+      </div>
+      <div className="banner info">
+        Isento neste ano: sua renda ficou abaixo de {money(IR.exempt)}. O pró-labore não conta como renda.
+      </div>
+      <button className="btn dark block" onClick={onClose}>
+        Entendi
+      </button>
+    </Sheet>
+  );
+}
+
 export function IrPassedModal({ tax, onClose }: { tax: number; onClose: () => void }) {
   return (
     <Sheet label="Malha fina">
