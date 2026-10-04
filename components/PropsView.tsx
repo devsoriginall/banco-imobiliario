@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { COMPANY_IDX, GROUPS, SHARE_PRICE, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankShares, canBuild, canMortgage, canSellHouse, canUnmortgage, controller, groupIdx, houses, pname, rentOf, sharesOf, street, unmortgageCost } from '@/lib/game/rules';
+import { bankShares, buildBlock, canMortgage, canSellHouse, canUnmortgage, controller, groupIdx, houses, pname, rentOf, sharesOf, street, unmortgageCost } from '@/lib/game/rules';
 import type { GroupId } from '@/lib/game/types';
 import type { GameUi } from './Game';
 
@@ -27,10 +27,11 @@ export function PropsView({ ui }: { ui: GameUi }) {
               const pr = state.props[i];
               const h = houses(state, i);
               const acts: React.ReactNode[] = [];
+              const block = pr?.owner === me ? buildBlock(state, i, me) : null;
               if (pr?.owner === me) {
-                if (canBuild(state, i, me))
+                if (h < 5)
                   acts.push(
-                    <button key="b" className="btn small" onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
+                    <button key="b" className="btn small" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>
                       {h === 4 ? 'Hotel' : 'Casa'} {money(s.build)}
                     </button>,
                   );
@@ -65,6 +66,11 @@ export function PropsView({ ui }: { ui: GameUi }) {
                       {pr?.mortgaged && <span className="pill warn">Hipotecado</span>}
                       {h > 0 && <span className="pill ok">{h === 5 ? 'Hotel' : `${h} casa${h > 1 ? 's' : ''}`}</span>}
                     </div>
+                    {block && block !== 'Já tem hotel' && (
+                      <span className="build-why" data-testid={`build-why-${i}`}>
+                        Sem construir agora: {block}
+                      </span>
+                    )}
                   </div>
                   {acts.length > 0 && (
                     <div className="row" style={{ gap: 6 }}>
@@ -92,7 +98,10 @@ export function PropsView({ ui }: { ui: GameUi }) {
           Tabuleiro todo
         </button>
       </div>
-      <div className="banner info">Construir e tirar hipoteca só na sua vez. Vender casa e hipotecar valem a qualquer momento, para levantar dinheiro.</div>
+      <div className="banner info">
+        Construir: em qualquer imóvel seu sem hipoteca, na sua vez, uma construção por rodada e não no imóvel comprado nesta rodada; hotel depois de 4 casas. Tirar hipoteca também só na sua vez. Vender casa e
+        hipotecar valem a qualquer momento.
+      </div>
       {groups.length === 0 && comps.length === 0 && (
         <div className="card">
           <h2>Nenhum imóvel ainda</h2>

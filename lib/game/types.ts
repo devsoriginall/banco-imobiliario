@@ -47,12 +47,18 @@ export interface Player {
   jailTries: number;
   freeCards: number;
   out: boolean;
+  /** rodada em que construiu pela última vez (uma construção por rodada) */
+  builtRound?: number;
+  /** rodada em que comprou cota da empresa pela última vez (uma cota por rodada) */
+  shareRound?: number;
 }
 
 export interface Property {
   owner: string;
   houses: number; // 0..4 casas, 5 = hotel
   mortgaged: boolean;
+  /** rodada em que o dono atual adquiriu o imóvel (compra, negociação ou falência) */
+  round?: number;
 }
 
 export type TxKind =

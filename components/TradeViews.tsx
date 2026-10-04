@@ -159,7 +159,7 @@ function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; 
               <span>
                 {money(s.price)}
                 {state.props[i].mortgaged ? ' · hipotecado' : ''}
-                {block ? ' · grupo com casas' : ''}
+                {block ? ' · com casas' : ''}
               </span>
             </span>
             <span className="box" aria-hidden="true">
@@ -230,7 +230,7 @@ export function TradeBuilder({ ui, partner, onClose }: { ui: GameUi; partner: st
       )}
       {problem && (give.money || get.money || give.props.length || get.props.length || Object.values({ ...give.shares, ...get.shares }).some(Boolean)) ? <div className="banner warn">{problem}</div> : null}
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Imóveis de grupo com casas não entram (venda as casas antes). Hipotecados entram e continuam hipotecados.
+        Imóveis com casas não entram (venda as casas antes). Hipotecados entram e continuam hipotecados.
       </p>
       <button
         className="btn primary block"

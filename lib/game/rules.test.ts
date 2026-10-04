@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { COMPANY_IDX, JAIL_POS, NEWS } from './data';
-import { applyAction, bankShares, canBuild, canSellHouse, controller, debtOf, equity, feeTotal, loanLimit, loanRoundsLeft, netWorth, newRoom, rentOf, RuleError, tradeBlock } from './rules';
+import { applyAction, bankShares, buildBlock, canBuild, canSellHouse, controller, debtOf, equity, feeTotal, loanLimit, loanRoundsLeft, netWorth, newRoom, rentOf, RuleError, tradeBlock } from './rules';
 import type { Action, GameState } from './types';
 
 // Índices do tabuleiro usados nos testes
@@ -11,6 +11,7 @@ const BEIRA_MAR = 4; // verde, $600
 const NEWS_IDX = 6;
 const TAX = 23;
 const GOTOJAIL = 30;
+const PAULISTA_IDX = 26;
 
 const now = new Date('2026-01-01T12:00:00Z');
 const seq = () => 0.5;
@@ -63,7 +64,7 @@ describe('cair na casa e comprar', () => {
     let st = act(game(), 'ana', { type: 'land', idx: NOVE_JULHO });
     expect(st.turnInfo.resolved).toBe(false);
     st = act(st, 'ana', { type: 'buy' });
-    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false });
+    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false, round: 1 });
     expect(bal(st, 'ana')).toBe(24000);
     expect(st.turnInfo.resolved).toBe(true);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 1000, kind: 'buy' });
@@ -238,64 +239,108 @@ describe('hipoteca', () => {
   });
 });
 
-describe('construção em rodízio', () => {
-  it('precisa do grupo completo', () => {
-    const st = give(game(), 'ana', [NOVE_JULHO, BRASIL]);
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(false);
+describe('construção (regra da casa)', () => {
+  it('constrói em qualquer imóvel seu, sem precisar do grupo completo', () => {
+    const st = act(give(game(), 'ana', [NOVE_JULHO]), 'ana', { type: 'build', idx: NOVE_JULHO });
+    expect(st.props[NOVE_JULHO].houses).toBe(1);
+    expect(bal(st, 'ana')).toBe(24500);
+    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 500, kind: 'build' });
   });
 
-  it('uma casa por imóvel de cada vez, hotel só com 4 em todos', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO, BRASIL, BEIRA_MAR]);
+  it('uma construção por rodada no total, em todos os imóveis', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO, PAULISTA_IDX]);
     st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO });
-    expect(bal(st, 'ana')).toBe(24500);
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(false);
-    expect(canBuild(st, BRASIL, 'ana')).toBe(true);
-    st = act(st, 'ana', { type: 'build', idx: BRASIL });
-    st = act(st, 'ana', { type: 'build', idx: BEIRA_MAR });
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(true);
-    for (const i of [NOVE_JULHO, BRASIL, BEIRA_MAR]) st.props[i].houses = 4;
-    st.props[BRASIL].houses = 3;
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(false);
-    st.props[BRASIL].houses = 4;
+    expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Já construiu nesta rodada');
+    expect(buildBlock(st, PAULISTA_IDX, 'ana')).toBe('Já construiu nesta rodada');
+    expect(() => act(st, 'ana', { type: 'build', idx: PAULISTA_IDX })).toThrow(/já construiu nesta rodada/);
+    // tirar dupla e jogar de novo não libera outra construção
+    st = act(act(st, 'ana', { type: 'land', idx: 20 }), 'ana', { type: 'endTurn', again: true });
+    expect(canBuild(st, PAULISTA_IDX, 'ana')).toBe(false);
+    // na rodada seguinte pode de novo
+    st = act(act(st, 'ana', { type: 'land', idx: 20 }), 'ana', { type: 'endTurn', again: false });
+    st = act(act(st, 'beto', { type: 'land', idx: 20 }), 'beto', { type: 'endTurn', again: false });
+    expect(st.round).toBe(2);
+    st = act(st, 'ana', { type: 'build', idx: PAULISTA_IDX });
+    expect(st.props[PAULISTA_IDX].houses).toBe(1);
+  });
+
+  it('não constrói no imóvel comprado nesta rodada', () => {
+    const st = act(act(game(), 'ana', { type: 'land', idx: NOVE_JULHO }), 'ana', { type: 'buy' });
+    expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Comprado nesta rodada');
+    expect(() => act(st, 'ana', { type: 'build', idx: NOVE_JULHO })).toThrow(/comprado nesta rodada/);
+    const later = structuredClone(st);
+    later.round = 2;
+    expect(canBuild(later, NOVE_JULHO, 'ana')).toBe(true);
+  });
+
+  it('imóvel recebido por negociação também conta como adquirido na rodada', () => {
+    let st = give(game(), 'beto', [NOVE_JULHO]);
+    st.round = 3;
+    st = act(st, 'beto', { type: 'proposeTrade', to: 'ana', give: { money: 0, props: [NOVE_JULHO], shares: {} }, get: { money: 100, props: [], shares: {} } });
+    st = act(st, 'ana', { type: 'acceptTrade', id: st.trades![0].id });
+    expect(st.props[NOVE_JULHO].round).toBe(3);
+    expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Comprado nesta rodada');
+  });
+
+  it('hotel depois de 4 casas no mesmo imóvel; hipotecado e fora da vez não', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO], 4);
     st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO });
     expect(st.props[NOVE_JULHO].houses).toBe(5);
     expect(st.tx[0].reason).toMatch(/^Hotel/);
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(false);
+    st.players[0].builtRound = 0;
+    expect(buildBlock(st, NOVE_JULHO, 'ana')).toBe('Já tem hotel');
+    const m = give(game(), 'ana', [NOVE_JULHO]);
+    m.props[NOVE_JULHO].mortgaged = true;
+    expect(buildBlock(m, NOVE_JULHO, 'ana')).toBe('Hipotecado');
+    m.props[NOVE_JULHO].mortgaged = false;
+    m.turn = 1;
+    expect(buildBlock(m, NOVE_JULHO, 'ana')).toBe('Só na sua vez');
   });
 
-  it('não constrói com hipoteca no grupo nem fora da vez', () => {
-    const st = give(game(), 'ana', [NOVE_JULHO, BRASIL, BEIRA_MAR]);
-    st.props[BRASIL].mortgaged = true;
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(false);
-    st.props[BRASIL].mortgaged = false;
-    st.turn = 1;
-    expect(canBuild(st, NOVE_JULHO, 'ana')).toBe(false);
-  });
-
-  it('vende em rodízio pela metade do custo', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO, BRASIL, BEIRA_MAR], 1);
-    st.props[NOVE_JULHO].houses = 2;
-    expect(canSellHouse(st, BRASIL, 'ana')).toBe(false);
-    expect(canSellHouse(st, NOVE_JULHO, 'ana')).toBe(true);
+  it('vende construção de qualquer imóvel, a qualquer momento, pela metade do custo', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO, BRASIL], 1);
+    st.props[NOVE_JULHO].houses = 3;
+    expect(canSellHouse(st, BRASIL, 'ana')).toBe(true);
     st.turn = 1; // vender vale fora da vez
-    st = act(st, 'ana', { type: 'sellHouse', idx: NOVE_JULHO });
-    expect(st.props[NOVE_JULHO].houses).toBe(1);
+    st = act(st, 'ana', { type: 'sellHouse', idx: BRASIL });
+    expect(st.props[BRASIL].houses).toBe(0);
     expect(bal(st, 'ana')).toBe(25250);
+    expect(canSellHouse(st, BRASIL, 'ana')).toBe(false);
   });
 });
 
 describe('empresas e cotas', () => {
   const others = COMPANY_IDX.filter((i) => i !== BANCO_AURORA);
 
-  it('compra cotas da empresa só ao cair nela', () => {
-    expect(() => act(game(), 'ana', { type: 'buyShares', qty: 2 })).toThrow(RuleError);
+  it('compra cotas da empresa só ao cair nela, uma por rodada', () => {
+    expect(() => act(game(), 'ana', { type: 'buyShares', qty: 1 })).toThrow(RuleError);
     let st = act(game(), 'ana', { type: 'land', idx: BANCO_AURORA });
     expect(st.turnInfo.resolved).toBe(true); // ninguém mais tem cotas
-    st = act(st, 'ana', { type: 'buyShares', qty: 6 });
-    expect(bal(st, 'ana')).toBe(25000 - 1200);
-    expect(controller(st, BANCO_AURORA)).toBe('ana');
-    expect(bankShares(st, BANCO_AURORA)).toBe(4);
-    expect(() => act(st, 'ana', { type: 'buyShares', qty: 5 })).toThrow(/tantas cotas/);
+    expect(() => act(st, 'ana', { type: 'buyShares', qty: 2 })).toThrow(/uma cota por rodada/);
+    st = act(st, 'ana', { type: 'buyShares', qty: 1 });
+    expect(bal(st, 'ana')).toBe(25000 - 200);
+    expect(st.shares[BANCO_AURORA]).toEqual({ ana: 1 });
+    expect(bankShares(st, BANCO_AURORA)).toBe(9);
+    expect(() => act(st, 'ana', { type: 'buyShares', qty: 1 })).toThrow(/já comprou uma cota/);
+    // com dupla, cai em outra empresa na mesma rodada: continua valendo o limite
+    st = act(st, 'ana', { type: 'endTurn', again: true });
+    st = act(st, 'ana', { type: 'land', idx: others[0] });
+    expect(() => act(st, 'ana', { type: 'buyShares', qty: 1 })).toThrow(/já comprou uma cota/);
+    // na rodada seguinte, pode de novo
+    st = act(act(st, 'ana', { type: 'endTurn', again: false }), 'beto', { type: 'land', idx: 20 });
+    st = act(st, 'beto', { type: 'endTurn', again: false });
+    st = act(st, 'ana', { type: 'land', idx: BANCO_AURORA });
+    st = act(st, 'ana', { type: 'buyShares', qty: 1 });
+    expect(st.shares[BANCO_AURORA]).toEqual({ ana: 2 });
+    expect(controller(st, BANCO_AURORA)).toBeNull();
+  });
+
+  it('a empresa sem cotas à venda recusa a compra', () => {
+    let st = game();
+    st.shares[BANCO_AURORA] = { beto: 10 };
+    st = act(st, 'ana', { type: 'land', idx: BANCO_AURORA });
+    st = act(st, 'ana', { type: 'payFee', dice: 2 });
+    expect(() => act(st, 'ana', { type: 'buyShares', qty: 1 })).toThrow(/tantas cotas/);
   });
 
   it('dono (≥6 cotas) recebe dados × 500', () => {
@@ -442,15 +487,17 @@ describe('negociação entre jogadores', () => {
     st.props[NOVE_JULHO].mortgaged = true;
     st = act(st, 'ana', { type: 'proposeTrade', to: 'beto', give: side({ props: [NOVE_JULHO] }), get: side({ money: 300 }) });
     st = act(st, 'beto', { type: 'acceptTrade', id: trades(st)[0].id });
-    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'beto', houses: 0, mortgaged: true });
+    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'beto', houses: 0, mortgaged: true, round: 1 });
   });
 
-  it('imóvel com casas (ou de grupo com casas) não entra na negociação', () => {
-    const st = give(game(), 'ana', [NOVE_JULHO, BRASIL, BEIRA_MAR]);
+  it('imóvel com casas não entra na negociação; o vizinho de grupo sem casas entra', () => {
+    let st = give(give(game(), 'ana', [NOVE_JULHO, BRASIL, BEIRA_MAR]), 'beto', [PAULISTA]);
     st.props[BRASIL].houses = 1;
     expect(() => act(st, 'ana', { type: 'proposeTrade', to: 'beto', give: side({ props: [BRASIL] }), get: side() })).toThrow(/venda as casas/);
-    expect(() => act(st, 'ana', { type: 'proposeTrade', to: 'beto', give: side({ props: [NOVE_JULHO] }), get: side() })).toThrow(/venda as casas/);
-    expect(tradeBlock(st, NOVE_JULHO, 'ana')).toMatch(/grupo verde/);
+    expect(tradeBlock(st, BRASIL, 'ana')).toMatch(/Av\. Brasil: venda as casas/);
+    expect(tradeBlock(st, NOVE_JULHO, 'ana')).toBeNull();
+    st = act(st, 'ana', { type: 'proposeTrade', to: 'beto', give: side({ props: [NOVE_JULHO] }), get: side({ props: [PAULISTA] }) });
+    expect(trades(st)).toHaveLength(1);
   });
 
   it('valida posse, saldo, cotas e proposta vazia', () => {

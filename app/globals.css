@@ -197,3 +197,4 @@ a{color:inherit}
 .pick[aria-pressed="true"] .box{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .pick:disabled{opacity:.5;cursor:not-allowed}
 .pick.static{justify-content:space-between}
+.li .main span.build-why{color:var(--warn);font-weight:600}

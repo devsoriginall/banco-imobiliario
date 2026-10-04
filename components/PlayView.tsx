@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { COMPANY_RATE, GROUPS, NEWS, SHARE_PRICE, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankShares, controller, currentPlayer, feeTotal, othersHoldShares, ownedBy, pname, rentOf, sharesOf, transfersFor } from '@/lib/game/rules';
+import { bankShares, boughtShareThisRound, controller, currentPlayer, feeTotal, othersHoldShares, ownedBy, pname, rentOf, sharesOf, transfersFor } from '@/lib/game/rules';
 import type { GameState, Space } from '@/lib/game/types';
 import type { GameUi } from './Game';
 
@@ -230,7 +230,6 @@ function LandedView({ ui }: { ui: GameUi }) {
   const i = ti.landed!;
   const s = SPACES[i];
   const [dice, setDice] = useState<number | null>(null);
-  const [qty, setQty] = useState(1);
   const who = mine ? 'Você' : p.name;
 
   let inner: React.ReactNode = null;
@@ -298,8 +297,8 @@ function LandedView({ ui }: { ui: GameUi }) {
     const bankQ = bankShares(state, i);
     const holders = Object.entries(sh).filter(([, q]) => q > 0);
     const needsFee = othersHoldShares(state, i, p.id) && !ti.feePaid;
-    const max = Math.min(bankQ, Math.floor(p.balance / SHARE_PRICE));
-    const q = Math.max(1, Math.min(qty, Math.max(1, max)));
+    const boughtShare = boughtShareThisRound(state, p.id);
+    const canShare = !boughtShare && p.balance >= SHARE_PRICE;
     inner = (
       <>
         <div className="row" style={{ gap: 12 }}>
@@ -360,23 +359,12 @@ function LandedView({ ui }: { ui: GameUi }) {
         {ti.feePaid && <div className="banner info">Taxa paga.</div>}
         {bankQ > 0 && mine && (
           <div className="stack" style={{ gap: 8 }}>
-            <span className="label">Comprar cotas da empresa (só ao cair aqui)</span>
-            <div className="row">
-              <div className="stepper">
-                <button aria-label="Menos uma cota" onClick={() => setQty(Math.max(1, q - 1))}>
-                  −
-                </button>
-                <span className="amt num" aria-live="polite">
-                  {q}
-                </span>
-                <button aria-label="Mais uma cota" onClick={() => setQty(Math.min(Math.max(1, max), q + 1))}>
-                  +
-                </button>
-              </div>
-              <button className="btn primary" disabled={max < 1} onClick={() => ui.pix({ type: 'buyShares', qty: q }, 'Comprar cotas')}>
-                Comprar por {money(q * SHARE_PRICE)}
-              </button>
-            </div>
+            <span className="label">Comprar cota da empresa (só ao cair aqui, uma por rodada)</span>
+            <button className="btn primary" disabled={!canShare} onClick={() => ui.pix({ type: 'buyShares', qty: 1 }, 'Comprar cota')}>
+              Comprar 1 cota por {money(SHARE_PRICE)}
+            </button>
+            {boughtShare && <div className="banner info">Você já comprou uma cota da empresa nesta rodada. Na próxima rodada, pode comprar outra.</div>}
+            {!boughtShare && p.balance < SHARE_PRICE && <div className="banner warn">Saldo insuficiente para comprar a cota.</div>}
           </div>
         )}
       </>

@@ -144,13 +144,13 @@ export const tradesOf = (st: GameState): Trade[] => st.trades ?? [];
 export const emptySide = (): TradeSide => ({ money: 0, props: [], shares: {} });
 const sideEmpty = (x: TradeSide) => !x.money && !x.props.length && !Object.values(x.shares).some((q) => q > 0);
 
-/** Por que este imóvel não pode ser negociado por `owner` agora (null = pode). Hipotecado pode; com casas no grupo, não. */
+/** Por que este imóvel não pode ser negociado por `owner` agora (null = pode). Hipotecado pode; com casas, não. */
 export function tradeBlock(st: GameState, i: number, owner: string): string | null {
   const s = SPACES[i];
   if (s?.type !== 'street') return 'Só imóveis entram na negociação.';
   const pr = st.props[i];
   if (!pr || pr.owner !== owner) return `${s.name} não é mais de ${pname(st, owner)}.`;
-  if (groupIdx(s.group).some((j) => houses(st, j) > 0)) return `${s.name}: venda as casas do grupo ${groupName(s.group).toLowerCase()} antes de negociar.`;
+  if (houses(st, i) > 0) return `${s.name}: venda as casas antes de negociar.`;
   return null;
 }
 
@@ -192,29 +192,35 @@ export function describeSide(side: TradeSide): string {
 
 const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
 
-/** Pode construir: na própria vez, com o grupo completo, sem hipoteca no grupo, em rodízio (uma casa por imóvel de cada vez). */
-export function canBuild(st: GameState, i: number, actor: string): boolean {
+/**
+ * Por que não dá para construir neste imóvel agora (null = pode).
+ * Regra da casa: qualquer imóvel seu, sem hipoteca, na sua vez; uma construção por rodada no total;
+ * não no imóvel adquirido nesta rodada; hotel depois de 4 casas no mesmo imóvel. Não precisa do grupo completo.
+ */
+export function buildBlock(st: GameState, i: number, actor: string): string | null {
   const s = SPACES[i];
   const pr = st.props[i];
-  if (s.type !== 'street' || !pr || pr.owner !== actor || !isMyTurn(st, actor)) return false;
-  if (!ownsGroup(st, pr.owner, s.group)) return false;
-  const g = groupIdx(s.group);
-  if (g.some((j) => st.props[j]?.mortgaged)) return false;
-  const h = houses(st, i);
-  if (h >= 5) return false;
-  if (h === 4) return g.every((j) => houses(st, j) >= 4);
-  return h <= Math.min(...g.map((j) => houses(st, j)));
+  if (s?.type !== 'street' || !pr || pr.owner !== actor) return 'Não é seu';
+  if (houses(st, i) >= 5) return 'Já tem hotel';
+  if (pr.mortgaged) return 'Hipotecado';
+  if (!isMyTurn(st, actor)) return 'Só na sua vez';
+  if (findPlayer(st, actor)?.builtRound === st.round) return 'Já construiu nesta rodada';
+  if (pr.round === st.round) return 'Comprado nesta rodada';
+  return null;
 }
 
-/** Vender casa: a qualquer momento, também em rodízio (vende primeiro do imóvel com mais casas). */
+export const canBuild = (st: GameState, i: number, actor: string) => buildBlock(st, i, actor) === null;
+
+/** Vender construção: a qualquer momento, de qualquer imóvel seu com casa ou hotel. */
 export function canSellHouse(st: GameState, i: number, actor: string): boolean {
   const s = SPACES[i];
   const pr = st.props[i];
-  if (s.type !== 'street' || !pr || pr.owner !== actor || st.phase !== 'playing') return false;
-  const h = houses(st, i);
-  if (!h) return false;
-  return h >= Math.max(...groupIdx(s.group).map((j) => houses(st, j)));
+  if (s?.type !== 'street' || !pr || pr.owner !== actor || st.phase !== 'playing') return false;
+  return houses(st, i) > 0;
 }
+
+/** Cota da empresa: só ao cair nela, no máximo uma por rodada. */
+export const boughtShareThisRound = (st: GameState, pid: string) => findPlayer(st, pid)?.shareRound === st.round;
 
 export function canMortgage(st: GameState, i: number, actor: string): boolean {
   const pr = st.props[i];
@@ -427,7 +433,7 @@ function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: s
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== d.id) continue;
     if (creditor === BANK || pr.mortgaged) delete st.props[Number(k)];
-    else pr.owner = creditor;
+    else Object.assign(pr, { owner: creditor, round: st.round });
   }
   COMPANY_IDX.forEach((i) => {
     const sh = st.shares[i];
@@ -577,7 +583,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(s.type === 'street' && !ownedBy(st, ti.landed!), 'Este imóvel não está à venda.');
       need(!ti.resolved, 'Esta casa já foi resolvida.');
       pay(st, transfersFor(state, action, actor), now);
-      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false };
+      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round };
       ti.resolved = true;
       log(st, `${p.name} comprou ${s.name} por ${money(s.price)}`, now, actor);
       break;
@@ -620,9 +626,11 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const s = landedSpace();
       need(s.type === 'company', 'Cotas só se compram ao cair na empresa.');
       const q = action.qty;
-      need(Number.isInteger(q) && q >= 1, 'Quantidade inválida.');
+      need(q === 1, 'Da empresa, só uma cota por rodada.');
+      need(!boughtShareThisRound(st, p.id), 'Você já comprou uma cota da empresa nesta rodada.');
       need(q <= bankShares(st, ti.landed!), 'A empresa não tem tantas cotas à venda.');
       pay(st, transfersFor(state, action, actor), now);
+      p.shareRound = st.round;
       const sh = st.shares[ti.landed!] || (st.shares[ti.landed!] = {});
       sh[p.id] = (sh[p.id] || 0) + q;
       log(st, `${p.name} comprou ${q} cota${q > 1 ? 's' : ''} da ${s.name}`, now, actor);
@@ -709,9 +717,11 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       break;
     }
     case 'build': {
-      need(canBuild(state, action.idx, actor), 'Não dá para construir aqui agora.');
+      const block = buildBlock(state, action.idx, actor);
+      need(!block, `Não dá para construir aqui agora: ${block?.toLowerCase()}.`);
       const s = street(action.idx);
       pay(st, transfersFor(state, action, actor), now);
+      me.builtRound = st.round;
       st.props[action.idx].houses += 1;
       log(st, `${me.name} construiu ${st.props[action.idx].houses === 5 ? 'um hotel' : 'uma casa'} na ${s.name}`, now, actor);
       break;
@@ -804,7 +814,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       if (!list.length) list.push({ from: t.from, to: t.to, amount: 0, reason, kind: 'trade', ref: t.id });
       pay(st, list, now);
       const move = (side: TradeSide, from: string, to: string) => {
-        for (const i of side.props) st.props[i].owner = to; // hipotecado continua hipotecado
+        for (const i of side.props) Object.assign(st.props[i], { owner: to, round: st.round }); // hipotecado continua hipotecado
         for (const [k, q] of Object.entries(side.shares)) {
           if (!q) continue;
           const sh = st.shares[Number(k)];
