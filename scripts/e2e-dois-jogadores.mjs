@@ -17,7 +17,13 @@ const beto = await context.newPage();
 const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join(OUT, name), fullPage });
 const norm = (t) => t.replace(/\s+/g, ' ').trim(); // o app usa espaço não separável nos valores
 const wallet = async (page) => norm(await page.getByTestId('wallet-balance').textContent());
-const playerBal = async (page, name) => norm(await page.locator(`.player[data-player="${name}"] .bal`).textContent());
+// a tela inicial só mostra o próprio saldo; o dos outros fica no Placar
+const playerBal = async (page, name) => {
+  await page.getByRole('tab', { name: /Placar/ }).click();
+  const v = await norm(await page.locator(`.li[data-player="${name}"] .cash`).textContent());
+  await page.getByRole('tab', { name: /Jogada/ }).click();
+  return v;
+};
 // cada celular fica em primeiro plano quando é usado (abas em segundo plano têm os timers pausados)
 const front = (page) => page.bringToFront();
 const fail = (msg) => {

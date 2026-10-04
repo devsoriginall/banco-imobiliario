@@ -157,8 +157,12 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
                   {x.jailed ? ' · detido' : ''}
                   {x.out ? ' · faliu' : ''}
                 </div>
-                <div className="bal num">{money(x.balance)}</div>
-                {x.id === me && <div className="you">você</div>}
+                {x.id === me && (
+                  <>
+                    <div className="bal num">{money(x.balance)}</div>
+                    <div className="you">você</div>
+                  </>
+                )}
               </div>
             </div>
           ))}

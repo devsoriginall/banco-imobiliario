@@ -18,7 +18,13 @@ const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join
 const norm = (t) => t.replace(/\s+/g, ' ').trim();
 const text = async (loc) => norm(await loc.textContent());
 const wallet = (page) => text(page.getByTestId('wallet-balance'));
-const playerBal = (page, name) => text(page.locator(`.player[data-player="${name}"] .bal`));
+// a tela inicial só mostra o próprio saldo; o dos outros fica no Placar
+const playerBal = async (page, name) => {
+  await page.getByRole('tab', { name: /Placar/ }).click();
+  const v = await text(page.locator(`.li[data-player="${name}"] .cash`));
+  await page.getByRole('tab', { name: /Jogada/ }).click();
+  return v;
+};
 const front = (page) => page.bringToFront();
 const noToasts = (page) => page.waitForFunction(() => document.querySelectorAll('.toast').length === 0, null, { timeout: 10000 });
 const fail = (msg) => {
