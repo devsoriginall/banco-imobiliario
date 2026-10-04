@@ -25,8 +25,9 @@ function game(): GameState {
   let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
   st = act(st, 'beto', { type: 'join', name: 'Beto' });
   st = act(st, 'ana', { type: 'start' });
-  // os testes antigos do empréstimo contam com juros de 10%: fixa a taxa sorteada da rodada
-  st.bankRate = 0.1;
+  // os testes antigos do empréstimo (pagamento único, taxa da rodada + 8 pp) contam com juros de 10%:
+  // fixa a taxa sorteada da rodada em 2%
+  st.bankRate = 0.02;
   return st;
 }
 
@@ -618,7 +619,7 @@ describe('empréstimo do banco', () => {
   it('pega o empréstimo na própria vez, com 10% de juros e vencimento em 5 rodadas', () => {
     const st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
     expect(bal(st, 'ana')).toBe(27000);
-    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 6, rate: 0.1 });
+    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 6, rate: 0.1, plan: 'unico' });
     expect(debtOf(st, 'ana')).toBe(2200);
     expect(equity(st, pl(st, 'ana'))).toBe(24800);
     expect(loanRoundsLeft(st, 'ana')).toBe(5);

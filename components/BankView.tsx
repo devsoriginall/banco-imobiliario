@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { BANK_RATES, CREDIT, CREDIT_BANDS, LOAN } from '@/lib/game/data';
+import { BANK_RATES, CREDIT, CREDIT_BANDS, LOAN, LOAN_PLANS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, loanInterest, loanLimit, loanOf, loanOwed, loanRate, loanRateFor, loanRoundsLeft, pct, tradesOf } from '@/lib/game/rules';
+import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, pct, planInfo, tradesOf } from '@/lib/game/rules';
+import type { Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
@@ -97,8 +98,9 @@ function CreditCard({ ui }: { ui: GameUi }) {
       <details className="credit-rules">
         <summary>Como o score muda</summary>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Quitar empréstimo em dia ou antes +{CREDIT.loanPaid} · pagamento parcial +{CREDIT.partialPay} (uma vez por rodada, a partir de {money(LOAN.step)}) · declarar o IR +{CREDIT.irDeclared} · ficar sem
-          saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina} · empréstimo vencido com penhora {CREDIT.penhora}. Faixas:{' '}
+          Parcela paga com o saldo +{CREDIT.parcelPaid} · parcelado quitado +{CREDIT.parcelLoanPaid} (se nenhuma parcela precisou de penhora) · parcela com penhora {CREDIT.parcelPenhora} · pagamento único quitado em dia ou
+          antes +{CREDIT.loanPaid} · pagamento parcial do único +{CREDIT.partialPay} (uma vez por rodada, a partir de {money(LOAN.step)}) · pagamento único vencido com penhora {CREDIT.penhora} · declarar o IR +
+          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. Planos: {LOAN_PLANS.map((x) => `${x.short} ${pp(x.addOn)}`).join(', ')} sobre a taxa da rodada. Faixas:{' '}
           {CREDIT_BANDS.map((b) => `${b.name} (${b.from}+: ${Math.round(b.limitRate * 100)}%, ${pp(b.rateOffset)})`).join(' · ')}. Abaixo de {CREDIT.noLoanBelow}, o banco não empresta.
         </p>
       </details>
@@ -114,6 +116,9 @@ function LoanCard({ ui }: { ui: GameUi }) {
   const limit = loanLimit(state, me);
   const [amount, setAmount] = useState(LOAN.min);
   const [part, setPart] = useState(LOAN.step);
+  const [plan, setPlan] = useState<LoanPlanId | null>(null);
+
+  if (loan && isParcelado(loan)) return <ParcelLoanCard ui={ui} loan={loan} myTurn={myTurn} />;
 
   if (loan) {
     const owed = loanOwed(loan);
@@ -133,7 +138,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
         </div>
         <div>
           <div className="muted" style={{ fontSize: 13 }}>
-            Você deve
+            Pagamento único · você deve
           </div>
           <div className="amt num" style={{ fontSize: 30 }} data-testid="loan-owed">
             {money(owed)}
@@ -190,7 +195,8 @@ function LoanCard({ ui }: { ui: GameUi }) {
   const q = Math.max(LOAN.min, Math.min(amount, limit));
   const score = creditOf(p);
   const band = creditBand(score);
-  const rate = loanRateFor(state, me);
+  const options = loanOptions(state, me, q);
+  const chosen = options.find((o) => o.plan === plan) ?? null;
   return (
     <div className="card" data-testid="loan-card">
       <span className="row" style={{ gap: 10 }}>
@@ -200,9 +206,9 @@ function LoanCard({ ui }: { ui: GameUi }) {
         <h2>Pedir empréstimo</h2>
       </span>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Juros de {pct(rate)} sobre o
-        valor (taxa da rodada {pct(bankRate(state))}
-        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ', sem ajuste pelo score'}), travados ao pegar. Vence em {rodadas(LOAN.rounds)}; dá para pagar antes, inteiro ou em partes, na sua vez. Um empréstimo por vez.
+        Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Escolha o valor e depois o plano: parcelado em 2x a 5x
+        (uma parcela cobrada no início de cada vez sua, a partir da próxima rodada) ou pagamento único em {rodadas(LOAN.rounds)}. Cada plano tem a sua taxa (taxa da rodada {pct(bankRate(state))} + adicional do plano
+        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''}), juros sobre o valor, travados ao pegar. Um empréstimo por vez.
       </p>
       <div className="kv">
         <div>
@@ -216,8 +222,8 @@ function LoanCard({ ui }: { ui: GameUi }) {
           </span>
         </div>
         <div>
-          <span>Vencimento</span>
-          <span className="num">Rodada {state.round + LOAN.rounds}</span>
+          <span>Taxa da rodada</span>
+          <span className="num">{pct(bankRate(state))}</span>
         </div>
       </div>
       {score < CREDIT.noLoanBelow ? (
@@ -225,8 +231,11 @@ function LoanCard({ ui }: { ui: GameUi }) {
       ) : limit === 0 ? (
         <div className="banner warn">Seu patrimônio não permite empréstimo agora.</div>
       ) : myTurn ? (
-        <div className="stack" style={{ gap: 8 }}>
+        <div className="stack" style={{ gap: 10 }}>
           <div className="row between">
+            <span className="muted" style={{ fontSize: 13 }}>
+              1. Valor
+            </span>
             <div className="stepper">
               <button aria-label={`Menos ${money(LOAN.step)} no empréstimo`} onClick={() => setAmount(Math.max(LOAN.min, q - LOAN.step))}>
                 −
@@ -238,16 +247,137 @@ function LoanCard({ ui }: { ui: GameUi }) {
                 +
               </button>
             </div>
-            <span className="muted" style={{ fontSize: 13 }}>
-              Devolve {money(q + loanInterest(q, rate))}
-            </span>
           </div>
-          <button className="btn primary" onClick={() => ui.runWithReceipt({ type: 'takeLoan', amount: q }, 'Empréstimo liberado')}>
-            Pegar {money(q)} emprestado
+          <span className="muted" style={{ fontSize: 13 }}>
+            2. Escolha como pagar
+          </span>
+          <div className="loan-sim" role="radiogroup" aria-label="Simulação do empréstimo" data-testid="loan-sim">
+            <div className="loan-sim-head" aria-hidden="true">
+              <span>Plano</span>
+              <span>Taxa</span>
+              <span>Parcela</span>
+              <span>Total</span>
+            </div>
+            {options.map((o) => {
+              const unico = o.plan === 'unico';
+              const lastDiff = o.parcels[o.parcels.length - 1] !== o.parcels[0];
+              return (
+                <button
+                  key={o.plan}
+                  className="loan-sim-row"
+                  role="radio"
+                  aria-checked={plan === o.plan}
+                  data-plan={o.plan}
+                  onClick={() => setPlan(o.plan)}
+                  aria-label={`${o.name}: taxa ${pct(o.rate)}, ${unico ? `paga ${money(o.total)} em ${rodadas(LOAN.rounds)}` : `${o.parcels.length} parcelas de ${money(o.parcels[0])}`}, total ${money(o.total)}`}
+                >
+                  <span className="plan">
+                    <b>{unico ? 'Único' : o.short}</b>
+                    <small>{unico ? `em ${rodadas(LOAN.rounds)}` : 'parcelado'}</small>
+                  </span>
+                  <span className="num">{pct(o.rate)}</span>
+                  <span className="num">
+                    {unico ? '—' : money(o.parcels[0])}
+                    {lastDiff && !unico ? <small>últ. {money(o.parcels[o.parcels.length - 1])}</small> : null}
+                  </span>
+                  <span className="num">
+                    <b>{money(o.total)}</b>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {chosen && (
+            <p className="muted" style={{ margin: 0, fontSize: 13 }} data-testid="loan-plan-summary">
+              {chosen.plan === 'unico'
+                ? `Paga ${money(chosen.total)} de uma vez no início da sua vez na rodada ${chosen.dueRound}. Dá para pagar antes, inteiro ou em partes.`
+                : `${chosen.parcels.length} parcelas cobradas sozinhas no início da sua vez, das rodadas ${state.round + 1} a ${chosen.dueRound}. Dá para quitar o saldo antes, sem desconto de juros.`}
+            </p>
+          )}
+          <button className="btn primary" disabled={!chosen} onClick={() => chosen && ui.runWithReceipt({ type: 'takeLoan', amount: q, plan: chosen.plan }, 'Empréstimo liberado')}>
+            {chosen ? `Pegar ${money(q)} ${chosen.plan === 'unico' ? 'em pagamento único' : `em ${chosen.short}`}` : 'Escolha um plano'}
           </button>
         </div>
       ) : (
         <div className="banner info">Empréstimo só na sua vez.</div>
+      )}
+    </div>
+  );
+}
+
+/** Empréstimo parcelado ativo: parcelas pagas, próxima parcela e quitação antecipada. */
+function ParcelLoanCard({ ui, loan, myTurn }: { ui: GameUi; loan: Loan; myTurn: boolean }) {
+  const { state, me } = ui;
+  const p = findPlayer(state, me)!;
+  const owed = loanOwed(loan);
+  const next = nextParcel(loan);
+  const paidN = loan.parcelsPaid ?? 0;
+  const total = loan.parcels!.length;
+  const short = next ? p.balance < next.amount : false;
+  const info = planInfo(loanPlan(loan));
+  return (
+    <div className="card" data-testid="loan-card">
+      <div className="row between">
+        <span className="row" style={{ gap: 10 }}>
+          <span className="bank-mark">
+            <Icon name="banco" size={20} />
+          </span>
+          <h2>Seu empréstimo</h2>
+        </span>
+        <span className={`pill ${short ? 'bad' : 'warn'}`} data-testid="loan-progress">
+          {paidN} de {total} pagas
+        </span>
+      </div>
+      <div>
+        <div className="muted" style={{ fontSize: 13 }}>
+          {info.name} · saldo devedor
+        </div>
+        <div className="amt num" style={{ fontSize: 30 }} data-testid="loan-owed">
+          {money(owed)}
+        </div>
+      </div>
+      {next && (
+        <div className={`banner ${short ? 'bad' : 'info'}`} data-testid="loan-next">
+          <span>
+            Próxima parcela ({next.n}/{next.of}): <b className="num">{money(next.amount)}</b>, cobrada no início da sua vez{next.round > state.round ? ` na rodada ${next.round}` : ''}.
+            {short ? ' Seu saldo não cobre: se faltar, o banco faz a penhora no valor da parcela.' : ''}
+          </span>
+        </div>
+      )}
+      <div className="kv">
+        <div>
+          <span>Pegou</span>
+          <span className="num">{money(loan.principal)}</span>
+        </div>
+        <div>
+          <span>Juros ({pct(loanRate(loan))}, travados)</span>
+          <span className="num">{money(loan.interest)}</span>
+        </div>
+        <div>
+          <span>Já pagou</span>
+          <span className="num">{money(loan.paid)}</span>
+        </div>
+      </div>
+      <ol className="parcel-list" data-testid="parcel-list">
+        {loan.parcels!.map((v, k) => (
+          <li key={k} className={k < paidN ? 'paid' : k === paidN ? 'next' : ''}>
+            <span>
+              Parcela {k + 1}/{total} · rodada {loan.takenRound + k + 1}
+            </span>
+            <b className="num">{k < paidN ? `${money(v)} paga` : money(v)}</b>
+          </li>
+        ))}
+      </ol>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        As parcelas são cobradas sozinhas. Se o saldo não cobrir, o banco faz a penhora só no valor da parcela (vende casas pela metade do custo e toma imóveis, do mais barato para o mais caro, pelo valor de hipoteca); se nem
+        assim cobrir, falência.
+      </p>
+      {myTurn ? (
+        <button className="btn primary" disabled={p.balance < owed} onClick={() => ui.pix({ type: 'payLoan', amount: owed }, 'Quitar empréstimo')}>
+          Quitar {money(owed)}
+        </button>
+      ) : (
+        <div className="banner info">Quitação antecipada só na sua vez.</div>
       )}
     </div>
   );

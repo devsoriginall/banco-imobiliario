@@ -1,6 +1,6 @@
 // Dados do jogo, portados do Banco Imobiliário da Mesa (tabuleiro Super Banco Imobiliário,
 // marcas trocadas por empresas fictícias).
-import type { CompanySpace, GroupId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
+import type { CompanySpace, GroupId, LoanPlanId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
 
 export const GROUPS: Record<GroupId, { name: string; c: string }> = {
   verde: { name: 'Verde', c: '--g-verde' },
@@ -125,9 +125,24 @@ export const LOAN = {
   step: 500,
   /** juros simples sobre o principal, cobrados uma vez */
   interest: 0.1,
-  /** vence no início da vez do jogador, esta quantidade de rodadas depois de pegar */
+  /** pagamento único: vence no início da vez do jogador, esta quantidade de rodadas depois de pegar */
   rounds: 5,
+  /** parcelas arredondadas para múltiplos de (a última absorve a diferença) */
+  parcelRound: 10,
 };
+
+/**
+ * Planos de pagamento do empréstimo. Taxa = taxa da rodada + `addOn` + ajuste do score (mínimo BANK_RATES.minLoanRate),
+ * juros simples sobre o principal, travada ao pegar. Parcelado: total ÷ parcelas, uma no início de cada vez do jogador
+ * a partir da rodada seguinte. Pagamento único: tudo no início da vez, LOAN.rounds rodadas depois.
+ */
+export const LOAN_PLANS: { id: LoanPlanId; name: string; short: string; parcels: number; addOn: number }[] = [
+  { id: 'x2', name: 'Parcelado em 2x', short: '2x', parcels: 2, addOn: 0 },
+  { id: 'x3', name: 'Parcelado em 3x', short: '3x', parcels: 3, addOn: 0.02 },
+  { id: 'x4', name: 'Parcelado em 4x', short: '4x', parcels: 4, addOn: 0.04 },
+  { id: 'x5', name: 'Parcelado em 5x', short: '5x', parcels: 5, addOn: 0.06 },
+  { id: 'unico', name: 'Pagamento único', short: 'Único', parcels: 1, addOn: 0.08 },
+];
 
 // ---------- Fase 2: casas, valorização, IR, score de crédito e juros por rodada ----------
 
@@ -163,9 +178,17 @@ export const CREDIT = {
   start: 500,
   min: 0,
   max: 1000,
+  /** pagamento único quitado em dia ou antes (também quando o banco cobra no vencimento e o saldo cobre) */
   loanPaid: 80,
   partialPay: 10,
+  /** pagamento único vencido com penhora */
   penhora: -200,
+  /** parcela paga em dia com o saldo (no máximo 5 parcelas: até +50 por empréstimo) */
+  parcelPaid: 10,
+  /** parcelado quitado (última parcela ou quitação antecipada), se nenhuma parcela precisou de penhora */
+  parcelLoanPaid: 30,
+  /** parcela que precisou de penhora */
+  parcelPenhora: -100,
   malhaFina: -150,
   irDeclared: 20,
   shortfall: -30,

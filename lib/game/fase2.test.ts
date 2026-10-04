@@ -138,7 +138,7 @@ describe('três opções de casa na compra', () => {
 
   it('penhora devolve o terreno ao banco com a casa: o próximo comprador leva a mesma casa', () => {
     let st = give(game(), 'ana', [NOVE_JULHO], 'alto');
-    st.bankRate = 0.1;
+    st.bankRate = 0.02; // pagamento único: +8 pp = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(st.round === 5 && st.turn === 1)) st = pass(st);
     st.players[0].balance = 500; // 500 + 650 da penhora cobre os 1.100
@@ -364,7 +364,7 @@ describe('score de crédito', () => {
 
   it('quitar o empréstimo +80; pagamento parcial +10 (uma vez por rodada, a partir de $ 500)', () => {
     let st = game();
-    st.bankRate = 0.1;
+    st.bankRate = 0.02; // pagamento único: +8 pp = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     st = act(st, 'ana', { type: 'payLoan', amount: 100 });
     expect(creditOf(pl(st, 'ana'))).toBe(500);
@@ -385,7 +385,7 @@ describe('score de crédito', () => {
     expect(creditOf(pl(ok, 'ana'))).toBe(580);
 
     let bad = give(game(), 'ana', [PAULISTA]);
-    bad.bankRate = 0.1;
+    bad.bankRate = 0.02;
     bad = act(bad, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(bad.round === 5 && bad.turn === 1)) bad = pass(bad);
     bad.players[0].balance = 500;
@@ -442,7 +442,7 @@ describe('juros sorteados por rodada', () => {
 
   it('a taxa trava ao pegar; empréstimos existentes não mudam com a rodada', () => {
     let st = game();
-    st.bankRate = 0.12;
+    st.bankRate = 0.04; // pagamento único: +8 pp = 12%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
     for (let k = 0; k < 4; k++) st = pass(st);

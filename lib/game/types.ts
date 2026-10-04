@@ -163,7 +163,14 @@ export interface Trade {
   round: number;
 }
 
-/** Empréstimo do banco: deve principal + juros − pago, até o início da vez do jogador na rodada `dueRound`. */
+/** Planos de pagamento do empréstimo: parcelado em 2x a 5x ou pagamento único em 5 rodadas. */
+export type LoanPlanId = 'x2' | 'x3' | 'x4' | 'x5' | 'unico';
+
+/**
+ * Empréstimo do banco: deve principal + juros − pago.
+ * Pagamento único (e salas antigas, sem `plan`): tudo até o início da vez do jogador na rodada `dueRound`.
+ * Parcelado: a parcela `parcels[parcelsPaid]` é cobrada no início da vez do jogador na rodada `takenRound + parcelsPaid + 1`.
+ */
 export interface Loan {
   principal: number;
   interest: number;
@@ -174,6 +181,14 @@ export interface Loan {
   rate?: number;
   /** rodada do último pagamento parcial que contou para o score */
   partRound?: number;
+  /** plano escolhido (salas antigas: pagamento único) */
+  plan?: LoanPlanId;
+  /** valor de cada parcela (só no parcelado; a última absorve o arredondamento) */
+  parcels?: number[];
+  /** parcelas já cobradas */
+  parcelsPaid?: number;
+  /** alguma parcela precisou de penhora (perde o bônus de quitação) */
+  penhora?: boolean;
 }
 
 export interface FeedItem {
@@ -278,7 +293,7 @@ export type Action =
   | { type: 'acceptTrade'; id: string }
   | { type: 'declineTrade'; id: string }
   | { type: 'cancelTrade'; id: string }
-  | { type: 'takeLoan'; amount: number }
+  | { type: 'takeLoan'; amount: number; plan?: LoanPlanId }
   | { type: 'payLoan'; amount: number }
   | { type: 'declareIR' }
   | { type: 'evadeIR' };

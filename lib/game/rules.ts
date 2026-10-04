@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DEFAULT_TIER, DEFAULTS, GROUPS, HOOD, IR, JAIL_POS, LOAN, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES, TIERS } from './data';
-import type { Action, ActionContext, CompanySpace, GameState, GroupId, Loan, Player, StreetSpace, TierId, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
+import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DEFAULT_TIER, DEFAULTS, GROUPS, HOOD, IR, JAIL_POS, LOAN, LOAN_PLANS, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES, TIERS } from './data';
+import type { Action, ActionContext, CompanySpace, GameState, GroupId, Loan, LoanPlanId, Player, StreetSpace, TierId, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -215,10 +215,61 @@ export const creditOf = (p: Player | undefined) => p?.credit ?? CREDIT.start;
 export const creditBand = (score: number) => [...CREDIT_BANDS].reverse().find((b) => score >= b.from) ?? CREDIT_BANDS[0];
 /** Taxa do banco nesta rodada (salas antigas, antes do primeiro sorteio: LOAN.interest). */
 export const bankRate = (st: GameState) => st.bankRate ?? LOAN.interest;
-/** Taxa de um empréstimo novo agora: taxa da rodada + ajuste do score, nunca abaixo do mínimo. */
-export function loanRateFor(st: GameState, pid: string): number {
+/**
+ * Taxa de um empréstimo novo agora: taxa da rodada + adicional do plano + ajuste do score, nunca abaixo do mínimo.
+ * Sem plano: só taxa da rodada + score (a "sua taxa" da aba Banco, igual ao parcelado em 2x).
+ */
+export function loanRateFor(st: GameState, pid: string, plan?: LoanPlanId): number {
   const band = creditBand(creditOf(findPlayer(st, pid)));
-  return Math.max(BANK_RATES.minLoanRate, round4(bankRate(st) + band.rateOffset));
+  const add = plan ? planInfo(plan).addOn : 0;
+  return Math.max(BANK_RATES.minLoanRate, round4(bankRate(st) + add + band.rateOffset));
+}
+
+// ---------- Planos do empréstimo (parcelado 2x a 5x ou pagamento único) ----------
+
+export const planInfo = (id: LoanPlanId) => {
+  const p = LOAN_PLANS.find((x) => x.id === id);
+  if (!p) throw new RuleError('Plano de pagamento inválido.');
+  return p;
+};
+/** Plano do empréstimo (salas antigas, sem plano: pagamento único). */
+export const loanPlan = (l: Loan): LoanPlanId => l.plan ?? 'unico';
+export const isParcelado = (l: Loan) => loanPlan(l) !== 'unico' && !!l.parcels?.length;
+/** Parcelas de um total: total ÷ n arredondado para LOAN.parcelRound; a última absorve a diferença. */
+export function parcelSchedule(total: number, n: number): number[] {
+  if (n <= 1) return [total];
+  const base = Math.round(total / n / LOAN.parcelRound) * LOAN.parcelRound;
+  return [...Array(n - 1).fill(base), total - base * (n - 1)];
+}
+export interface LoanOption {
+  plan: LoanPlanId;
+  name: string;
+  short: string;
+  rate: number;
+  interest: number;
+  total: number;
+  parcels: number[];
+  /** rodada do último pagamento (última parcela ou vencimento do pagamento único) */
+  dueRound: number;
+}
+/** Simulação das 5 opções para pedir `amount` agora (taxa, parcela e total de cada plano). */
+export function loanOptions(st: GameState, pid: string, amount: number): LoanOption[] {
+  return LOAN_PLANS.map((p) => {
+    const rate = loanRateFor(st, pid, p.id);
+    const interest = loanInterest(amount, rate);
+    const total = amount + interest;
+    const unico = p.id === 'unico';
+    return { plan: p.id, name: p.name, short: p.short, rate, interest, total, parcels: parcelSchedule(total, unico ? 1 : p.parcels), dueRound: st.round + (unico ? LOAN.rounds : p.parcels) };
+  });
+}
+/** Próxima parcela do parcelado: número (1..n), total de parcelas, valor e rodada da cobrança; null no pagamento único. */
+export function nextParcel(l: Loan): { n: number; of: number; amount: number; round: number } | null {
+  if (!isParcelado(l)) return null;
+  const k = l.parcelsPaid ?? 0;
+  const of = l.parcels!.length;
+  if (k >= of) return null;
+  const amount = k === of - 1 ? loanOwed(l) : Math.min(l.parcels![k], loanOwed(l));
+  return { n: k + 1, of, amount, round: l.takenRound + k + 1 };
 }
 /** Taxa travada no empréstimo (salas antigas: juros ÷ principal). */
 export const loanRate = (l: Loan) => l.rate ?? (l.principal ? round4(l.interest / l.principal) : LOAN.interest);
@@ -454,6 +505,11 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
     }
     case 'payLoan': {
       const owed = debtOf(st, actor);
+      const l = loanOf(st, actor);
+      if (l && isParcelado(l)) {
+        const left = l.parcels!.length - (l.parcelsPaid ?? 0);
+        return [{ from: actor, to: BANK, amount: action.amount, reason: `Quitação antecipada do empréstimo em ${l.parcels!.length}x (${left} parcela${left === 1 ? '' : 's'} restante${left === 1 ? '' : 's'})`, kind: 'loanpay' }];
+      }
       return [{ from: actor, to: BANK, amount: action.amount, reason: action.amount >= owed ? 'Quitação do empréstimo' : `Pagamento parcial do empréstimo (resta ${money(owed - action.amount)})`, kind: 'loanpay' }];
     }
     default:
@@ -548,22 +604,27 @@ function nextTurn(st: GameState, now: Date) {
   // Início da vez: empréstimo vencido é cobrado antes de qualquer jogada
   const p = st.players[i];
   const l = loanOf(st, p.id);
-  if (l && st.round >= l.dueRound) {
-    collectLoan(st, p, now);
-    if (p.out && !st.winner) nextTurn(st, now);
-  }
+  if (!l) return;
+  if (isParcelado(l)) {
+    // parcela do mês: uma por vez, a partir da rodada seguinte ao empréstimo (se ficou para trás, cobra as atrasadas)
+    for (let k = 0; k < 5 && !p.out; k++) {
+      const cur = loanOf(st, p.id);
+      const np = cur && nextParcel(cur);
+      if (!cur || !np || st.round < np.round) break;
+      collectParcel(st, p, cur, np, now);
+    }
+  } else if (st.round >= l.dueRound) collectLoan(st, p, now);
+  if (p.out && !st.winner) nextTurn(st, now);
 }
 
 /**
- * Cobrança do empréstimo vencido: primeiro o dinheiro; se faltar, PENHORA:
+ * Cobra `owed` do jogador para o banco: primeiro o dinheiro; se faltar, PENHORA:
  * vende as construções ao banco pela metade do custo (sempre do imóvel com mais construções; empate, o mais barato),
  * depois toma os imóveis do mais barato para o mais caro, cada um pelo valor de hipoteca (já hipotecado vale 0).
- * O que sobrar do valor dos imóveis fica com o jogador. Se nem assim cobrir, o jogador vai à falência para o banco.
+ * A penhora para assim que o saldo cobre `owed`; o que sobrar do valor dos imóveis fica com o jogador.
+ * Devolve quanto foi pago e se houve penhora; se `paid < owed`, quem chama leva à falência.
  */
-function collectLoan(st: GameState, p: Player, now: Date) {
-  const l = loanOf(st, p.id)!;
-  const owed = loanOwed(l);
-  log(st, `Vencimento: o banco cobra ${money(owed)} do empréstimo de ${p.name}`, now, undefined, true);
+function collectDebt(st: GameState, p: Player, owed: number, reason: string, now: Date): { paid: number; penhora: boolean } {
   const mine = () =>
     Object.keys(st.props)
       .map(Number)
@@ -597,18 +658,51 @@ function collectLoan(st: GameState, p: Player, now: Date) {
     );
     log(st, `Penhora: o banco tomou a ${s.name} de ${p.name}`, now, undefined, true);
   }
-  const amount = Math.min(p.balance, owed);
-  if (amount > 0) applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: 'Cobrança do empréstimo vencido', kind: 'loanpay' }], now);
-  if (sold || taken || amount < owed) changeCredit(st, p, CREDIT.penhora, 'Empréstimo vencido com penhora');
+  const paid = Math.min(p.balance, owed);
+  if (paid > 0) applyTransfers(st, [{ from: p.id, to: BANK, amount: paid, reason, kind: 'loanpay' }], now);
+  return { paid, penhora: sold > 0 || taken > 0 || paid < owed };
+}
+
+/** Pagamento único vencido (e empréstimos de salas antigas): cobra tudo no início da vez. */
+function collectLoan(st: GameState, p: Player, now: Date) {
+  const l = loanOf(st, p.id)!;
+  const owed = loanOwed(l);
+  log(st, `Vencimento: o banco cobra ${money(owed)} do empréstimo de ${p.name}`, now, undefined, true);
+  const { paid, penhora } = collectDebt(st, p, owed, 'Cobrança do empréstimo vencido', now);
+  if (penhora) changeCredit(st, p, CREDIT.penhora, 'Empréstimo vencido com penhora');
   else changeCredit(st, p, CREDIT.loanPaid, 'Empréstimo pago no vencimento');
-  if (amount >= owed) {
+  if (paid >= owed) {
     delete st.loans![p.id];
     log(st, `${p.name} pagou o empréstimo vencido`, now, undefined, true);
     return;
   }
-  l.paid += amount;
+  l.paid += paid;
   log(st, `${p.name} não conseguiu pagar o empréstimo e faliu`, now, undefined, true);
   goBankrupt(st, p, BANK, now, undefined);
+}
+
+/** Parcela do empréstimo parcelado: cobra só o valor da parcela (com penhora limitada a ela, se faltar saldo). */
+function collectParcel(st: GameState, p: Player, l: Loan, np: NonNullable<ReturnType<typeof nextParcel>>, now: Date) {
+  const tag = `Parcela ${np.n}/${np.of} do empréstimo`;
+  log(st, `${tag} de ${p.name}: ${money(np.amount)}`, now, undefined, true);
+  const { paid, penhora } = collectDebt(st, p, np.amount, tag, now);
+  l.paid += paid;
+  if (paid < np.amount) {
+    changeCredit(st, p, CREDIT.parcelPenhora, `${tag} com penhora`);
+    log(st, `${p.name} não conseguiu pagar a parcela e faliu`, now, undefined, true);
+    goBankrupt(st, p, BANK, now, undefined);
+    return;
+  }
+  l.parcelsPaid = np.n;
+  if (penhora) {
+    l.penhora = true;
+    changeCredit(st, p, CREDIT.parcelPenhora, `${tag} com penhora`);
+  } else if (np.n <= 5) changeCredit(st, p, CREDIT.parcelPaid, `${tag} paga em dia`);
+  if (np.n >= np.of || loanOwed(l) <= 0) {
+    delete st.loans![p.id];
+    if (!l.penhora) changeCredit(st, p, CREDIT.parcelLoanPaid, 'Empréstimo parcelado quitado');
+    log(st, `${p.name} pagou a última parcela e quitou o empréstimo`, now, undefined, true);
+  }
 }
 
 /** Falência: imóveis e cotas vão ao credor (ao banco, ou imóveis hipotecados), o saldo também; dívida e propostas somem. */
@@ -1057,13 +1151,26 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(creditOf(me) >= CREDIT.noLoanBelow, `Seu score de crédito (${creditOf(me)}) está abaixo de ${CREDIT.noLoanBelow}: o banco não empresta.`);
       need(limit > 0, `Seu patrimônio não permite empréstimo agora (mínimo ${money(LOAN.min)}).`);
       need(Number.isInteger(amt) && amt >= LOAN.min && amt % LOAN.step === 0, `Peça a partir de ${money(LOAN.min)}, em múltiplos de ${money(LOAN.step)}.`);
+      need(action.plan === undefined || LOAN_PLANS.some((x) => x.id === action.plan), 'Plano de pagamento inválido.');
       need(amt <= limit, `Seu limite é ${money(limit)}.`);
-      const rate = loanRateFor(st, actor);
+      const plan = action.plan ?? 'unico';
+      const info = planInfo(plan);
+      const rate = loanRateFor(st, actor, plan);
       const interest = loanInterest(amt, rate);
-      const due = st.round + LOAN.rounds;
-      st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, rate } };
-      applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(amt + interest)} até a rodada ${due}`, kind: 'loan' }], now);
-      log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)}`, now, actor);
+      const total = amt + interest;
+      if (plan === 'unico') {
+        const due = st.round + LOAN.rounds;
+        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, rate, plan } };
+        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(total)} até a rodada ${due}`, kind: 'loan' }], now);
+        log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)} (pagamento único)`, now, actor);
+      } else {
+        const parcels = parcelSchedule(total, info.parcels);
+        const due = st.round + parcels.length;
+        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, rate, plan, parcels, parcelsPaid: 0 } };
+        const each = parcels.every((x) => x === parcels[0]) ? `${parcels.length} parcelas de ${money(parcels[0])}` : `${parcels.length - 1} parcelas de ${money(parcels[0])} e 1 de ${money(parcels[parcels.length - 1])}`;
+        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco em ${info.short} a ${pct(rate)}: ${each} (total ${money(total)})`, kind: 'loan' }], now);
+        log(st, `${me.name} pegou ${money(amt)} emprestado no banco em ${info.short} a ${pct(rate)}`, now, actor);
+      }
       break;
     }
     case 'payLoan': {
@@ -1074,11 +1181,15 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const amt = action.amount;
       need(Number.isInteger(amt) && amt > 0, 'Valor inválido.');
       need(amt <= owed, `Você deve só ${money(owed)}.`);
+      const parcelado = isParcelado(l);
+      need(!parcelado || amt === owed, `No parcelado não há pagamento parcial: as parcelas são cobradas sozinhas, ou quite o saldo todo (${money(owed)}).`);
       const full = amt === owed;
       pay(st, transfersFor(state, action, actor), now);
       if (full) {
         delete st.loans![actor];
-        changeCredit(st, me, CREDIT.loanPaid, st.round < l.dueRound ? 'Empréstimo quitado antes do vencimento' : 'Empréstimo quitado em dia');
+        if (parcelado) {
+          if (!l.penhora) changeCredit(st, me, CREDIT.parcelLoanPaid, 'Empréstimo parcelado quitado antes do fim');
+        } else changeCredit(st, me, CREDIT.loanPaid, st.round < l.dueRound ? 'Empréstimo quitado antes do vencimento' : 'Empréstimo quitado em dia');
       } else {
         l.paid += amt;
         // pagamento parcial conta para o score uma vez por rodada, a partir de LOAN.step

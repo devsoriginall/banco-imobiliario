@@ -26,6 +26,9 @@ const fail = (msg) => {
   process.exitCode = 1;
 };
 const brl = (n) => `$ ${n.toLocaleString('pt-BR')}`;
+const expect = (cond, what) => {
+  if (!cond) fail(what);
+};
 const expectEq = (got, want, what) => {
   if (got !== want) fail(`${what}: esperado "${want}", veio "${got}"`);
 };
@@ -134,43 +137,107 @@ console.log('Construção na Av. Brasil:', hint);
 expectEq(hint, 'Para construir, caia no imóvel', 'dica de construção em Imóveis');
 expectEq(await ana.getByRole('button', { name: /^(Casa|Hotel) \$/ }).count(), 0, 'botão de construir em Imóveis');
 
-// 7. Ana pega $ 2.000 emprestado
+// 7. Ana pede $ 2.000, vê a simulação dos 5 planos e pega em 4x
 await front(ana);
 await ana.waitForTimeout(4700); // deixa as notificações sumirem
 await ana.getByRole('tab', { name: /Banco/ }).click();
 await ana.getByRole('button', { name: /Mais .* no empréstimo/ }).click();
 await ana.getByRole('button', { name: /Mais .* no empréstimo/ }).click();
 expectEq(norm(await ana.getByTestId('loan-amount').textContent()), '$ 2.000', 'valor do empréstimo');
-// a taxa é sorteada a cada rodada e ajustada pelo score: lê a taxa da tela e calcula a dívida
-const rateTxt = norm(await ana.getByTestId('my-rate').textContent());
-const rate = Number(rateTxt.replace('%', '').replace(',', '.')) / 100;
-const owed = 2000 + Math.round(2000 * rate);
-console.log('Taxa do empréstimo:', rateTxt, '→ deve', brl(owed));
-await ana.evaluate(() => document.querySelector('[data-testid="loan-card"]').scrollIntoView({ block: 'start' }));
-await shot(ana, 'emprestimo-1-pedido.png');
-await ana.getByRole('button', { name: /Pegar .* emprestado/ }).click();
+const parse = (t) => Number(t.replace(/[^\d,]/g, '').replace(',', '.'));
+// a taxa da rodada é sorteada e ajustada pelo score: confere a simulação com a "sua taxa" (2x) + adicional de cada plano
+const baseRate = parse(norm(await ana.getByTestId('my-rate').textContent())) / 100;
+const sim = await ana.locator('.loan-sim-row').evaluateAll((rows) => rows.map((r) => ({ plan: r.dataset.plan, cells: [...r.children].map((c) => c.textContent.replace(/\s+/g, ' ').trim()) })));
+console.log('Simulação:', JSON.stringify(sim));
+expectEq(sim.map((r) => r.plan).join(','), 'x2,x3,x4,x5,unico', 'planos da simulação');
+const addOn = { x2: 0, x3: 0.02, x4: 0.04, x5: 0.06, unico: 0.08 };
+const parcelsOf = (total, k) => {
+  const b = Math.round(total / k / 10) * 10;
+  return [...Array(k - 1).fill(b), total - b * (k - 1)];
+};
+for (const r of sim) {
+  const rate = Math.max(0.02, Math.round((baseRate + addOn[r.plan]) * 10000) / 10000);
+  const total = 2000 + Math.round(2000 * rate);
+  expectEq(r.cells[1], `${Math.round(rate * 1000) / 10}%`.replace('.', ','), `taxa do plano ${r.plan}`);
+  expectEq(r.cells[3], brl(total), `total do plano ${r.plan}`);
+  if (r.plan !== 'unico') expect(r.cells[2].startsWith(brl(parcelsOf(total, Number(r.plan[1]))[0])), `parcela do plano ${r.plan}: ${r.cells[2]}`);
+}
+const rate4 = Math.max(0.02, Math.round((baseRate + 0.04) * 10000) / 10000);
+const total = 2000 + Math.round(2000 * rate4);
+const parcels = parcelsOf(total, 4);
+console.log('4x:', `${rate4 * 100}%`, 'total', brl(total), 'parcelas', parcels.map(brl).join(' + '));
+await ana.locator('.loan-sim-row[data-plan="x4"]').click();
+await ana.evaluate(() => document.querySelector('[data-testid="loan-sim"]').scrollIntoView({ block: 'center' }));
+await ana.waitForTimeout(200);
+await shot(ana, 'parcelas-1-simulacao.png');
+await ana.getByRole('button', { name: 'Pegar $ 2.000 em 4x' }).click();
 await ana.getByText('Empréstimo liberado').waitFor();
 await ana.waitForTimeout(400);
-await shot(ana, 'emprestimo-2-liberado.png');
+await shot(ana, 'parcelas-2-liberado.png');
 await ana.getByRole('button', { name: 'Fechar' }).click();
 const l = {
   anaCarteira: await wallet(ana),
-  divida: norm(await ana.getByTestId('wallet-debt').textContent()),
+  parcela: norm(await ana.getByTestId('wallet-debt').textContent()),
   deve: norm(await ana.getByTestId('loan-owed').textContent()),
+  progresso: norm(await ana.getByTestId('loan-progress').textContent()),
 };
 console.log('Com o empréstimo:', JSON.stringify(l));
 expectEq(l.anaCarteira, '$ 25.500', 'carteira com o empréstimo');
-expectEq(l.divida, `Dívida ${brl(owed)} · vence em 5 rodadas`, 'dívida no cabeçalho');
-expectEq(l.deve, brl(owed), 'valor devido');
+expectEq(l.parcela, `Parcela ${brl(parcels[0])} na próxima vez`, 'parcela no cabeçalho');
+expectEq(l.deve, brl(total), 'saldo devedor');
+expectEq(l.progresso, '0 de 4 pagas', 'parcelas pagas');
 await noToasts(ana);
 await ana.evaluate(() => document.querySelector('[data-testid="loan-card"]').scrollIntoView({ block: 'start' }));
-await shot(ana, 'emprestimo-3-divida.png');
+await shot(ana, 'parcelas-3-cartao.png');
 
-// 8. Ana quita (principal + juros)
-await ana.getByRole('button', { name: /Quitar/ }).click();
+// 8. Passa a vez (Ana e Beto param no Feriado) até a parcela 1/4 ser cobrada no início da vez da Ana
+const passTurn = async (page) => {
+  await page.getByRole('tab', { name: /Jogada/ }).click();
+  await page.locator('[data-space="20"]').click();
+  await page.getByRole('button', { name: 'Passar a vez' }).click();
+};
+await passTurn(ana);
+await front(beto);
+await beto.getByText('É a sua vez').waitFor();
+await noToasts(beto);
+await passTurn(beto);
+const parcelToast = `Parcela 1/4 do empréstimo de Ana: ${brl(parcels[0])}`;
+await beto.locator('.toast', { hasText: 'Parcela 1/4' }).waitFor({ timeout: 5000 });
+expectEq(norm(await beto.locator('.toast', { hasText: 'Parcela 1/4' }).first().textContent()).includes(parcelToast), true, 'aviso da parcela no Beto');
+await front(ana);
+const anaToast = ana.locator('.toast', { hasText: 'Parcela 1/4' });
+await anaToast.waitFor({ timeout: 5000 });
+expectEq(norm(await anaToast.first().textContent()).includes(parcelToast), true, 'aviso da parcela na Ana');
+await ana.getByText('É a sua vez').waitFor();
+await ana.waitForTimeout(800); // espera a animação das notificações
+await shot(ana, 'parcelas-4-parcela-cobrada.png');
+const c = {
+  anaCarteira: await wallet(ana),
+  betoVeAna: await playerBal(beto, 'Ana'),
+  parcela: norm(await ana.getByTestId('wallet-debt').textContent()),
+  feed: (await ana.locator('.feed li').allTextContents()).map(norm).some((x) => x.includes(parcelToast)),
+};
+console.log('Depois da parcela 1:', JSON.stringify(c));
+expectEq(c.anaCarteira, brl(25500 - parcels[0]), 'carteira depois da parcela');
+expectEq(c.betoVeAna, brl(25500 - parcels[0]), 'Ana no celular do Beto depois da parcela');
+expectEq(c.parcela, `Parcela ${brl(parcels[1])} na próxima vez`, 'próxima parcela no cabeçalho');
+if (!c.feed) fail('parcela no histórico da mesa');
+await noToasts(ana);
+await ana.getByRole('tab', { name: /Extrato/ }).click();
+await ana.getByText('Parcela 1/4 do empréstimo').first().waitFor();
+await shot(ana, 'parcelas-5-extrato.png');
+
+// 9. Ana quita o saldo restante (sem desconto de juros)
+await ana.getByRole('tab', { name: /Banco/ }).click();
+const left = total - parcels[0];
+expectEq(norm(await ana.getByTestId('loan-owed').textContent()), brl(left), 'saldo devedor depois da parcela');
+expectEq(norm(await ana.getByTestId('loan-progress').textContent()), '1 de 4 pagas', 'parcelas pagas depois da cobrança');
+await ana.evaluate(() => document.querySelector('[data-testid="loan-card"]').scrollIntoView({ block: 'start' }));
+await shot(ana, 'parcelas-6-uma-paga.png');
+await ana.getByRole('button', { name: `Quitar ${brl(left)}` }).click();
 await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
 await ana.locator('.sheet').getByText('Pagamento ao banco').waitFor();
-await shot(ana, 'emprestimo-4-quitado.png');
+await shot(ana, 'parcelas-7-quitado.png');
 await ana.getByRole('button', { name: 'Fechar' }).click();
 await ana.getByRole('heading', { name: 'Pedir empréstimo' }).waitFor();
 await front(beto);
@@ -181,8 +248,8 @@ const q = {
   semDivida: (await ana.getByTestId('wallet-debt').count()) === 0,
 };
 console.log('Depois de quitar:', JSON.stringify(q));
-expectEq(q.anaCarteira, brl(25500 - owed), 'carteira depois de quitar');
-expectEq(q.betoVeAna, brl(25500 - owed), 'Ana no celular do Beto depois de quitar');
+expectEq(q.anaCarteira, brl(25500 - total), 'carteira depois de quitar');
+expectEq(q.betoVeAna, brl(25500 - total), 'Ana no celular do Beto depois de quitar');
 if (!q.semDivida) fail('a dívida continua no cabeçalho');
 
 await browser.close();
