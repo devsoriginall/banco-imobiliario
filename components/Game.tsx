@@ -6,6 +6,7 @@ import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
 import { ScoreView, TxView } from './LedgerViews';
+import { JornalModal, MercadoView, type MercadoSeg } from './MercadoView';
 import { ConfirmModal, IrExemptModal, IrModal, IrPassedModal, PixModal, ReceiptModal, type PixRequest } from './Modals';
 import { PlayView } from './PlayView';
 import { PropsView } from './PropsView';
@@ -13,10 +14,11 @@ import type { PushedReceipt, Run } from './Room';
 import { TradeBuilder, TradeInbox } from './TradeViews';
 import { Avatar } from './ui';
 
-type Tab = 'jogada' | 'imoveis' | 'banco' | 'extrato' | 'placar';
+type Tab = 'jogada' | 'imoveis' | 'mercado' | 'banco' | 'extrato' | 'placar';
 const TABS: [Tab, string][] = [
   ['jogada', 'Jogada'],
   ['imoveis', 'Imóveis'],
+  ['mercado', 'Mercado'],
   ['banco', 'Banco'],
   ['extrato', 'Extrato'],
   ['placar', 'Placar'],
@@ -33,10 +35,14 @@ export interface GameUi {
   showReceipt: (txs: Tx[], title?: string) => void;
   run: Run;
   goTab: (t: Tab) => void;
+  /** abre a empresa na Bolsa (aba Mercado) */
+  openStock: (i: number) => void;
 }
 
 export function Game({ state, me, run, pushed, onPushedClose }: { state: GameState; me: string; run: Run; pushed?: PushedReceipt | null; onPushedClose?: () => void }) {
   const [tab, setTab] = useState<Tab>('jogada');
+  const [seg, setSeg] = useState<MercadoSeg>('jornal');
+  const [stock, setStock] = useState<number | null>(null);
   const [pixReq, setPixReq] = useState<PixRequest | null>(null);
   const [receipt, setReceipt] = useState<{ txs: Tx[]; title?: string } | null>(null);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
@@ -59,6 +65,19 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
     setSeenExempt((xs) => [...xs, exemptKey]);
   };
 
+  /** edição do Jornal desta rodada: tela cheia uma vez por celular */
+  const edition = state.jornal?.[0] && state.jornal[0].round === state.round && !state.winner ? state.jornal[0] : null;
+  const jornalKey = edition ? `jornal:${state.code}:${edition.round}` : null;
+  const [seenJornal, setSeenJornal] = useState<string[]>([]);
+  const showJornal = jornalKey && !seenJornal.includes(jornalKey) && !wasSeen(jornalKey) ? edition : null;
+  const closeJornal = () => {
+    if (!jornalKey) return;
+    try {
+      sessionStorage.setItem(jornalKey, '1');
+    } catch {}
+    setSeenJornal((xs) => [...xs, jornalKey]);
+  };
+
   const ui: GameUi = {
     state,
     me,
@@ -66,6 +85,12 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
     goTab: (t) => {
       setPixReq(null);
       setTab(t);
+    },
+    openStock: (i) => {
+      setPixReq(null);
+      setSeg('bolsa');
+      setStock(i);
+      setTab('mercado');
     },
     pix: (action, title) => setPixReq({ action, title }),
     runWithReceipt: async (action, title) => {
@@ -143,6 +168,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
 
         {tab === 'jogada' && <PlayView ui={ui} />}
         {tab === 'imoveis' && <PropsView ui={ui} />}
+        {tab === 'mercado' && <MercadoView ui={ui} seg={seg} setSeg={setSeg} stock={stock} setStock={setStock} />}
         {tab === 'banco' && <BankView ui={ui} onTrade={setTradeWith} />}
         {tab === 'extrato' && <TxView state={state} me={me} />}
         {tab === 'placar' && <ScoreView state={state} />}
@@ -197,6 +223,18 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       )}
       {irPassed !== null && !pixReq && !receipt && <IrPassedModal tax={irPassed} onClose={() => setIrPassed(null)} />}
       {irExempt && !irMine && !pixReq && !receipt && !pushed && <IrExemptModal year={irExempt.year} income={irExempt.income} onClose={closeExempt} />}
+      {showJornal && !pixReq && !receipt && !pushed && (
+        <JornalModal
+          state={state}
+          ed={showJornal}
+          onClose={closeJornal}
+          onHistory={() => {
+            closeJornal();
+            setSeg('jornal');
+            setTab('mercado');
+          }}
+        />
+      )}
       {confirmReset && (
         <ConfirmModal
           title="Começar uma nova partida?"

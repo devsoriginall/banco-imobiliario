@@ -46,6 +46,9 @@ await ana.locator('.lobby-p', { hasText: 'Beto' }).waitFor();
 await shot(ana, '02-sala-de-espera.png', true);
 
 // 3. Ana começa a partida
+// regras clássicas (sem Jornal e Bolsa): os valores esperados abaixo não mudam com as manchetes
+await ana.getByRole('checkbox', { name: /Jornal e Bolsa/ }).click();
+await ana.waitForFunction(() => !document.querySelector('.toggle-row input').checked);
 await ana.getByRole('button', { name: 'Começar partida' }).click();
 await ana.getByText('É a sua vez').waitFor();
 await beto.getByText('Vez de').waitFor();

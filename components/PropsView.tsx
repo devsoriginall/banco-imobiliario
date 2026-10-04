@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_IDX, GROUPS, SHARE_PRICE, SPACES } from '@/lib/game/data';
+import { COMPANY_IDX, GROUPS, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
   bankShares,
@@ -9,14 +9,13 @@ import {
   canUnmortgage,
   controller,
   groupIdx,
-  hoodLabel,
-  hoodMult,
   houses,
   buildPrice,
   lotMortgage,
   lotPrice,
   pname,
   rentOf,
+  sharePrice,
   sharesOf,
   street,
   tierName,
@@ -26,6 +25,7 @@ import {
 } from '@/lib/game/rules';
 import type { GroupId } from '@/lib/game/types';
 import type { GameUi } from './Game';
+import { HoodPills } from './ui';
 
 export function PropsView({ ui }: { ui: GameUi }) {
   const { state, me } = ui;
@@ -36,17 +36,14 @@ export function PropsView({ ui }: { ui: GameUi }) {
     .map((g) => {
       const idxs = groupIdx(g).filter((i) => filter === 'todos' || state.props[i]?.owner === me);
       if (!idxs.length) return null;
-      const hood = hoodLabel(hoodMult(state, g));
       return (
         <div className="card" key={g}>
           <div className="group-head">
             <span className="swatch" style={{ background: `var(${GROUPS[g].c})` }} />
             <h3>{GROUPS[g].name}</h3>
-            {hood && (
-              <span className={`pill ${hoodMult(state, g) > 1 ? 'ok' : 'warn'}`} style={{ marginLeft: 'auto' }}>
-                {hood}
-              </span>
-            )}
+            <span style={{ marginLeft: 'auto' }}>
+              <HoodPills state={state} group={g} />
+            </span>
           </div>
           <div className="list">
             {idxs.map((i) => {
@@ -157,7 +154,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
                     <span>
                       Casa {i} · {parts || 'nenhuma cota vendida'} · empresa {bankShares(state, i)}
                     </span>
-                    {(sh[me] || 0) > 0 && <span>Suas cotas valem {money((sh[me] || 0) * SHARE_PRICE)}</span>}
+                    {(sh[me] || 0) > 0 && <span>Suas cotas valem {money((sh[me] || 0) * sharePrice(state, i))}</span>}
                   </div>
                   {ctrl && <span className="pill info">Dono: {ctrl === me ? 'você' : pname(state, ctrl)}</span>}
                 </div>
@@ -165,7 +162,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
             })}
           </div>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Cotas se compram da empresa só ao cair nela, ou de outro jogador negociando na aba Banco. Com 6 ou mais cotas você é o dono e recebe toda a taxa.
+            Cotas se compram da empresa só ao cair nela, ou de outro jogador negociando na aba Banco. Com 6 ou mais cotas você é o dono, recebe toda a taxa e decide a gerência na aba Mercado. Dá para vender cotas de volta à empresa pela cotação, na sua vez.
           </p>
         </div>
       )}

@@ -98,6 +98,13 @@ export function Lobby({ state, me, run }: { state: GameState; me: string; run: R
               }}
             />
           </div>
+          <label className="toggle-row">
+            <input type="checkbox" checked={state.settings.mercado !== false} onChange={(e) => run({ type: 'setMercado', on: e.target.checked })} />
+            <span>
+              <b>Jornal e Bolsa</b>
+              <span className="muted">Uma manchete por rodada mexe nos bairros, nas empresas e nos juros; as cotas têm cotação e pagam dividendos.</span>
+            </span>
+          </label>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
             Regras do Super Banco Imobiliário: pró-labore de {money(state.settings.salary)} no Início, fiança de {money(state.settings.bail)} e 20% de juros para tirar a hipoteca.
           </p>
@@ -122,7 +129,7 @@ export function Lobby({ state, me, run }: { state: GameState; me: string; run: R
             Esperando {pname(state, state.hostId)} começar a partida…
           </div>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Saldo inicial: {money(state.settings.start)} para cada jogador.
+            Saldo inicial: {money(state.settings.start)} para cada jogador. Jornal e Bolsa: {state.settings.mercado === false ? 'desligados' : 'ligados'}.
           </p>
         </div>
       )}

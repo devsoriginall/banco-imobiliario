@@ -19,6 +19,7 @@ const n = (x: string) => x.replace(/\s/g, ' ');
 function game(players = ['Ana', 'Beto']): GameState {
   let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
   for (const p of players.slice(1)) st = act(st, p.toLowerCase(), { type: 'join', name: p });
+  st = act(st, 'ana', { type: 'setMercado', on: false }); // sem Jornal e Bolsa
   st = act(st, 'ana', { type: 'start' });
   st.bankRate = 0.1;
   return st;

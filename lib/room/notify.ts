@@ -8,6 +8,7 @@ const spaceName = (t: Tx) => (t.space !== undefined ? SPACES[t.space]?.name : ''
 
 export function describeIncoming(st: GameState, t: Tx): { title: string; text: string } {
   const plus = ` · +${money(t.amount)}`;
+  if (t.kind === 'dividend') return { title: 'Dividendos', text: `Você recebeu ${money(t.amount)} da ${spaceName(t)}` };
   if (t.from === 'bank') return { title: 'Pix recebido do Banco', text: t.reason + plus };
   const who = pname(st, t.from);
   let what: string;

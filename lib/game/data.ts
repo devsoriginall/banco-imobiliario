@@ -1,6 +1,6 @@
 // Dados do jogo, portados do Banco Imobiliário da Mesa (tabuleiro Super Banco Imobiliário,
 // marcas trocadas por empresas fictícias).
-import type { CompanySpace, GroupId, LoanPlanId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
+import type { CompanySpace, DecisionId, GroupId, Headline, LoanPlanId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
 
 export const GROUPS: Record<GroupId, { name: string; c: string }> = {
   verde: { name: 'Verde', c: '--g-verde' },
@@ -210,3 +210,309 @@ export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name:
 
 /** Juros sorteados no começo de cada rodada (sorteio uniforme) e a menor taxa possível de um empréstimo. */
 export const BANK_RATES = { options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2], minLoanRate: 0.02 };
+
+// ---------- Jornal da Cidade e Bolsa ----------
+
+/** Bolsa: cotação das empresas (começa em SHARE_PRICE e muda a cada rodada). */
+export const STOCK = {
+  /** limites da cotação */
+  min: 50,
+  max: 1000,
+  /** cotação arredondada para múltiplos de */
+  round: 10,
+  /** variação sorteada a cada rodada: de −5% a +5% */
+  drift: 0.05,
+  /** rodadas guardadas no histórico (gráfico) */
+  history: 12,
+  /** dividendo por cota a cada rodada = cotação × rendimento */
+  yield: 0.03,
+};
+
+/** Gerência: o dono (6+ cotas) toma uma decisão por rodada em cada empresa que controla, na sua vez. */
+export const DECISIONS = {
+  /** paga `cost` à empresa: na próxima rodada a cota sobe de `min`% a `max`% (sorteado) */
+  investir: { name: 'Investir', cost: 1000, min: 10, max: 25 },
+  /** o banco paga agora `rate` × cotação por cota aos cotistas; na próxima rodada a cota muda `nextPct`% */
+  dividendo: { name: 'Dividendo extra', rate: 0.05, nextPct: -10 },
+  /** rendimento +`pp` pontos nas próximas `rounds` rodadas; `strikeChance` de greve (dividendo zero) na próxima */
+  cortar: { name: 'Cortar custos', pp: 2, rounds: 2, strikeChance: 0.3 },
+  /** paga `cost`: taxa da casa +`pct`% nesta rodada e nas seguintes, `rounds` rodadas ao todo */
+  marketing: { name: 'Campanha de marketing', cost: 500, pct: 50, rounds: 2 },
+} as const satisfies Record<DecisionId, { name: string; [k: string]: string | number }>;
+export const DECISION_IDS: DecisionId[] = ['investir', 'dividendo', 'cortar', 'marketing'];
+
+/** Jornal da Cidade: quantas edições ficam guardadas. */
+export const JORNAL = { keep: 40 };
+
+// empresas pelo índice da casa no tabuleiro
+const BA = 3; // Banco Aurora
+const HV = 8; // Horizonte Viagens
+const RP = 14; // Rede Ponto
+const BC = 22; // Bella Cosméticos
+const VX = 29; // Vox Telecom
+const MA = 36; // Motora Automóveis
+
+/** 36 manchetes do Jornal da Cidade (uma por rodada, sem repetir até acabar o baralho). */
+export const HEADLINES: Headline[] = [
+  // ----- Bairros -----
+  {
+    cat: 'bairro',
+    tag: 'Assaltos',
+    title: 'Onda de assaltos assusta moradores da Av. Brasil',
+    body: 'Comerciantes da Av. Brasil, da Av. 9 de Julho e da Av. Beira Mar baixam as portas mais cedo. Imobiliárias já sentem a procura cair.',
+    effects: [{ k: 'hood', group: 'verde', pct: -15, rounds: 3 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Metrô',
+    title: 'Metrô vai chegar à Av. do Estado',
+    body: 'A nova linha liga a Av. do Estado, a Av. Rio Branco e a Av. do Contorno ao centro. Os terrenos da região disparam.',
+    effects: [{ k: 'hood', group: 'vermelho', pct: 20 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Enchente',
+    title: 'Enchente alaga a Av. Santo Amaro',
+    body: 'A chuva da madrugada deixou ruas debaixo d’água na Av. Santo Amaro, na Av. Rebouças e na Rua da Consolação. A limpeza deve levar dias.',
+    effects: [{ k: 'hood', group: 'azulclaro', pct: -20, rounds: 2 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Shopping novo',
+    title: 'Shopping novo abre as portas na Av. Higienópolis',
+    body: 'Com 300 lojas e cinema, o centro de compras promete movimentar o bairro roxo, da Av. Morumbi à Av. Ipiranga.',
+    effects: [{ k: 'hood', group: 'roxo', pct: 15 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Festival',
+    title: 'Festival de música fecha a Av. Paulista no fim de semana',
+    body: 'Palcos na Av. Paulista, na Faria Lima e na Av. Recife lotam hotéis e restaurantes. A festa acaba na segunda-feira.',
+    effects: [{ k: 'hood', group: 'azulescuro', pct: 10, rounds: 1 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Parque reformado',
+    title: 'Parque Ibirapuera ganha reforma completa',
+    body: 'Lagos limpos, pista de corrida nova e iluminação: a Av. Ibirapuera, a Oscar Freire e a Av. JK ficam ainda mais disputadas.',
+    effects: [{ k: 'hood', group: 'laranja', pct: 10 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Ressaca',
+    title: 'Ressaca fecha a orla da Av. Vieira Souto',
+    body: 'Ondas de três metros invadem a pista. A Prefeitura interdita trechos da Vieira Souto e da Av. Niemeyer até o mar acalmar.',
+    effects: [{ k: 'hood', group: 'amarelo', pct: -10, rounds: 2 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Calçadão novo',
+    title: 'Calçadão da Av. Beira Mar é revitalizado',
+    body: 'Ciclovia, quiosques novos e feirinha reformada atraem turistas para o bairro verde, da Beira Mar à Av. 9 de Julho.',
+    effects: [{ k: 'hood', group: 'verde', pct: 10 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Viaduto interditado',
+    title: 'Viaduto interditado trava a Av. do Contorno',
+    body: 'Rachaduras na estrutura obrigam o desvio do trânsito. Quem mora no bairro vermelho perde horas no carro.',
+    effects: [{ k: 'hood', group: 'vermelho', pct: -10, rounds: 2 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Polo gastronômico',
+    title: 'Rua da Consolação vira polo gastronômico',
+    body: 'Chefs premiados abrem casas na Consolação e na Rebouças. O bairro azul claro entra no roteiro de quem sai para jantar.',
+    effects: [{ k: 'hood', group: 'azulclaro', pct: 10 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Apagão',
+    title: 'Apagão deixa a Av. São João às escuras',
+    body: 'Um transformador queimou e a Av. São João e a Av. Ipiranga ficaram sem luz. A distribuidora promete religar logo.',
+    effects: [{ k: 'hood', group: 'roxo', pct: -15, rounds: 1 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Sede de tecnologia',
+    title: 'Gigante da tecnologia muda a sede para a Faria Lima',
+    body: 'Cinco mil funcionários vão trabalhar na R. Brig. Faria Lima. Aluguéis da Av. Paulista e da Av. Recife sobem junto.',
+    effects: [{ k: 'hood', group: 'azulescuro', pct: 15 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Obras',
+    title: 'Obras intermináveis na Av. Juscelino Kubitschek',
+    body: 'Buracos, tapumes e desvios na Av. JK, na Oscar Freire e na Av. Ibirapuera espantam clientes e inquilinos.',
+    effects: [{ k: 'hood', group: 'laranja', pct: -10, rounds: 3 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Réveillon',
+    title: 'Réveillon na orla lota a Av. Vieira Souto',
+    body: 'Fogos, shows e dois milhões de pessoas: hotéis e apartamentos da Vieira Souto, da Presidente Vargas e da Niemeyer esgotam.',
+    effects: [{ k: 'hood', group: 'amarelo', pct: 15, rounds: 1 }],
+  },
+  {
+    cat: 'bairro',
+    tag: 'Aterro',
+    title: 'Aterro sanitário será construído perto da Av. Niemeyer',
+    body: 'Moradores protestam contra o cheiro e o vaivém de caminhões. O bairro amarelo perde valor de vez.',
+    effects: [{ k: 'hood', group: 'amarelo', pct: -10 }],
+  },
+  // ----- Empresas -----
+  {
+    cat: 'empresa',
+    tag: 'Escândalo',
+    title: 'Escândalo no Banco Aurora: diretores são afastados',
+    body: 'Auditoria encontra contas maquiadas. Investidores correm para vender as cotas do banco.',
+    effects: [{ k: 'stock', co: BA, pct: -25 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Greve',
+    title: 'Pilotos da Horizonte Viagens entram em greve',
+    body: 'Voos cancelados em todo o país. Sem receita, a companhia aérea suspende os dividendos por duas rodadas.',
+    effects: [{ k: 'strike', co: HV, rounds: 2 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Multa do governo',
+    title: 'Governo multa a Rede Ponto por gasolina adulterada',
+    body: 'A fiscalização encontrou combustível fora do padrão em 40 postos. A multa é a maior da história do setor.',
+    effects: [{ k: 'stock', co: RP, pct: -15 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Lançamento de sucesso',
+    title: 'Novo batom da Bella Cosméticos esgota em um dia',
+    body: 'O lançamento virou febre nas redes sociais e as fábricas vão trabalhar em três turnos.',
+    effects: [{ k: 'stock', co: BC, pct: 20 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Aquisição',
+    title: 'Vox Telecom compra concorrente e vira a maior do país',
+    body: 'A aquisição bilionária dobra o número de clientes da operadora. O mercado comemora.',
+    effects: [{ k: 'stock', co: VX, pct: 30 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Recall',
+    title: 'Motora Automóveis faz recall de 200 mil carros',
+    body: 'Defeito no freio obriga a montadora a chamar os donos de volta às concessionárias.',
+    effects: [{ k: 'stock', co: MA, pct: -20 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Lucro recorde',
+    title: 'Banco Aurora anuncia lucro recorde',
+    body: 'Com os juros altos, o banco nunca ganhou tanto. Os acionistas recebem dividendo maior por duas rodadas.',
+    effects: [{ k: 'yield', co: BA, pp: 2, rounds: 2 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Feriadão',
+    title: 'Feriadão lota os voos da Horizonte Viagens',
+    body: 'Aeroportos cheios e passagens esgotadas. Quem cair na casa da companhia aérea paga mais caro.',
+    effects: [
+      { k: 'stock', co: HV, pct: 10 },
+      { k: 'fee', co: HV, pct: 50, rounds: 2 },
+    ],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Contrato com o governo',
+    title: 'Rede Ponto fecha contrato com frota do governo',
+    body: 'Todos os carros oficiais vão abastecer nos postos da rede pelos próximos cinco anos.',
+    effects: [{ k: 'stock', co: RP, pct: 15 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Vigilância sanitária',
+    title: 'Vigilância sanitária recolhe produtos da Bella Cosméticos',
+    body: 'Um lote de cremes foi reprovado nos testes. A marca tira os produtos das prateleiras.',
+    effects: [{ k: 'stock', co: BC, pct: -15 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Apagão de sinal',
+    title: 'Apagão de sinal derruba a Vox Telecom por um dia inteiro',
+    body: 'Milhões de clientes ficaram sem celular e internet. O órgão regulador abre investigação.',
+    effects: [{ k: 'stock', co: VX, pct: -10 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Greve',
+    title: 'Metalúrgicos param as fábricas da Motora Automóveis',
+    body: 'Sem acordo salarial, as linhas de montagem param. Nada de dividendos por duas rodadas.',
+    effects: [{ k: 'strike', co: MA, rounds: 2 }],
+  },
+  {
+    cat: 'empresa',
+    tag: 'Carro do ano',
+    title: 'Carro elétrico da Motora Automóveis é eleito o melhor do ano',
+    body: 'A fila de espera já passa de seis meses e as concessionárias abrem pré-venda.',
+    effects: [{ k: 'stock', co: MA, pct: 20 }],
+  },
+  // ----- Economia -----
+  {
+    cat: 'economia',
+    tag: 'Juros sobem',
+    title: 'Banco Central sobe os juros',
+    body: 'Para segurar a inflação, a taxa básica sobe. Pegar dinheiro emprestado fica mais caro nesta rodada.',
+    effects: [{ k: 'rate', pp: 2 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Juros caem',
+    title: 'Banco Central corta os juros',
+    body: 'Com a inflação sob controle, a taxa básica cai. Boa hora para pegar empréstimo.',
+    effects: [{ k: 'rate', pp: -2 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Mercado em alta',
+    title: 'Bolsa dispara com otimismo dos investidores',
+    body: 'O índice tem a maior alta do ano e todas as empresas da cidade sobem juntas.',
+    effects: [{ k: 'stockAll', pct: 10 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Mercado em baixa',
+    title: 'Pânico no mercado derruba a Bolsa',
+    body: 'Crise lá fora assusta os investidores, que vendem tudo. Todas as cotas caem.',
+    effects: [{ k: 'stockAll', pct: -10 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Boom imobiliário',
+    title: 'Boom imobiliário: preço do metro quadrado sobe em toda a cidade',
+    body: 'Crédito farto e procura alta fazem todos os bairros valorizarem de uma vez.',
+    effects: [{ k: 'hoodAll', pct: 5 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Crise imobiliária',
+    title: 'Crise imobiliária: lançamentos encalham',
+    body: 'Sobram apartamentos à venda e os preços caem em todos os bairros por duas rodadas.',
+    effects: [{ k: 'hoodAll', pct: -10, rounds: 2 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Temporada de dividendos',
+    title: 'Temporada de dividendos: empresas distribuem lucros',
+    body: 'Com o caixa cheio, todas as empresas pagam dividendo maior nesta rodada.',
+    effects: [{ k: 'yield', pp: 1, rounds: 1 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Investidores estrangeiros',
+    title: 'Investidores estrangeiros chegam à cidade',
+    body: 'Fundos de fora compram cotas de todas as empresas e ainda apostam nos imóveis.',
+    effects: [
+      { k: 'stockAll', pct: 5 },
+      { k: 'hoodAll', pct: 5, rounds: 1 },
+    ],
+  },
+];

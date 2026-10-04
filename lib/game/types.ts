@@ -126,7 +126,11 @@ export type TxKind =
   | 'loan'
   | 'loanpay'
   | 'penhora'
-  | 'ir';
+  | 'ir'
+  /** dividendos das cotas (contam como renda) */
+  | 'dividend'
+  /** decisões da gerência pagas pelo dono da empresa (investimento, marketing) */
+  | 'gestao';
 
 export interface Tx {
   id: string;
@@ -218,6 +222,84 @@ export interface Settings {
   salary: number;
   bail: number;
   mortgageRate: number;
+  /** Jornal da Cidade e Bolsa (manchete, cotações e dividendos a cada rodada); ausente = ligado */
+  mercado?: boolean;
+}
+
+// ---------- Jornal da Cidade e Bolsa ----------
+
+/** Efeito de uma manchete do Jornal. `rounds` ausente no bairro = permanente. */
+export type HeadlineEffect =
+  /** valorização do bairro: permanente (applyNeighbourhoodChange) ou temporária por `rounds` rodadas */
+  | { k: 'hood'; group: GroupId; pct: number; rounds?: number }
+  /** todos os bairros */
+  | { k: 'hoodAll'; pct: number; rounds?: number }
+  /** cotação da empresa (índice da casa) muda `pct`% nesta rodada */
+  | { k: 'stock'; co: number; pct: number }
+  /** todas as cotações */
+  | { k: 'stockAll'; pct: number }
+  /** dividendo: soma `pp` pontos percentuais ao rendimento por `rounds` rodadas (sem `co`: todas as empresas) */
+  | { k: 'yield'; co?: number; pp: number; rounds: number }
+  /** greve: dividendo zero por `rounds` rodadas */
+  | { k: 'strike'; co: number; rounds: number }
+  /** taxa da casa da empresa +`pct`% por `rounds` rodadas */
+  | { k: 'fee'; co: number; pct: number; rounds: number }
+  /** taxa do banco nesta rodada ± `pp` pontos percentuais */
+  | { k: 'rate'; pp: number };
+
+export interface Headline {
+  cat: 'bairro' | 'empresa' | 'economia';
+  /** nome curto do efeito, ex.: "Assaltos" (aparece no selo do bairro e na Bolsa) */
+  tag: string;
+  title: string;
+  body: string;
+  effects: HeadlineEffect[];
+}
+
+/** Uma edição do Jornal da Cidade: uma por rodada. */
+export interface Edition {
+  /** rodada (= número da edição) */
+  round: number;
+  /** índice da manchete em HEADLINES */
+  h: number;
+  /** efeitos no jogo, já com as rodadas, ex.: "Bairro Verde −15% até a rodada 9" */
+  effects: string[];
+}
+
+/** Modificador temporário do bairro (manchete): vale até a rodada `until`, inclusive. */
+export interface HoodMod {
+  group: GroupId;
+  pct: number;
+  until: number;
+  why: string;
+}
+
+/** Modificador com validade (rodadas `from` a `until`, inclusive). */
+export interface TimedMod {
+  from: number;
+  until: number;
+  why: string;
+}
+
+/** Decisões da gerência (dono da empresa, uma por rodada por empresa). */
+export type DecisionId = 'investir' | 'dividendo' | 'cortar' | 'marketing';
+
+/** Cotação e efeitos de uma empresa na Bolsa. */
+export interface Stock {
+  /** preço atual da cota */
+  price: number;
+  /** preços no começo das últimas rodadas (mais antigo primeiro; o último é o atual) */
+  hist: number[];
+  /** efeitos que entram no começo da rodada `round` (variação %, resultado do investimento, risco de greve) */
+  pend?: { round: number; why: string; pct?: number; invest?: boolean; strike?: number }[];
+  /** ajustes do rendimento do dividendo (pp em pontos percentuais; zero = greve) */
+  yieldMods?: (TimedMod & { pp?: number; zero?: boolean })[];
+  /** aumentos da taxa da casa (pct em %) */
+  feeMods?: (TimedMod & { pct: number })[];
+  /** rodada da última decisão da gerência */
+  decRound?: number;
+  /** última decisão (para mostrar) */
+  decision?: DecisionId;
 }
 
 export interface GameState {
@@ -261,11 +343,20 @@ export interface GameState {
   bankRateRound?: number;
   /** declaração do IR esperando o jogador da vez */
   irPending?: IrPending | null;
+  /** Jornal da Cidade: edições (mais nova primeiro) e o baralho de manchetes */
+  jornal?: Edition[];
+  jornalDeck?: number[];
+  jornalPtr?: number;
+  /** modificadores temporários dos bairros (manchetes) */
+  hoodMods?: HoodMod[];
+  /** Bolsa: cotação de cada empresa (índice da casa); ausente = SHARE_PRICE */
+  stocks?: Record<number, Stock>;
 }
 
 export type Action =
   | { type: 'join'; name: string }
   | { type: 'setStart'; amount: number }
+  | { type: 'setMercado'; on: boolean }
   | { type: 'start' }
   | { type: 'reset' }
   | { type: 'land'; idx: number }
@@ -274,6 +365,8 @@ export type Action =
   | { type: 'payRent' }
   | { type: 'payFee'; dice: number }
   | { type: 'buyShares'; qty: number }
+  | { type: 'sellShares'; idx: number; qty: number }
+  | { type: 'manage'; idx: number; decision: DecisionId }
   | { type: 'drawNews' }
   | { type: 'applyNews' }
   | { type: 'payTax' }

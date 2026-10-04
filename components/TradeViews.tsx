@@ -1,8 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_IDX, GROUPS, SHARE_PRICE, SPACES } from '@/lib/game/data';
+import { COMPANY_IDX, GROUPS, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { describeSide, emptySide, findPlayer, lotPrice, pname, sharesOf, street, tradeBlock, tradeProblem, tradesOf } from '@/lib/game/rules';
+import { describeSide, emptySide, findPlayer, lotPrice, pname, sharePrice, sharesOf, street, tradeBlock, tradeProblem, tradesOf } from '@/lib/game/rules';
 import type { GameState, Trade, TradeSide } from '@/lib/game/types';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
@@ -176,7 +176,7 @@ function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; 
             <span className="main">
               <b>{SPACES[i].name}</b>
               <span>
-                {have} cota{have > 1 ? 's' : ''} · {money(SHARE_PRICE)} cada
+                {have} cota{have > 1 ? 's' : ''} · {money(sharePrice(state, i))} cada
               </span>
             </span>
             <div className="stepper">

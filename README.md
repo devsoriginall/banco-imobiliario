@@ -5,7 +5,7 @@ O banco da partida no celular de cada jogador. O tabuleiro, os peões e os dados
 - **Criar sala**: quem cria digita o nome e recebe um código de 5 letras e um link `/sala/CODIGO` para mandar no grupo.
 - **Entrar na sala**: código e nome. Não há cadastro: cada aparelho guarda um id aleatório e o nome no `localStorage`.
 - **Sala de espera**: mostra quem entrou em tempo real; quem criou define o saldo inicial e começa a partida.
-- **Na partida**: cada celular mostra a própria carteira, o saldo de todos e de quem é a vez. Só quem está na vez escolhe a casa onde parou e vê os botões de ação; os outros acompanham. Qualquer um abre **Imóveis** (construir, vender, hipotecar os seus), **Banco** (negociar com outro jogador, empréstimo), **Extrato** e **Placar**.
+- **Na partida**: cada celular mostra a própria carteira, o saldo de todos e de quem é a vez. Só quem está na vez escolhe a casa onde parou e vê os botões de ação; os outros acompanham. Qualquer um abre **Imóveis** (construir, vender, hipotecar os seus), **Mercado** (Jornal e Bolsa), **Banco** (negociar com outro jogador, empréstimo), **Extrato** e **Placar**.
 - Quem recebe um pagamento ganha uma notificação, por exemplo: _"Beto pagou o aluguel da Av. 9 de Julho · +$ 60"_.
 
 Regras do Super Banco Imobiliário portadas da versão "da mesa": pró-labore de $ 2.000 ao passar pelo Início, fiança de $ 500 (3 tentativas de dupla), hipoteca com 20% para tirar, e empresas com 10 cotas de $ 200 (quem tem 6 ou mais é dono e recebe dados × $ 500, em dobro se for dono das 6; sem dono, a taxa é dividida pelas cotas). Regras da casa:
@@ -26,7 +26,20 @@ Regras do Super Banco Imobiliário portadas da versão "da mesa": pró-labore de
 - **Score de crédito** (0 a 1000, começa em 500): parcela paga com o saldo +10 (no máximo 5 parcelas, +50 por empréstimo); parcelado quitado +30 (na última parcela ou quitando antes, se nenhuma parcela precisou de penhora); parcela com penhora −100; pagamento único quitado em dia ou antes +80 (também quando o banco cobra no vencimento e o saldo cobre); pagamento parcial do único +10 (uma vez por rodada, a partir de $ 500); declarar o IR +20; ficar sem saldo para um pagamento obrigatório −30 (aluguel ou imposto ao cair, a menor taxa da empresa, notícia de pagar, aposta da mesa, multa da malha fina; uma vez por jogada); malha fina −150; pagamento único vencido com penhora −200. Faixas: **Ruim** (<300) empresta até 25% do patrimônio líquido com +5 pp de juros, **Regular** (300–599) 50% e taxa da rodada, **Bom** (600–799) 70% e −2 pp, **Excelente** (800+) 90% e −4 pp. Abaixo de 200, o banco não empresta. Medidor na aba Banco e score de cada um no Placar.
 - **Juros sorteados por rodada**: no começo de cada rodada o banco sorteia a taxa entre 5%, 8%, 10%, 12%, 15% e 20% (aviso para todos quando muda). Empréstimo novo = taxa da rodada + adicional do plano + ajuste do score (mínimo 2%), travada ao pegar; os que já existem não mudam. O sorteio (taxa e malha fina) usa uma semente guardada no estado da sala, então todos os celulares, a reaplicação depois de conflito e o desfazer chegam ao mesmo resultado.
 
-Os números destas regras ficam em `TIERS`, `HOOD`, `IR`, `CREDIT`, `CREDIT_BANDS`, `BANK_RATES` e `LOAN_PLANS` (`lib/game/data.ts`); os anúncios das casas em `lib/game/listings.ts`.
+- **Jornal da Cidade** (ligado por padrão; quem cria a sala pode desligar no lobby em "Jornal e Bolsa" e jogar com as regras clássicas): no começo da partida e de cada rodada nova (junto com o sorteio dos juros) sai uma edição com uma manchete sorteada de um baralho de 36, sem repetir até acabar (aí embaralha de novo, sem abrir com a última). A edição aparece em tela cheia uma vez em cada celular (masthead, número da edição = rodada, manchete, texto e a caixa **Efeito no jogo**) e fica na aba **Mercado → Jornal** com as edições anteriores. As 32 cartas Notícias continuam iguais (são pessoais). Efeitos:
+  - **Bairros** (15): permanentes passam pela valorização do bairro (`applyNeighbourhoodChange`), ex.: metrô na Av. do Estado +20%, shopping na Higienópolis +15%; temporários valem N rodadas e expiram sozinhos, ex.: assaltos na Av. Brasil −15% por 3 rodadas, enchente na Santo Amaro −20% por 2, festival na Paulista +10% por 1. O multiplicador do bairro = permanente × cada temporário ativo (de 0,5 a 2,0), e os selos mostram os dois: _"Bairro valorizado +20% · Assaltos −15% até a rodada 9"_.
+  - **Empresas** (13): escândalo (cota −25%), lançamento de sucesso (+20%), aquisição (+30%), multa do governo (−15%), recall (−20%), greve (dividendo zero por 2 rodadas), lucro recorde (dividendo +2 pontos por 2 rodadas), feriadão (cota +10% e taxa da casa +50% por 2 rodadas) etc.
+  - **Economia** (8): juros sobem/caem (taxa da rodada ± 2 pontos, mínimo 2%), mercado em alta/baixa (todas as cotas ±10%), boom imobiliário (todos os bairros +5% para sempre), crise imobiliária (−10% por 2 rodadas), temporada de dividendos, investidores estrangeiros.
+- **Bolsa** (aba **Mercado → Bolsa**): cada empresa tem uma cotação que começa em $ 200. A cada rodada nova: variação sorteada de −5% a +5% + manchete + decisões da gerência (somadas), entre $ 50 e $ 1.000, arredondada a $ 10; o histórico das últimas 12 rodadas vira o gráfico.
+  - Comprar da empresa continua só ao cair na casa, uma por rodada, mas pela cotação. A taxa da casa = dados × $ 500 × cotação ÷ $ 200 (× os aumentos ativos, arredondada a $ 10; em dobro com as 6 empresas).
+  - **Dividendos** a cada rodada nova: cotação × rendimento (3%, mudado por manchetes e decisões; greve = zero), arredondado a $ 1 por cota, pagos pelo banco a quem tem cotas. Contam como renda do IR e chegam como aviso: _"Dividendos · Você recebeu $ 6 da Vox Telecom"_.
+  - **Vender cotas à empresa**: na sua vez, quantas quiser, pela cotação de agora (não conta como renda).
+  - Patrimônio e placar valem as cotas pela cotação.
+  - A lista mostra cotação, variação na rodada, gráfico, dividendo, dono e as suas cotas; a empresa abre com o gráfico maior, quem tem as cotas, efeitos ativos, manchetes sobre ela e o botão de vender.
+  - **Gerência**: o dono (6+ cotas) toma uma decisão por rodada em cada empresa que controla, na sua vez, e todos são avisados. **Investir** (paga $ 1.000: na próxima rodada a cota sobe de 10% a 25%, sorteado), **Dividendo extra** (o banco paga agora 5% da cotação por cota aos cotistas; na próxima rodada a cota cai 10%), **Cortar custos** (dividendo +2 pontos nas 2 rodadas seguintes, com 30% de chance de greve, sorteada no começo da próxima rodada: dividendo zero nela), **Campanha de marketing** (paga $ 500: taxa da casa +50% nesta rodada e na próxima).
+  - Tudo usa o sorteio guardado na sala: todos os celulares, a reaplicação e o desfazer chegam à mesma manchete e às mesmas cotações. Salas antigas seguem com as cotas a $ 200 e ganham o Jornal e a Bolsa a partir da próxima rodada.
+
+Os números destas regras ficam em `TIERS`, `HOOD`, `IR`, `CREDIT`, `CREDIT_BANDS`, `BANK_RATES`, `LOAN_PLANS`, `STOCK`, `DECISIONS` e `JORNAL`, e as manchetes em `HEADLINES` (`lib/game/data.ts`); os anúncios das casas em `lib/game/listings.ts`.
 
 ## Rodar no computador
 
@@ -51,7 +64,11 @@ PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 np
 PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e:banco
 # terreno e três padrões de casa, IR e score de crédito
 PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e:fase2
+# Jornal e Bolsa: edição da rodada, compra de cota ao cair, dividendos e venda à empresa
+PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e:mercado
 ```
+
+Os três primeiros testes de ponta a ponta desligam o Jornal e a Bolsa no lobby, porque conferem valores exatos.
 
 ## Configurar o Supabase
 
@@ -84,9 +101,9 @@ PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 np
 
 ```
 app/                    páginas (início e /sala/[code])
-components/             telas: Room, Lobby, Game, PlayView, PropsView, BankView, TradeViews, LedgerViews, Modals, Toasts, HouseArt, Credit
-lib/game/data.ts        40 casas, 6 empresas, 32 cartas Notícia
-lib/game/rules.ts       regras (funções puras) + rules.test.ts, fase2.test.ts e parcelas.test.ts
+components/             telas: Room, Lobby, Game, PlayView, PropsView, MercadoView, BankView, TradeViews, LedgerViews, Modals, Toasts, HouseArt, Credit
+lib/game/data.ts        40 casas, 6 empresas, 32 cartas Notícia, 36 manchetes do Jornal
+lib/game/rules.ts       regras (funções puras) + rules.test.ts, fase2.test.ts, parcelas.test.ts e jornal-bolsa.test.ts
 lib/game/listings.ts    anúncios fictícios dos 3 padrões de casa de cada imóvel
 lib/game/photos.ts      fotos reais das casas por padrão (arquivos em public/casas/)
 lib/room/               Supabase, modo local, sincronização otimista, identidade, notificações

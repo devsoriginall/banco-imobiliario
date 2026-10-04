@@ -24,6 +24,8 @@ function act(st: GameState, actor: string, action: Action) {
 function game(): GameState {
   let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
   st = act(st, 'beto', { type: 'join', name: 'Beto' });
+  // regras clássicas: sem Jornal e Bolsa (cotas a $ 200, sem manchetes nem dividendos)
+  st = act(st, 'ana', { type: 'setMercado', on: false });
   st = act(st, 'ana', { type: 'start' });
   // os testes antigos do empréstimo (pagamento único, taxa da rodada + 8 pp) contam com juros de 10%:
   // fixa a taxa sorteada da rodada em 2%
@@ -724,6 +726,7 @@ describe('empréstimo do banco', () => {
     let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
     st = act(st, 'beto', { type: 'join', name: 'Beto' });
     st = act(st, 'caio', { type: 'join', name: 'Caio' });
+    st = act(st, 'ana', { type: 'setMercado', on: false });
     st = act(st, 'ana', { type: 'start' });
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     while (!(st.round === 5 && st.turn === 2)) st = pass(st);

@@ -42,6 +42,7 @@ const act = (st: GameState, actor: string, action: Action) => applyAction(st, ac
 function game(players = ['Ana', 'Beto']): GameState {
   let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
   for (const n of players.slice(1)) st = act(st, n.toLowerCase(), { type: 'join', name: n });
+  st = act(st, 'ana', { type: 'setMercado', on: false }); // sem Jornal e Bolsa (bairros e juros só mudam pelo teste)
   return act(st, 'ana', { type: 'start' });
 }
 /** money() usa espaço fino; normaliza para comparar textos. */
