@@ -87,15 +87,20 @@ export function Room({ code }: { code: string }) {
       lastTrades.current = tradesOf(st);
       return;
     }
-    for (const t of incomingSince(st, me.id, lastSeen.current)) {
-      if (mySeqs.current.has(t.seq) && t.kind !== 'salary') continue;
+    const incoming = incomingSince(st, me.id, lastSeen.current);
+    // dividendos de várias empresas na mesma rodada viram um aviso só
+    const divs = incoming.filter((t) => t.kind === 'dividend' && !(mySeqs.current.has(t.seq) && t.reason.startsWith('Dividendo extra')));
+    if (divs.length > 1) toast('Dividendos', `Você recebeu ${money(divs.reduce((a, t) => a + t.amount, 0))} de ${divs.length} empresas`);
+    for (const t of incoming) {
+      if (t.kind === 'dividend' && (divs.length > 1 || !divs.includes(t))) continue;
+      if (mySeqs.current.has(t.seq) && t.kind !== 'salary' && t.kind !== 'dividend') continue;
       // negociação e penhora têm avisos próprios; empréstimo é sempre do próprio jogador
       if (t.kind === 'trade' || t.kind === 'penhora' || t.kind === 'loan') continue;
       const d = describeIncoming(st, t);
       toast(d.title, d.text);
     }
     for (const f of [...st.feed].reverse()) {
-      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast(f.text.includes('taxa do banco') ? 'Juros do banco' : f.text.startsWith('Parcela ') ? 'Parcela do empréstimo' : 'Na mesa', f.text);
+      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast(feedTitle(f.text), f.text);
     }
     // Negociação: proposta nova para mim, fechada, recusada ou cancelada
     const nowTrades = tradesOf(st);
@@ -212,6 +217,15 @@ export function Room({ code }: { code: string }) {
       {st.phase === 'lobby' ? <Lobby state={st} me={me.id} run={run} /> : <Game state={st} me={me.id} run={run} pushed={pushed} onPushedClose={() => setPushed(null)} />}
     </>
   );
+}
+
+/** Título do aviso de um evento importante da mesa. */
+function feedTitle(text: string): string {
+  if (text.includes('taxa do banco')) return 'Juros do banco';
+  if (text.startsWith('Parcela ')) return 'Parcela do empréstimo';
+  if (text.startsWith('Gerência da ')) return 'Decisão da gerência';
+  if (text.startsWith('Greve na ') || text.startsWith('Investimento na ')) return 'Bolsa';
+  return 'Na mesa';
 }
 
 function JoinForm({ code, initialName, full, onJoin }: { code: string; initialName: string; full: boolean; onJoin: (name: string) => Promise<void> }) {

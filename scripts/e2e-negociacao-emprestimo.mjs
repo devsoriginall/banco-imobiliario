@@ -48,6 +48,9 @@ await beto.getByRole('button', { name: 'Entrar na sala' }).click();
 await beto.waitForURL(new RegExp(`/sala/${code}$`));
 await front(ana);
 await ana.locator('.lobby-p', { hasText: 'Beto' }).waitFor();
+// regras clássicas (sem Jornal e Bolsa): os valores esperados abaixo não mudam com as manchetes
+await ana.getByRole('checkbox', { name: /Jornal e Bolsa/ }).click();
+await ana.waitForFunction(() => !document.querySelector('.toggle-row input').checked);
 await ana.getByRole('button', { name: 'Começar partida' }).click();
 await ana.getByText('É a sua vez').waitFor();
 

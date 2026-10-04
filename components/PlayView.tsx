@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_RATE, GROUPS, NEWS, SHARE_PRICE, SPACES, TIER_IDS } from '@/lib/game/data';
+import { GROUPS, NEWS, SPACES, TIER_IDS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import { houseListing, listingFacts } from '@/lib/game/listings';
 import {
@@ -9,9 +9,11 @@ import {
   buildBlock,
   controller,
   currentPlayer,
+  feeRate,
   feeTotal,
-  hoodLabel,
-  hoodMult,
+  marketOn,
+  priceChange,
+  sharePrice,
   buildPrice,
   findPlayer,
   lotMortgage,
@@ -29,6 +31,8 @@ import {
 import type { GameState, Space, TierId } from '@/lib/game/types';
 import type { GameUi } from './Game';
 import { HouseSheet, HouseThumb, type SheetAction } from './HouseSheet';
+import { fmtChange } from './MercadoView';
+import { HoodPills } from './ui';
 
 const groupColor = (g: keyof typeof GROUPS) => `var(${GROUPS[g].c})`;
 const spaceColor = (s: Space) => (s.type === 'street' ? groupColor(s.group) : s.type === 'company' ? 'var(--g-empresa)' : 'var(--g-especial)');
@@ -211,7 +215,6 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
   const h = pr?.houses || 0;
   const tier = tierOf(state, i);
   const rents = tierRents(state, i, tier ?? undefined);
-  const hood = hoodLabel(hoodMult(state, s.group));
   const house = tier ? houseListing(i, tier) : null;
   return (
     <div className="listing">
@@ -237,11 +240,7 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
           </span>
         )}
       </div>
-      {hood && (
-        <span className={`pill ${hoodMult(state, s.group) > 1 ? 'ok' : 'warn'}`} style={{ alignSelf: 'flex-start' }} data-testid="hood">
-          {hood}
-        </span>
-      )}
+      <HoodPills state={state} group={s.group} testId="hood" />
       <p style={{ margin: 0 }}>{s.desc}</p>
       {children}
       {pr && house && tier && (
@@ -481,7 +480,9 @@ function LandedView({ ui }: { ui: GameUi }) {
     const holders = Object.entries(sh).filter(([, q]) => q > 0);
     const needsFee = othersHoldShares(state, i, p.id) && !ti.feePaid;
     const boughtShare = boughtShareThisRound(state, p.id);
-    const canShare = !boughtShare && p.balance >= SHARE_PRICE;
+    const price = sharePrice(state, i);
+    const canShare = !boughtShare && p.balance >= price;
+    const chg = priceChange(state, i);
     inner = (
       <>
         <div className="row" style={{ gap: 12 }}>
@@ -491,7 +492,10 @@ function LandedView({ ui }: { ui: GameUi }) {
           <div>
             <h2>{s.name}</h2>
             <span className="muted">
-              {s.sector} · cota a {money(SHARE_PRICE)}
+              {s.sector} · cota a {money(price)}
+              {marketOn(state) && chg !== 0 && (
+                <b className={chg > 0 ? 'up' : 'down'}> {fmtChange(chg)}</b>
+              )}
             </span>
           </div>
         </div>
@@ -514,7 +518,7 @@ function LandedView({ ui }: { ui: GameUi }) {
         {needsFee &&
           (mine ? (
             <div className="stack" style={{ gap: 8 }}>
-              <span className="label">Taxa: soma dos dados × {money(COMPANY_RATE)}</span>
+              <span className="label">Taxa: soma dos dados × {money(feeRate(state, i))}</span>
               <div className="dice">
                 {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((v) => (
                   <button key={v} aria-pressed={dice === v} onClick={() => setDice(v)}>
@@ -544,11 +548,16 @@ function LandedView({ ui }: { ui: GameUi }) {
           <div className="stack" style={{ gap: 8 }}>
             <span className="label">Comprar cota da empresa (só ao cair aqui, uma por rodada)</span>
             <button className="btn primary" disabled={!canShare} onClick={() => ui.pix({ type: 'buyShares', qty: 1 }, 'Comprar cota')}>
-              Comprar 1 cota por {money(SHARE_PRICE)}
+              Comprar 1 cota por {money(price)}
             </button>
             {boughtShare && <div className="banner info">Você já comprou uma cota da empresa nesta rodada. Na próxima rodada, pode comprar outra.</div>}
-            {!boughtShare && p.balance < SHARE_PRICE && <div className="banner warn">Saldo insuficiente para comprar a cota.</div>}
+            {!boughtShare && p.balance < price && <div className="banner warn">Saldo insuficiente para comprar a cota.</div>}
           </div>
+        )}
+        {marketOn(state) && (
+          <button className="btn small" style={{ alignSelf: 'flex-start' }} onClick={() => ui.openStock(i)}>
+            Ver na Bolsa
+          </button>
         )}
       </>
     );

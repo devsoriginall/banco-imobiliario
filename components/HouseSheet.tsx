@@ -7,9 +7,10 @@ import { GROUPS, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import { houseListing } from '@/lib/game/listings';
 import { housePhotos } from '@/lib/game/photos';
-import { buildPrice, hoodLabel, hoodMult, tierName, tierRents } from '@/lib/game/rules';
+import { buildPrice, tierName, tierRents } from '@/lib/game/rules';
 import type { GameState, TierId } from '@/lib/game/types';
 import { HouseArt } from './HouseArt';
+import { HoodPills } from './ui';
 
 const LABELS = ['Terreno', '1 casa', '2 casas', '3 casas', '4 casas', 'Hotel'];
 const groupColor = (g: keyof typeof GROUPS) => `var(${GROUPS[g].c})`;
@@ -51,7 +52,6 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
   if (s.type !== 'street') return null;
   const l = houseListing(i, tier);
   const rents = tierRents(state, i, tier);
-  const hood = hoodLabel(hoodMult(state, s.group));
   const go = (d: number) => setK((x) => (x + d + photos.length) % photos.length);
   const facts: [string, string][] = [
     ['Área', `${l.area} m²`],
@@ -102,7 +102,7 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
           <span className={`pill tier-badge t-${tier}`} data-testid="hs-tier">
             Casa {tierName(tier)}
           </span>
-          {hood && <span className={`pill ${hoodMult(state, s.group) > 1 ? 'ok' : 'warn'}`}>{hood}</span>}
+          <HoodPills state={state} group={s.group} />
         </div>
         <h2 className="hs-title">{l.title}</h2>
         <div className="row between">

@@ -18,6 +18,12 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   placar: <path d="M6 20V10M12 20V4M18 20v-7" />,
+  mercado: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 15l3-3 3 2 4-5" />
+    </>
+  ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   share: (
     <>

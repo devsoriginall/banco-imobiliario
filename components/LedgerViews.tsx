@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_IDX, IR, SHARE_PRICE } from '@/lib/game/data';
+import { COMPANY_IDX, IR } from '@/lib/game/data';
 import { fmtTime, money } from '@/lib/game/format';
 import { creditOf, debtOf, equity, findPlayer, incomeOf, irTax, pname, sharesOf } from '@/lib/game/rules';
 import type { GameState } from '@/lib/game/types';
@@ -108,7 +108,7 @@ export function ScoreView({ state }: { state: GameState }) {
         })}
       </div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Patrimônio: dinheiro + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas a {money(SHARE_PRICE)}, menos a dívida com o banco.
+        Patrimônio: dinheiro + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas pela cotação da Bolsa, menos a dívida com o banco.
       </p>
     </div>
   );
