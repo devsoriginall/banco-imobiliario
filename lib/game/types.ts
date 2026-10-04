@@ -101,7 +101,7 @@ export interface Property {
   mortgaged: boolean;
   /** rodada em que o dono atual adquiriu o imóvel (compra, negociação ou falência) */
   round?: number;
-  /** casa escolhida na compra (salas antigas: Intermediária) */
+  /** padrão das casas, escolhido ao construir a primeira (sem casas: terreno, sem padrão; salas antigas com 0 casas: ignorado) */
   tier?: TierId;
   /** valor recebido ao hipotecar (base do custo para tirar a hipoteca) */
   mortgageValue?: number;
@@ -251,7 +251,7 @@ export interface GameState {
   loans?: Record<string, Loan>;
   /** multiplicador de preço e aluguel por bairro (grupo de cor); ausente = 1,0 */
   hood?: Partial<Record<GroupId, number>>;
-  /** casas que voltaram ao banco (penhora ou falência): quem comprar o terreno leva esta casa */
+  /** obsoleto (salas antigas): casas que voltavam ao banco com o terreno; hoje o terreno volta sem casa */
   lots?: Record<number, TierId>;
   /** estado do sorteio determinístico (mulberry32), igual em todos os celulares */
   seed?: number;
@@ -269,7 +269,7 @@ export type Action =
   | { type: 'start' }
   | { type: 'reset' }
   | { type: 'land'; idx: number }
-  | { type: 'buy'; tier?: TierId }
+  | { type: 'buy' }
   | { type: 'skipBuy' }
   | { type: 'payRent' }
   | { type: 'payFee'; dice: number }
@@ -282,7 +282,7 @@ export type Action =
   | { type: 'jailFail' }
   | { type: 'bail' }
   | { type: 'useCard' }
-  | { type: 'build'; idx: number }
+  | { type: 'build'; idx: number; tier?: TierId }
   | { type: 'sellHouse'; idx: number }
   | { type: 'mortgage'; idx: number }
   | { type: 'unmortgage'; idx: number }

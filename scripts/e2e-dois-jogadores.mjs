@@ -54,14 +54,14 @@ await shot(ana, '03-vez-da-ana.png');
 
 // 4. Ana cai na Av. 9 de Julho e compra
 await ana.locator('[data-space="1"]').click();
-await ana.getByRole('button', { name: /Comprar Intermediária por \$\s1\.000/ }).click();
+await ana.getByRole('button', { name: /Comprar terreno por \$\s1\.000/ }).click();
 await shot(ana, '05-pix-compra.png');
 await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
 await ana.getByText('Transação efetuada').waitFor();
 await shot(ana, '06-comprovante-compra.png');
 await ana.getByRole('button', { name: 'Fechar' }).click();
 await front(beto);
-await beto.getByText('Ana comprou Av. 9 de Julho').first().waitFor();
+await beto.getByText('Ana comprou o terreno da Av. 9 de Julho').first().waitFor();
 await shot(beto, '04-beto-assistindo.png');
 await front(ana);
 await ana.getByRole('button', { name: 'Passar a vez' }).click();

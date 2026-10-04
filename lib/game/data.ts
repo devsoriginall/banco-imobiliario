@@ -146,14 +146,18 @@ export const LOAN_PLANS: { id: LoanPlanId; name: string; short: string; parcels:
 
 // ---------- Fase 2: casas, valorização, IR, score de crédito e juros por rodada ----------
 
-/** As 3 casas que se pode escolher ao comprar um imóvel (multiplicadores sobre o preço e os aluguéis do tabuleiro). */
-export const TIERS: Record<TierId, { name: string; price: number; rent: number }> = {
-  basica: { name: 'Básica', price: 0.8, rent: 0.8 },
-  intermediaria: { name: 'Intermediária', price: 1, rent: 1 },
-  alto: { name: 'Alto padrão', price: 1.3, rent: 1.4 },
+/**
+ * As 3 casas que se pode construir no terreno (a primeira casa escolhe o padrão; as seguintes e o hotel seguem o mesmo).
+ * `build`: multiplicador do custo de construção do tabuleiro; `rent`: multiplicador dos aluguéis com casas e hotel.
+ * O terreno (sem casa) não tem padrão: preço, aluguel "sem casa" e hipoteca do tabuleiro × bairro.
+ */
+export const TIERS: Record<TierId, { name: string; build: number; rent: number }> = {
+  basica: { name: 'Básica', build: 0.8, rent: 0.8 },
+  intermediaria: { name: 'Intermediária', build: 1, rent: 1 },
+  alto: { name: 'Alto padrão', build: 1.3, rent: 1.4 },
 };
 export const TIER_IDS: TierId[] = ['basica', 'intermediaria', 'alto'];
-/** Casa de salas antigas e de compras sem escolha: a Intermediária custa o preço do tabuleiro. */
+/** Padrão de casas de salas antigas sem padrão guardado e de construções sem escolha: a Intermediária custa o do tabuleiro. */
 export const DEFAULT_TIER: TierId = 'intermediaria';
 
 /** Valorização do bairro (grupo de cor): multiplicador do preço e dos aluguéis, começa em 1,0. */

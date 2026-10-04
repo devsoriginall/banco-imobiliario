@@ -67,7 +67,7 @@ describe('cair na casa e comprar', () => {
     let st = act(game(), 'ana', { type: 'land', idx: NOVE_JULHO });
     expect(st.turnInfo.resolved).toBe(false);
     st = act(st, 'ana', { type: 'buy' });
-    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false, round: 1, tier: 'intermediaria' });
+    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false, round: 1 });
     expect(bal(st, 'ana')).toBe(24000);
     expect(st.turnInfo.resolved).toBe(true);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 1000, kind: 'buy' });

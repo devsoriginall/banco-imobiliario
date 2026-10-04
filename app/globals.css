@@ -258,3 +258,7 @@ a{color:inherit}
 .parcel-list li span{color:var(--muted)}
 .parcel-list li.paid b{color:var(--accent)}
 .parcel-list li.next{outline:1.5px solid var(--accent)}
+.lot-offer{display:flex;flex-direction:column;gap:10px;border:1.5px solid var(--accent);border-radius:14px;padding:12px;background:var(--accent-soft)}
+.rent-compare{display:grid;grid-template-columns:1fr repeat(3,auto);gap:4px 12px;font-size:13px;background:var(--surface-2);border-radius:12px;padding:10px 12px}
+.rent-compare>b{font-size:11px;text-align:right;color:var(--muted)}
+.rent-compare>span>span:not(:first-child){text-align:right}

@@ -135,29 +135,42 @@ export function hoodLabel(mult: number): string | null {
   if (!pct) return null;
   return pct > 0 ? `Bairro valorizado +${pct}%` : `Bairro desvalorizado −${-pct}%`;
 }
-/** Casa que o terreno já tem por ter voltado ao banco (quem comprar leva esta); null = escolhe na compra. */
-export const lotTier = (st: GameState, i: number): TierId | null => st.lots?.[i] ?? null;
-/** Casa do imóvel: a escolhida pelo dono, a que ficou no terreno, ou a Intermediária (salas antigas). */
-export const tierOf = (st: GameState, i: number): TierId => st.props[i]?.tier ?? lotTier(st, i) ?? DEFAULT_TIER;
+/**
+ * Padrão das casas do imóvel, ou null se é só terreno (sem casas). Salas antigas: com casas e sem padrão, Intermediária;
+ * padrão guardado com 0 casas é ignorado.
+ */
+export const tierOf = (st: GameState, i: number): TierId | null => {
+  const pr = st.props[i];
+  if (!pr || !(pr.houses > 0)) return null;
+  return pr.tier && TIERS[pr.tier] ? pr.tier : DEFAULT_TIER;
+};
 export const tierName = (t: TierId) => TIERS[t].name;
-/** Preço da casa: preço do tabuleiro × nível da casa × bairro, arredondado a $ 10. */
-export function tierPrice(st: GameState, i: number, tier: TierId = tierOf(st, i)): number {
+/** Preço do terreno: preço do tabuleiro × bairro, arredondado a $ 10. */
+export function lotPrice(st: GameState, i: number): number {
   const s = street(i);
-  return round10(s.price * TIERS[tier].price * hoodMult(st, s.group));
+  return round10(s.price * hoodMult(st, s.group));
 }
-/** Tabela de aluguel [sem casa, 1..4 casas, hotel] da casa: tabela do tabuleiro × nível × bairro. */
-export function tierRents(st: GameState, i: number, tier: TierId = tierOf(st, i)): number[] {
+/** Custo de cada casa (e do hotel) no padrão: custo de construção do tabuleiro × padrão × bairro, arredondado a $ 10. */
+export function buildPrice(st: GameState, i: number, tier: TierId = tierOf(st, i) ?? DEFAULT_TIER): number {
   const s = street(i);
-  const m = TIERS[tier].rent * hoodMult(st, s.group);
-  return s.rent.map((r) => Math.round(r * m));
+  return round10(s.build * TIERS[tier].build * hoodMult(st, s.group));
 }
-/** Valor de hipoteca: acompanha o preço da casa. */
-export function tierMortgage(st: GameState, i: number, tier: TierId = tierOf(st, i)): number {
+/**
+ * Tabela de aluguel [sem casa, 1..4 casas, hotel]: o terreno paga o "sem casa" do tabuleiro × bairro;
+ * com casas, a tabela do tabuleiro × padrão × bairro.
+ */
+export function tierRents(st: GameState, i: number, tier: TierId = tierOf(st, i) ?? DEFAULT_TIER): number[] {
   const s = street(i);
-  return round10(s.mortgage * TIERS[tier].price * hoodMult(st, s.group));
+  const hm = hoodMult(st, s.group);
+  return s.rent.map((r, k) => Math.round(r * hm * (k ? TIERS[tier].rent : 1)));
+}
+/** Valor de hipoteca do terreno: hipoteca do tabuleiro × bairro (só terreno sem casas pode ser hipotecado). */
+export function lotMortgage(st: GameState, i: number): number {
+  const s = street(i);
+  return round10(s.mortgage * hoodMult(st, s.group));
 }
 /** Quanto a hipoteca rendeu (ou renderia agora). */
-export const mortgageValueOf = (st: GameState, i: number) => st.props[i]?.mortgageValue ?? tierMortgage(st, i);
+export const mortgageValueOf = (st: GameState, i: number) => st.props[i]?.mortgageValue ?? lotMortgage(st, i);
 export const unmortgageCost = (st: GameState, i: number) => Math.round(mortgageValueOf(st, i) * (1 + st.settings.mortgageRate));
 
 /**
@@ -189,10 +202,9 @@ export function netWorth(st: GameState, p: Player): number {
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== p.id) continue;
     const i = Number(k);
-    const s = street(i);
-    const price = tierPrice(st, i);
+    const price = lotPrice(st, i);
     w += pr.mortgaged ? price - mortgageValueOf(st, i) : price;
-    w += (pr.houses || 0) * s.build;
+    w += (pr.houses || 0) * buildPrice(st, i);
   }
   COMPANY_IDX.forEach((i) => (w += (sharesOf(st, i)[p.id] || 0) * SHARE_PRICE));
   return w;
@@ -333,11 +345,11 @@ export function tradeProblem(st: GameState, from: string, to: string, give: Trad
   return sideProblem(st, give, from) || sideProblem(st, get, to);
 }
 
-/** Resumo de um lado, ex.: "$ 1.000 + Av. Paulista (Alto padrão) + 2 cotas da Banco Aurora". Com o estado, mostra a casa. */
-export function describeSide(side: TradeSide, st?: GameState): string {
+/** Resumo de um lado, ex.: "$ 1.000 + Av. Paulista + 2 cotas da Banco Aurora" (imóvel negociado é sempre terreno, sem casas). */
+export function describeSide(side: TradeSide): string {
   const parts: string[] = [];
   if (side.money) parts.push(money(side.money));
-  for (const i of side.props) parts.push(st ? `${street(i).name} (${tierName(tierOf(st, i))})` : street(i).name);
+  for (const i of side.props) parts.push(street(i).name);
   for (const [k, q] of Object.entries(side.shares)) if (q > 0) parts.push(`${q} cota${q > 1 ? 's' : ''} da ${company(Number(k)).name}`);
   return parts.join(' + ') || 'nada';
 }
@@ -424,11 +436,9 @@ export function shortPayers(st: GameState, list: Transfer[]): string[] {
   return Object.keys(owed).filter((pid) => (findPlayer(st, pid)?.balance ?? 0) < owed[pid]);
 }
 
-/** Casa da compra: a que já está no terreno (voltou ao banco) ou a escolhida (padrão: Intermediária). */
-export function buyTier(st: GameState, i: number, chosen?: TierId): TierId {
-  const forced = lotTier(st, i);
-  if (forced) return forced;
-  return chosen && TIERS[chosen] ? chosen : DEFAULT_TIER;
+/** Padrão da próxima construção: o das casas que já existem, ou o escolhido para a primeira (padrão: Intermediária). */
+export function buildTier(st: GameState, i: number, chosen?: TierId): TierId {
+  return tierOf(st, i) ?? (chosen && TIERS[chosen] ? chosen : DEFAULT_TIER);
 }
 
 /**
@@ -441,15 +451,14 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
   switch (action.type) {
     case 'buy': {
       const s = street(landed ?? -1);
-      const tier = buyTier(st, landed!, action.tier);
-      return [{ from: p.id, to: BANK, amount: tierPrice(st, landed!, tier), reason: `Compra da ${s.name} · casa ${tierName(tier)}`, kind: 'buy', space: landed!, tier }];
+      return [{ from: p.id, to: BANK, amount: lotPrice(st, landed!), reason: `Compra do terreno da ${s.name}`, kind: 'buy', space: landed! }];
     }
     case 'payRent': {
       const s = street(landed ?? -1);
       const owner = ownedBy(st, landed!);
       if (!owner) return [];
       const tier = tierOf(st, landed!);
-      return [{ from: p.id, to: owner, amount: rentOf(st, landed!), reason: `Aluguel da ${s.name} (${tierName(tier)})`, kind: 'rent', space: landed!, tier }];
+      return [{ from: p.id, to: owner, amount: rentOf(st, landed!), reason: `Aluguel da ${s.name} (${tier ? `casa ${tierName(tier)}` : 'terreno'})`, kind: 'rent', space: landed!, ...(tier ? { tier } : {}) }];
     }
     case 'payFee':
       return feeTransfers(st, landed ?? -1, action.dice, p.id);
@@ -481,15 +490,17 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       return [{ from: p.id, to: BANK, amount: st.settings.bail, reason: 'Fiança da detenção', kind: 'bail' }];
     case 'build': {
       const s = street(action.idx);
-      return [{ from: actor, to: BANK, amount: s.build, reason: `${houses(st, action.idx) === 4 ? 'Hotel' : 'Casa'} na ${s.name}`, kind: 'build', space: action.idx }];
+      const tier = buildTier(st, action.idx, action.tier);
+      const h = houses(st, action.idx);
+      return [{ from: actor, to: BANK, amount: buildPrice(st, action.idx, tier), reason: `${h === 4 ? 'Hotel' : h === 0 ? 'Primeira casa' : 'Casa'} ${tierName(tier)} na ${s.name}`, kind: 'build', space: action.idx, tier }];
     }
     case 'sellHouse': {
       const s = street(action.idx);
-      return [{ from: BANK, to: actor, amount: s.build / 2, reason: `Venda de construção na ${s.name}`, kind: 'sellhouse', space: action.idx }];
+      return [{ from: BANK, to: actor, amount: buildPrice(st, action.idx) / 2, reason: `Venda de construção na ${s.name}`, kind: 'sellhouse', space: action.idx }];
     }
     case 'mortgage': {
       const s = street(action.idx);
-      return [{ from: BANK, to: actor, amount: tierMortgage(st, action.idx), reason: `Hipoteca da ${s.name}`, kind: 'mortgage', space: action.idx }];
+      return [{ from: BANK, to: actor, amount: lotMortgage(st, action.idx), reason: `Hipoteca da ${s.name}`, kind: 'mortgage', space: action.idx }];
     }
     case 'unmortgage': {
       const s = street(action.idx);
@@ -633,22 +644,23 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
   while (p.balance < owed) {
     const built = mine().filter((i) => houses(st, i) > 0);
     if (!built.length) break;
-    built.sort((a, b) => houses(st, b) - houses(st, a) || tierPrice(st, a) - tierPrice(st, b) || a - b);
+    built.sort((a, b) => houses(st, b) - houses(st, a) || lotPrice(st, a) - lotPrice(st, b) || a - b);
     const i = built[0];
     const s = street(i);
     const hotel = houses(st, i) === 5;
-    st.props[i].houses -= 1;
+    const value = buildPrice(st, i) / 2;
+    removeHouse(st, i);
     sold += 1;
-    applyTransfers(st, [{ from: BANK, to: p.id, amount: s.build / 2, reason: `Penhora: venda de ${hotel ? 'hotel' : 'casa'} na ${s.name} (metade do custo)`, kind: 'penhora', space: i }], now);
+    applyTransfers(st, [{ from: BANK, to: p.id, amount: value, reason: `Penhora: venda de ${hotel ? 'hotel' : 'casa'} na ${s.name} (metade do custo)`, kind: 'penhora', space: i }], now);
   }
   if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true);
   let taken = 0;
   while (p.balance < owed) {
-    const props = mine().sort((a, b) => tierPrice(st, a) - tierPrice(st, b) || a - b);
+    const props = mine().sort((a, b) => lotPrice(st, a) - lotPrice(st, b) || a - b);
     if (!props.length) break;
     const i = props[0];
     const s = street(i);
-    const value = st.props[i].mortgaged ? 0 : tierMortgage(st, i);
+    const value = st.props[i].mortgaged ? 0 : lotMortgage(st, i);
     toBank(st, i);
     taken += 1;
     applyTransfers(
@@ -730,11 +742,20 @@ function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: s
   if (st.winner) log(st, `${pname(st, st.winner)} venceu a partida!`, now, by, true);
 }
 
-/** Imóvel volta ao banco: o terreno fica com a casa (quem comprar depois leva a mesma casa). */
+/** Imóvel volta ao banco como terreno, sem casa (e sem padrão). */
 function toBank(st: GameState, i: number) {
-  const tier = tierOf(st, i);
   delete st.props[i];
-  st.lots = { ...(st.lots || {}), [i]: tier };
+  if (st.lots?.[i]) delete st.lots[i];
+}
+
+/** Tira uma construção; sem casas, o imóvel volta a ser só terreno (a próxima primeira casa escolhe o padrão de novo). */
+function removeHouse(st: GameState, i: number) {
+  const pr = st.props[i];
+  pr.houses -= 1;
+  if (pr.houses <= 0) {
+    pr.houses = 0;
+    delete pr.tier;
+  }
 }
 
 function sendToJail(p: Player) {
@@ -883,16 +904,12 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const s = landedSpace();
       need(s.type === 'street' && !ownedBy(st, ti.landed!), 'Este imóvel não está à venda.');
       need(!ti.resolved, 'Esta casa já foi resolvida.');
-      need(!action.tier || TIERS[action.tier], 'Escolha uma das 3 casas.');
-      const forced = lotTier(st, ti.landed!);
-      need(!forced || !action.tier || action.tier === forced, `Este terreno já tem uma casa ${forced && tierName(forced)}.`);
-      const tier = buyTier(st, ti.landed!, action.tier);
       const list = transfersFor(state, action, actor);
       pay(st, list, now);
-      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round, tier };
+      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round };
       if (st.lots) delete st.lots[ti.landed!];
       ti.resolved = true;
-      log(st, `${p.name} comprou ${s.name} (casa ${tierName(tier)}) por ${money(list[0].amount)}`, now, actor);
+      log(st, `${p.name} comprou o terreno da ${s.name} por ${money(list[0].amount)}`, now, actor);
       break;
     }
     case 'skipBuy': {
@@ -1030,16 +1047,22 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const block = buildBlock(state, action.idx, actor);
       need(!block, `Não dá para construir aqui agora: ${block?.toLowerCase()}.`);
       const s = street(action.idx);
+      const current = tierOf(state, action.idx);
+      need(!action.tier || TIERS[action.tier], 'Escolha uma das 3 casas.');
+      need(!current || !action.tier || action.tier === current, `As casas deste imóvel são ${tierName(current ?? DEFAULT_TIER)}: as próximas seguem o mesmo padrão.`);
+      const tier = buildTier(state, action.idx, action.tier);
       pay(st, transfersFor(state, action, actor), now);
       me.builtRound = st.round;
-      st.props[action.idx].houses += 1;
-      log(st, `${me.name} construiu ${st.props[action.idx].houses === 5 ? 'um hotel' : 'uma casa'} na ${s.name}`, now, actor);
+      const pr = st.props[action.idx];
+      pr.houses += 1;
+      pr.tier = tier;
+      log(st, `${me.name} construiu ${pr.houses === 5 ? 'um hotel' : pr.houses === 1 ? `a primeira casa (${tierName(tier)})` : 'uma casa'} na ${s.name}`, now, actor);
       break;
     }
     case 'sellHouse': {
       need(canSellHouse(state, action.idx, actor), 'Não dá para vender construção aqui agora.');
       pay(st, transfersFor(state, action, actor), now);
-      st.props[action.idx].houses -= 1;
+      removeHouse(st, action.idx);
       log(st, `${me.name} vendeu uma construção na ${street(action.idx).name}`, now, actor);
       break;
     }
@@ -1120,7 +1143,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const problem = tradeProblem(st, t.from, t.to, t.give, t.get);
       need(!problem, `A proposta não vale mais: ${problem}`);
       const a = findPlayer(st, t.from)!;
-      const reason = `Negociação ${t.id}: ${a.name} deu ${describeSide(t.give, st)} e recebeu ${describeSide(t.get, st)}`;
+      const reason = `Negociação ${t.id}: ${a.name} deu ${describeSide(t.give)} e recebeu ${describeSide(t.get)}`;
       const list: Transfer[] = [];
       if (t.give.money) list.push({ from: t.from, to: t.to, amount: t.give.money, reason, kind: 'trade', ref: t.id });
       if (t.get.money) list.push({ from: t.to, to: t.from, amount: t.get.money, reason, kind: 'trade', ref: t.id });
@@ -1140,7 +1163,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       move(t.give, t.from, t.to);
       move(t.get, t.to, t.from);
       st.trades = tradesOf(st).filter((x) => x.id !== t.id);
-      log(st, `Negociação fechada entre ${a.name} e ${me.name}: ${describeSide(t.give, st)} por ${describeSide(t.get, st)}`, now, actor);
+      log(st, `Negociação fechada entre ${a.name} e ${me.name}: ${describeSide(t.give)} por ${describeSide(t.get)}`, now, actor);
       break;
     }
     case 'takeLoan': {

@@ -101,7 +101,7 @@ export function Room({ code }: { code: string }) {
     const nowTrades = tradesOf(st);
     for (const t of nowTrades)
       if (t.to === me.id && !lastTrades.current.some((x) => x.id === t.id))
-        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give, st)} e pede ${describeSide(t.get, st)}.`);
+        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give)} e pede ${describeSide(t.get)}.`);
     for (const t of lastTrades.current) {
       if (nowTrades.some((x) => x.id === t.id) || myTradeActs.current.has(t.id)) continue;
       const deal = st.tx.filter((x) => x.ref === t.id).sort((a, b) => a.seq - b.seq);
