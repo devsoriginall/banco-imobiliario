@@ -5,10 +5,15 @@ O banco da partida no celular de cada jogador. O tabuleiro, os peões e os dados
 - **Criar sala**: quem cria digita o nome e recebe um código de 5 letras e um link `/sala/CODIGO` para mandar no grupo.
 - **Entrar na sala**: código e nome. Não há cadastro: cada aparelho guarda um id aleatório e o nome no `localStorage`.
 - **Sala de espera**: mostra quem entrou em tempo real; quem criou define o saldo inicial e começa a partida.
-- **Na partida**: cada celular mostra a própria carteira, o saldo de todos e de quem é a vez. Só quem está na vez escolhe a casa onde parou e vê os botões de ação; os outros acompanham. Qualquer um abre **Imóveis** (construir, vender, hipotecar os seus), **Extrato** e **Placar**.
+- **Na partida**: cada celular mostra a própria carteira, o saldo de todos e de quem é a vez. Só quem está na vez escolhe a casa onde parou e vê os botões de ação; os outros acompanham. Qualquer um abre **Imóveis** (construir, vender, hipotecar os seus), **Banco** (negociar com outro jogador, empréstimo), **Extrato** e **Placar**.
 - Quem recebe um pagamento ganha uma notificação, por exemplo: _"Beto pagou o aluguel da Av. 9 de Julho · +$ 60"_.
 
-Regras do Super Banco Imobiliário portadas da versão "da mesa": pró-labore de $ 2.000 ao passar pelo Início, fiança de $ 500 (3 tentativas de dupla), hipoteca com 20% para tirar, construção em rodízio, e empresas com 10 cotas de $ 200 (quem tem 6 ou mais é dono e recebe dados × $ 500, em dobro se for dono das 6; sem dono, a taxa é dividida pelas cotas).
+Regras do Super Banco Imobiliário portadas da versão "da mesa": pró-labore de $ 2.000 ao passar pelo Início, fiança de $ 500 (3 tentativas de dupla), hipoteca com 20% para tirar, e empresas com 10 cotas de $ 200 (quem tem 6 ou mais é dono e recebe dados × $ 500, em dobro se for dono das 6; sem dono, a taxa é dividida pelas cotas). Regras da casa:
+
+- **Construção**: em qualquer imóvel seu sem hipoteca (não precisa do grupo completo), na sua vez, uma construção por rodada no total e não no imóvel adquirido nesta rodada (compra, negociação ou falência). Hotel depois de 4 casas no mesmo imóvel. Vender construção vale a qualquer momento, de qualquer imóvel, pela metade do custo.
+- **Cotas da empresa**: só ao cair nela e no máximo uma por rodada.
+- **Negociação** (aba Banco, a qualquer momento): proponha a outro jogador uma troca de dinheiro, imóveis e cotas. Imóvel com casas não entra; hipotecado entra e continua hipotecado. A proposta fica pendente até ser aceita, recusada ou cancelada (uma por dupla de jogadores) e é validada de novo ao aceitar.
+- **Empréstimo** (aba Banco, na sua vez): até 50% do patrimônio líquido, a partir de $ 1.000 em múltiplos de $ 500, juros de 10% sobre o valor, vence em 5 rodadas; pode pagar antes, inteiro ou em partes. No vencimento, no início da sua vez, o banco cobra do saldo; se faltar, faz a **penhora** (vende as construções pela metade do custo e toma os imóveis do mais barato para o mais caro, pelo valor de hipoteca, ou 0 se já hipotecado; o que sobrar fica com o jogador). Se nem assim cobrir, falência. As constantes ficam em `LOAN` (`lib/game/data.ts`).
 
 ## Rodar no computador
 
@@ -29,6 +34,8 @@ npm run lint
 npm run build && npm start
 # teste de ponta a ponta com dois jogadores (Playwright; servidor rodando sem Supabase)
 PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e
+# negociação e empréstimo
+PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e:banco
 ```
 
 ## Configurar o Supabase
@@ -62,7 +69,7 @@ PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 np
 
 ```
 app/                    páginas (início e /sala/[code])
-components/             telas: Room, Lobby, Game, PlayView, PropsView, LedgerViews, Modals, Toasts
+components/             telas: Room, Lobby, Game, PlayView, PropsView, BankView, TradeViews, LedgerViews, Modals, Toasts
 lib/game/data.ts        40 casas, 6 empresas, 32 cartas Notícia
 lib/game/rules.ts       regras (funções puras) + rules.test.ts
 lib/room/               Supabase, modo local, sincronização otimista, identidade, notificações

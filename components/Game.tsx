@@ -1,20 +1,23 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, findPlayer, netWorth } from '@/lib/game/rules';
+import { currentPlayer, equity, findPlayer, loanOf, loanOwed, loanRoundsLeft } from '@/lib/game/rules';
 import type { Action, GameState, Tx } from '@/lib/game/types';
+import { BankView } from './BankView';
 import { Icon } from './Icon';
 import { ScoreView, TxView } from './LedgerViews';
 import { ConfirmModal, PixModal, ReceiptModal, type PixRequest } from './Modals';
 import { PlayView } from './PlayView';
 import { PropsView } from './PropsView';
-import type { Run } from './Room';
+import type { PushedReceipt, Run } from './Room';
+import { TradeBuilder, TradeInbox } from './TradeViews';
 import { Avatar } from './ui';
 
-type Tab = 'jogada' | 'imoveis' | 'extrato' | 'placar';
+type Tab = 'jogada' | 'imoveis' | 'banco' | 'extrato' | 'placar';
 const TABS: [Tab, string][] = [
   ['jogada', 'Jogada'],
   ['imoveis', 'Imóveis'],
+  ['banco', 'Banco'],
   ['extrato', 'Extrato'],
   ['placar', 'Placar'],
 ];
@@ -25,15 +28,18 @@ export interface GameUi {
   /** pede confirmação de Pix e, confirmado, mostra o comprovante */
   pix: (action: Action, title?: string) => void;
   /** executa direto e mostra o comprovante (dinheiro que entra) */
-  runWithReceipt: (action: Action) => Promise<void>;
+  runWithReceipt: (action: Action, title?: string) => Promise<void>;
+  /** mostra o comprovante de transações já feitas */
+  showReceipt: (txs: Tx[], title?: string) => void;
   run: Run;
   goTab: (t: Tab) => void;
 }
 
-export function Game({ state, me, run }: { state: GameState; me: string; run: Run }) {
+export function Game({ state, me, run, pushed, onPushedClose }: { state: GameState; me: string; run: Run; pushed?: PushedReceipt | null; onPushedClose?: () => void }) {
   const [tab, setTab] = useState<Tab>('jogada');
   const [pixReq, setPixReq] = useState<PixRequest | null>(null);
-  const [receipt, setReceipt] = useState<Tx[] | null>(null);
+  const [receipt, setReceipt] = useState<{ txs: Tx[]; title?: string } | null>(null);
+  const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const mine = findPlayer(state, me);
   const cur = currentPlayer(state);
@@ -47,9 +53,12 @@ export function Game({ state, me, run }: { state: GameState; me: string; run: Ru
       setTab(t);
     },
     pix: (action, title) => setPixReq({ action, title }),
-    runWithReceipt: async (action) => {
+    runWithReceipt: async (action, title) => {
       const r = await run(action);
-      if (r?.created.length) setReceipt(r.created);
+      if (r?.created.length) setReceipt({ txs: r.created, title });
+    },
+    showReceipt: (txs, title) => {
+      if (txs.length) setReceipt({ txs, title });
     },
   };
 
@@ -84,7 +93,8 @@ export function Game({ state, me, run }: { state: GameState; me: string; run: Ru
               <div className="big num" data-testid="wallet-balance">
                 {money(mine.balance)}
               </div>
-              <div className="lbl">Patrimônio {money(netWorth(state, mine))}</div>
+              <div className="lbl">Patrimônio {money(equity(state, mine))}</div>
+              <DebtLine state={state} me={me} />
             </div>
             <Avatar name={mine.name} color={mine.color} style={{ width: 44, height: 44, borderRadius: 22 }} />
           </div>
@@ -109,8 +119,11 @@ export function Game({ state, me, run }: { state: GameState; me: string; run: Ru
           ))}
         </div>
 
+        <TradeInbox ui={ui} />
+
         {tab === 'jogada' && <PlayView ui={ui} />}
         {tab === 'imoveis' && <PropsView ui={ui} />}
+        {tab === 'banco' && <BankView ui={ui} onTrade={setTradeWith} />}
         {tab === 'extrato' && <TxView state={state} me={me} />}
         {tab === 'placar' && <ScoreView state={state} />}
       </main>
@@ -141,11 +154,13 @@ export function Game({ state, me, run }: { state: GameState; me: string; run: Ru
           onConfirm={async () => {
             const r = await run(pixReq.action);
             setPixReq(null);
-            if (r?.created.length) setReceipt(r.created);
+            if (r?.created.length) setReceipt({ txs: r.created, title: pixReq.action.type === 'payLoan' ? 'Pagamento ao banco' : undefined });
           }}
         />
       )}
-      {!pixReq && receipt && <ReceiptModal state={state} receipt={receipt} onClose={() => setReceipt(null)} />}
+      {tradeWith && !pixReq && <TradeBuilder ui={ui} partner={tradeWith} onClose={() => setTradeWith(null)} />}
+      {!pixReq && !tradeWith && receipt && <ReceiptModal state={state} receipt={receipt.txs} title={receipt.title} onClose={() => setReceipt(null)} />}
+      {!pixReq && !tradeWith && !receipt && pushed && <ReceiptModal state={state} receipt={pushed.txs} title={pushed.title} onClose={() => onPushedClose?.()} />}
       {confirmReset && (
         <ConfirmModal
           title="Começar uma nova partida?"
@@ -159,5 +174,17 @@ export function Game({ state, me, run }: { state: GameState; me: string; run: Ru
         />
       )}
     </>
+  );
+}
+
+/** Dívida com o banco no cabeçalho da carteira. */
+function DebtLine({ state, me }: { state: GameState; me: string }) {
+  const loan = loanOf(state, me);
+  if (!loan) return null;
+  const left = loanRoundsLeft(state, me)!;
+  return (
+    <div className={`debt${left <= 1 ? ' urgent' : ''}`} data-testid="wallet-debt">
+      Dívida {money(loanOwed(loan))} · {left <= 1 ? 'vence na próxima rodada' : `vence em ${left} rodadas`}
+    </div>
   );
 }

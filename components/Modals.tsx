@@ -1,11 +1,11 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { fmtTime, money } from '@/lib/game/format';
-import { currentPlayer, pname, shortPayers, transfersFor } from '@/lib/game/rules';
+import { currentPlayer, loanLimit, pname, shortPayers, transfersFor } from '@/lib/game/rules';
 import type { Action, GameState, Transfer, Tx } from '@/lib/game/types';
 import { Icon } from './Icon';
 
-function Sheet({ label, children }: { label: string; children: ReactNode }) {
+export function Sheet({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="scrim" role="dialog" aria-modal="true" aria-label={label}>
       <div className="sheet">{children}</div>
@@ -79,7 +79,9 @@ export function PixModal({
       {short.length > 0 && (
         <div className="banner bad">
           Saldo insuficiente: {short.map((pid) => pname(state, pid)).join(', ')}.{' '}
-          {short.includes(me) ? 'Venda casas ou hipoteque na aba Imóveis, ou declare falência.' : 'Quem está sem saldo pode vender casas ou hipotecar no próprio celular.'}
+          {short.includes(me)
+            ? `Venda casas ou hipoteque na aba Imóveis${isTurn && loanLimit(state, me) > 0 ? ', peça um empréstimo na aba Banco' : ''}, ou declare falência.`
+            : 'Quem está sem saldo pode vender casas ou hipotecar no próprio celular.'}
         </div>
       )}
       <button
@@ -110,7 +112,7 @@ export function PixModal({
   );
 }
 
-export function ReceiptModal({ state, receipt, onClose }: { state: GameState; receipt: Tx[]; onClose: () => void }) {
+export function ReceiptModal({ state, receipt, title = 'Transação efetuada', onClose }: { state: GameState; receipt: Tx[]; title?: string; onClose: () => void }) {
   const total = receipt.reduce((a, t) => a + t.amount, 0);
   const r0 = receipt[0];
   return (
@@ -119,7 +121,7 @@ export function ReceiptModal({ state, receipt, onClose }: { state: GameState; re
         <div className="check">
           <Icon name="check" size={30} />
         </div>
-        <b style={{ fontFamily: 'var(--display)', fontSize: 18 }}>Transação efetuada</b>
+        <b style={{ fontFamily: 'var(--display)', fontSize: 18 }}>{title}</b>
         <span className="amt num">{money(total)}</span>
       </div>
       <h3>Comprovante</h3>

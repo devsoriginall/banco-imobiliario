@@ -47,12 +47,18 @@ export interface Player {
   jailTries: number;
   freeCards: number;
   out: boolean;
+  /** rodada em que construiu pela última vez (uma construção por rodada) */
+  builtRound?: number;
+  /** rodada em que comprou cota da empresa pela última vez (uma cota por rodada) */
+  shareRound?: number;
 }
 
 export interface Property {
   owner: string;
   houses: number; // 0..4 casas, 5 = hotel
   mortgaged: boolean;
+  /** rodada em que o dono atual adquiriu o imóvel (compra, negociação ou falência) */
+  round?: number;
 }
 
 export type TxKind =
@@ -69,7 +75,11 @@ export type TxKind =
   | 'sellhouse'
   | 'mortgage'
   | 'unmortgage'
-  | 'bankrupt';
+  | 'bankrupt'
+  | 'trade'
+  | 'loan'
+  | 'loanpay'
+  | 'penhora';
 
 export interface Tx {
   id: string;
@@ -82,6 +92,35 @@ export interface Tx {
   reason: string;
   kind: TxKind;
   space?: number;
+  /** id da negociação que gerou esta transação */
+  ref?: string;
+}
+
+/** Um lado de uma proposta de negociação: dinheiro, imóveis (índices) e cotas (empresa → quantidade). */
+export interface TradeSide {
+  money: number;
+  props: number[];
+  shares: Record<number, number>;
+}
+
+/** Proposta de negociação pendente: `from` dá `give` e pede `get` a `to`. */
+export interface Trade {
+  id: string;
+  from: string;
+  to: string;
+  give: TradeSide;
+  get: TradeSide;
+  at: string;
+  round: number;
+}
+
+/** Empréstimo do banco: deve principal + juros − pago, até o início da vez do jogador na rodada `dueRound`. */
+export interface Loan {
+  principal: number;
+  interest: number;
+  paid: number;
+  takenRound: number;
+  dueRound: number;
 }
 
 export interface FeedItem {
@@ -135,6 +174,11 @@ export interface GameState {
   prev: GameState | null;
   prevBy: string | null;
   winner: string | null;
+  /** propostas de negociação pendentes (salas antigas podem não ter o campo) */
+  trades?: Trade[];
+  tradeCount?: number;
+  /** empréstimos ativos por jogador */
+  loans?: Record<string, Loan>;
 }
 
 export type Action =
@@ -162,7 +206,13 @@ export type Action =
   | { type: 'unmortgage'; idx: number }
   | { type: 'endTurn'; again: boolean }
   | { type: 'undo' }
-  | { type: 'bankrupt'; debtor: string; creditor: string };
+  | { type: 'bankrupt'; debtor: string; creditor: string }
+  | { type: 'proposeTrade'; to: string; give: TradeSide; get: TradeSide }
+  | { type: 'acceptTrade'; id: string }
+  | { type: 'declineTrade'; id: string }
+  | { type: 'cancelTrade'; id: string }
+  | { type: 'takeLoan'; amount: number }
+  | { type: 'payLoan'; amount: number };
 
 /** Transferência ainda não aplicada (prévia do Pix) */
 export interface Transfer {
@@ -172,6 +222,7 @@ export interface Transfer {
   reason: string;
   kind: TxKind;
   space?: number;
+  ref?: string;
 }
 
 export interface ActionContext {

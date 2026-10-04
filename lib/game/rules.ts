@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { COMPANY_IDX, COMPANY_RATE, CONTROL, DEFAULTS, GROUPS, JAIL_POS, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES } from './data';
-import type { Action, ActionContext, CompanySpace, GameState, GroupId, Player, StreetSpace, Transfer, TurnInfo } from './types';
+import { COMPANY_IDX, COMPANY_RATE, CONTROL, DEFAULTS, GROUPS, JAIL_POS, LOAN, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES } from './data';
+import type { Action, ActionContext, CompanySpace, GameState, GroupId, Loan, Player, StreetSpace, Trade, TradeSide, Transfer, TurnInfo } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -54,6 +54,9 @@ export function newRoom(code: string, host: { id: string; name: string }, now = 
     prev: null,
     prevBy: null,
     winner: null,
+    trades: [],
+    tradeCount: 0,
+    loans: {},
   };
 }
 
@@ -111,31 +114,113 @@ export function netWorth(st: GameState, p: Player): number {
   return w;
 }
 
-const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
+// ---------- Empréstimo ----------
 
-/** Pode construir: na própria vez, com o grupo completo, sem hipoteca no grupo, em rodízio (uma casa por imóvel de cada vez). */
-export function canBuild(st: GameState, i: number, actor: string): boolean {
-  const s = SPACES[i];
-  const pr = st.props[i];
-  if (s.type !== 'street' || !pr || pr.owner !== actor || !isMyTurn(st, actor)) return false;
-  if (!ownsGroup(st, pr.owner, s.group)) return false;
-  const g = groupIdx(s.group);
-  if (g.some((j) => st.props[j]?.mortgaged)) return false;
-  const h = houses(st, i);
-  if (h >= 5) return false;
-  if (h === 4) return g.every((j) => houses(st, j) >= 4);
-  return h <= Math.min(...g.map((j) => houses(st, j)));
+export const loanOf = (st: GameState, pid: string): Loan | null => st.loans?.[pid] ?? null;
+export const loanOwed = (l: Loan) => l.principal + l.interest - l.paid;
+export const debtOf = (st: GameState, pid: string) => {
+  const l = loanOf(st, pid);
+  return l ? loanOwed(l) : 0;
+};
+/** Patrimônio líquido: patrimônio menos a dívida com o banco. */
+export const equity = (st: GameState, p: Player) => netWorth(st, p) - debtOf(st, p.id);
+export const loanInterest = (principal: number) => Math.round(principal * LOAN.interest);
+/** Rodadas até o vencimento (0 = vence no início da vez nesta rodada). */
+export const loanRoundsLeft = (st: GameState, pid: string) => {
+  const l = loanOf(st, pid);
+  return l ? l.dueRound - st.round : null;
+};
+/** Maior empréstimo possível agora: fração do patrimônio líquido, em múltiplos do passo; 0 se não pode pedir. */
+export function loanLimit(st: GameState, pid: string): number {
+  const p = findPlayer(st, pid);
+  if (!p || p.out || loanOf(st, pid)) return 0;
+  const raw = Math.floor((equity(st, p) * LOAN.limitRate) / LOAN.step) * LOAN.step;
+  return raw >= LOAN.min ? raw : 0;
 }
 
-/** Vender casa: a qualquer momento, também em rodízio (vende primeiro do imóvel com mais casas). */
+// ---------- Negociação ----------
+
+export const tradesOf = (st: GameState): Trade[] => st.trades ?? [];
+export const emptySide = (): TradeSide => ({ money: 0, props: [], shares: {} });
+const sideEmpty = (x: TradeSide) => !x.money && !x.props.length && !Object.values(x.shares).some((q) => q > 0);
+
+/** Por que este imóvel não pode ser negociado por `owner` agora (null = pode). Hipotecado pode; com casas, não. */
+export function tradeBlock(st: GameState, i: number, owner: string): string | null {
+  const s = SPACES[i];
+  if (s?.type !== 'street') return 'Só imóveis entram na negociação.';
+  const pr = st.props[i];
+  if (!pr || pr.owner !== owner) return `${s.name} não é mais de ${pname(st, owner)}.`;
+  if (houses(st, i) > 0) return `${s.name}: venda as casas antes de negociar.`;
+  return null;
+}
+
+function sideProblem(st: GameState, side: TradeSide, owner: string): string | null {
+  const who = pname(st, owner);
+  if (!Number.isInteger(side.money) || side.money < 0) return 'Valor em dinheiro inválido.';
+  if ((findPlayer(st, owner)?.balance ?? 0) < side.money) return `${who} não tem ${money(side.money)} em dinheiro.`;
+  if (new Set(side.props).size !== side.props.length) return 'Imóvel repetido na proposta.';
+  for (const i of side.props) {
+    const b = tradeBlock(st, i, owner);
+    if (b) return b;
+  }
+  for (const [k, q] of Object.entries(side.shares)) {
+    const i = Number(k);
+    if (!COMPANY_IDX.includes(i)) return 'Empresa inválida.';
+    if (!Number.isInteger(q) || q < 0) return 'Quantidade de cotas inválida.';
+    if (q > (sharesOf(st, i)[owner] || 0)) return `${who} não tem ${q} cota${q > 1 ? 's' : ''} da ${company(i).name}.`;
+  }
+  return null;
+}
+
+/** Valida uma proposta contra o estado atual (null = válida). Usada ao propor, ao mostrar e ao aceitar. */
+export function tradeProblem(st: GameState, from: string, to: string, give: TradeSide, get: TradeSide): string | null {
+  const a = findPlayer(st, from);
+  const b = findPlayer(st, to);
+  if (!a || a.out || !b || b.out || from === to) return 'Escolha outro jogador que ainda está no jogo.';
+  if (sideEmpty(give) && sideEmpty(get)) return 'Monte a proposta: o que você dá e o que pede.';
+  return sideProblem(st, give, from) || sideProblem(st, get, to);
+}
+
+/** Resumo de um lado, ex.: "$ 1.000 + Av. Paulista (hipotecada) + 2 cotas da Banco Aurora". */
+export function describeSide(side: TradeSide): string {
+  const parts: string[] = [];
+  if (side.money) parts.push(money(side.money));
+  for (const i of side.props) parts.push(street(i).name);
+  for (const [k, q] of Object.entries(side.shares)) if (q > 0) parts.push(`${q} cota${q > 1 ? 's' : ''} da ${company(Number(k)).name}`);
+  return parts.join(' + ') || 'nada';
+}
+
+const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
+
+/**
+ * Por que não dá para construir neste imóvel agora (null = pode).
+ * Regra da casa: qualquer imóvel seu, sem hipoteca, na sua vez; uma construção por rodada no total;
+ * não no imóvel adquirido nesta rodada; hotel depois de 4 casas no mesmo imóvel. Não precisa do grupo completo.
+ */
+export function buildBlock(st: GameState, i: number, actor: string): string | null {
+  const s = SPACES[i];
+  const pr = st.props[i];
+  if (s?.type !== 'street' || !pr || pr.owner !== actor) return 'Não é seu';
+  if (houses(st, i) >= 5) return 'Já tem hotel';
+  if (pr.mortgaged) return 'Hipotecado';
+  if (!isMyTurn(st, actor)) return 'Só na sua vez';
+  if (findPlayer(st, actor)?.builtRound === st.round) return 'Já construiu nesta rodada';
+  if (pr.round === st.round) return 'Comprado nesta rodada';
+  return null;
+}
+
+export const canBuild = (st: GameState, i: number, actor: string) => buildBlock(st, i, actor) === null;
+
+/** Vender construção: a qualquer momento, de qualquer imóvel seu com casa ou hotel. */
 export function canSellHouse(st: GameState, i: number, actor: string): boolean {
   const s = SPACES[i];
   const pr = st.props[i];
-  if (s.type !== 'street' || !pr || pr.owner !== actor || st.phase !== 'playing') return false;
-  const h = houses(st, i);
-  if (!h) return false;
-  return h >= Math.max(...groupIdx(s.group).map((j) => houses(st, j)));
+  if (s?.type !== 'street' || !pr || pr.owner !== actor || st.phase !== 'playing') return false;
+  return houses(st, i) > 0;
 }
+
+/** Cota da empresa: só ao cair nela, no máximo uma por rodada. */
+export const boughtShareThisRound = (st: GameState, pid: string) => findPlayer(st, pid)?.shareRound === st.round;
 
 export function canMortgage(st: GameState, i: number, actor: string): boolean {
   const pr = st.props[i];
@@ -237,6 +322,10 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       const s = street(action.idx);
       return [{ from: actor, to: BANK, amount: unmortgageCost(st, action.idx), reason: `Fim da hipoteca da ${s.name} (+20%)`, kind: 'unmortgage', space: action.idx }];
     }
+    case 'payLoan': {
+      const owed = debtOf(st, actor);
+      return [{ from: actor, to: BANK, amount: action.amount, reason: action.amount >= owed ? 'Quitação do empréstimo' : `Pagamento parcial do empréstimo (resta ${money(owed - action.amount)})`, kind: 'loanpay' }];
+    }
     default:
       return [];
   }
@@ -267,7 +356,7 @@ function log(st: GameState, text: string, now: Date, by?: string, important = fa
   if (st.feed.length > MAX_FEED) st.feed = st.feed.slice(0, MAX_FEED);
 }
 
-function nextTurn(st: GameState) {
+function nextTurn(st: GameState, now: Date) {
   const n = st.players.length;
   let i = st.turn;
   for (let k = 0; k < n; k++) {
@@ -277,6 +366,90 @@ function nextTurn(st: GameState) {
   }
   st.turn = i;
   st.turnInfo = emptyTurn();
+  // Início da vez: empréstimo vencido é cobrado antes de qualquer jogada
+  const p = st.players[i];
+  const l = loanOf(st, p.id);
+  if (l && st.round >= l.dueRound) {
+    collectLoan(st, p, now);
+    if (p.out && !st.winner) nextTurn(st, now);
+  }
+}
+
+/**
+ * Cobrança do empréstimo vencido: primeiro o dinheiro; se faltar, PENHORA:
+ * vende as construções ao banco pela metade do custo (sempre do imóvel com mais construções; empate, o mais barato),
+ * depois toma os imóveis do mais barato para o mais caro, cada um pelo valor de hipoteca (já hipotecado vale 0).
+ * O que sobrar do valor dos imóveis fica com o jogador. Se nem assim cobrir, o jogador vai à falência para o banco.
+ */
+function collectLoan(st: GameState, p: Player, now: Date) {
+  const l = loanOf(st, p.id)!;
+  const owed = loanOwed(l);
+  log(st, `Vencimento: o banco cobra ${money(owed)} do empréstimo de ${p.name}`, now, undefined, true);
+  const mine = () =>
+    Object.keys(st.props)
+      .map(Number)
+      .filter((i) => st.props[i].owner === p.id);
+  let sold = 0;
+  while (p.balance < owed) {
+    const built = mine().filter((i) => houses(st, i) > 0);
+    if (!built.length) break;
+    built.sort((a, b) => houses(st, b) - houses(st, a) || street(a).price - street(b).price || a - b);
+    const i = built[0];
+    const s = street(i);
+    const hotel = houses(st, i) === 5;
+    st.props[i].houses -= 1;
+    sold += 1;
+    applyTransfers(st, [{ from: BANK, to: p.id, amount: s.build / 2, reason: `Penhora: venda de ${hotel ? 'hotel' : 'casa'} na ${s.name} (metade do custo)`, kind: 'penhora', space: i }], now);
+  }
+  if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true);
+  while (p.balance < owed) {
+    const props = mine().sort((a, b) => street(a).price - street(b).price || a - b);
+    if (!props.length) break;
+    const i = props[0];
+    const s = street(i);
+    const value = st.props[i].mortgaged ? 0 : s.mortgage;
+    delete st.props[i];
+    applyTransfers(
+      st,
+      [{ from: BANK, to: p.id, amount: value, reason: `Penhora: ${s.name} tomada pelo banco (${value ? 'valor de hipoteca' : 'já hipotecada, sem valor'})`, kind: 'penhora', space: i }],
+      now,
+    );
+    log(st, `Penhora: o banco tomou a ${s.name} de ${p.name}`, now, undefined, true);
+  }
+  const amount = Math.min(p.balance, owed);
+  if (amount > 0) applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: 'Cobrança do empréstimo vencido', kind: 'loanpay' }], now);
+  if (amount >= owed) {
+    delete st.loans![p.id];
+    log(st, `${p.name} pagou o empréstimo vencido`, now, undefined, true);
+    return;
+  }
+  l.paid += amount;
+  log(st, `${p.name} não conseguiu pagar o empréstimo e faliu`, now, undefined, true);
+  goBankrupt(st, p, BANK, now, undefined);
+}
+
+/** Falência: imóveis e cotas vão ao credor (ao banco, ou imóveis hipotecados), o saldo também; dívida e propostas somem. */
+function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: string | undefined) {
+  for (const [k, pr] of Object.entries(st.props)) {
+    if (pr.owner !== d.id) continue;
+    if (creditor === BANK || pr.mortgaged) delete st.props[Number(k)];
+    else Object.assign(pr, { owner: creditor, round: st.round });
+  }
+  COMPANY_IDX.forEach((i) => {
+    const sh = st.shares[i];
+    const q = sh[d.id] || 0;
+    delete sh[d.id];
+    if (creditor !== BANK && q) sh[creditor] = (sh[creditor] || 0) + q;
+  });
+  if (d.balance > 0) applyTransfers(st, [{ from: d.id, to: creditor, amount: d.balance, reason: `Falência de ${d.name}`, kind: 'bankrupt' }], now);
+  d.balance = 0;
+  d.out = true;
+  d.jailed = false;
+  if (st.loans) delete st.loans[d.id];
+  st.trades = tradesOf(st).filter((t) => t.from !== d.id && t.to !== d.id);
+  log(st, `${d.name} faliu e saiu do jogo`, now, by, true);
+  checkWinner(st);
+  if (st.winner) log(st, `${pname(st, st.winner)} venceu a partida!`, now, by, true);
 }
 
 function sendToJail(p: Player) {
@@ -358,6 +531,9 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       // o extrato e o feed continuam contando para frente
       back.feedCount = Math.max(back.feedCount, state.feedCount);
       back.txCount = Math.max(back.txCount, state.txCount);
+      // propostas de negociação não fazem parte da jogada desfeita: ficam como estão agora
+      back.trades = tradesOf(state);
+      back.tradeCount = Math.max(back.tradeCount || 0, state.tradeCount || 0);
       log(back, `${pname(state, actor)} desfez a última ação`, now, actor, true);
       return back;
     }
@@ -407,7 +583,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(s.type === 'street' && !ownedBy(st, ti.landed!), 'Este imóvel não está à venda.');
       need(!ti.resolved, 'Esta casa já foi resolvida.');
       pay(st, transfersFor(state, action, actor), now);
-      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false };
+      st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round };
       ti.resolved = true;
       log(st, `${p.name} comprou ${s.name} por ${money(s.price)}`, now, actor);
       break;
@@ -450,9 +626,11 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const s = landedSpace();
       need(s.type === 'company', 'Cotas só se compram ao cair na empresa.');
       const q = action.qty;
-      need(Number.isInteger(q) && q >= 1, 'Quantidade inválida.');
+      need(q === 1, 'Da empresa, só uma cota por rodada.');
+      need(!boughtShareThisRound(st, p.id), 'Você já comprou uma cota da empresa nesta rodada.');
       need(q <= bankShares(st, ti.landed!), 'A empresa não tem tantas cotas à venda.');
       pay(st, transfersFor(state, action, actor), now);
+      p.shareRound = st.round;
       const sh = st.shares[ti.landed!] || (st.shares[ti.landed!] = {});
       sh[p.id] = (sh[p.id] || 0) + q;
       log(st, `${p.name} comprou ${q} cota${q > 1 ? 's' : ''} da ${s.name}`, now, actor);
@@ -516,7 +694,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(p.jailTries < 2, 'Na 3ª tentativa sem dupla, pague a fiança.');
       p.jailTries += 1;
       log(st, `${p.name} não tirou dupla (tentativa ${p.jailTries} de 3)`, now, actor);
-      nextTurn(st);
+      nextTurn(st, now);
       break;
     }
     case 'bail': {
@@ -539,9 +717,11 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       break;
     }
     case 'build': {
-      need(canBuild(state, action.idx, actor), 'Não dá para construir aqui agora.');
+      const block = buildBlock(state, action.idx, actor);
+      need(!block, `Não dá para construir aqui agora: ${block?.toLowerCase()}.`);
       const s = street(action.idx);
       pay(st, transfersFor(state, action, actor), now);
+      me.builtRound = st.round;
       st.props[action.idx].houses += 1;
       log(st, `${me.name} construiu ${st.props[action.idx].houses === 5 ? 'um hotel' : 'uma casa'} na ${s.name}`, now, actor);
       break;
@@ -575,8 +755,8 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
         st.turnInfo = emptyTurn();
         log(st, `${p.name} tirou dupla e joga de novo`, now, actor);
       } else {
-        nextTurn(st);
-        log(st, `Vez de ${currentPlayer(st).name}`, now, actor);
+        nextTurn(st, now);
+        if (!st.winner) log(st, `Vez de ${currentPlayer(st).name}`, now, actor);
       }
       break;
     }
@@ -589,25 +769,94 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(actor === d.id || forcedByTurn, 'Só o próprio jogador declara falência.');
       const creditor = action.creditor;
       need(creditor === BANK || (creditor !== d.id && findPlayer(st, creditor) && !findPlayer(st, creditor)!.out), 'Credor inválido.');
-      for (const [k, pr] of Object.entries(st.props)) {
-        if (pr.owner !== d.id) continue;
-        if (creditor === BANK || pr.mortgaged) delete st.props[Number(k)];
-        else pr.owner = creditor;
-      }
-      COMPANY_IDX.forEach((i) => {
-        const sh = st.shares[i];
-        const q = sh[d.id] || 0;
-        delete sh[d.id];
-        if (creditor !== BANK && q) sh[creditor] = (sh[creditor] || 0) + q;
+      goBankrupt(st, d, creditor, now, actor);
+      if (!st.winner && currentPlayer(st).id === d.id) nextTurn(st, now);
+      break;
+    }
+    case 'proposeTrade': {
+      const to = action.to;
+      const problem = tradeProblem(st, actor, to, action.give, action.get);
+      need(!problem, problem!);
+      need(!tradesOf(st).some((t) => (t.from === actor && t.to === to) || (t.from === to && t.to === actor)), `Já existe uma proposta entre você e ${pname(st, to)}. Responda ou cancele antes.`);
+      st.tradeCount = (st.tradeCount || 0) + 1;
+      const clean = (x: TradeSide): TradeSide => ({
+        money: x.money,
+        props: [...x.props],
+        shares: Object.fromEntries(Object.entries(x.shares).filter(([, q]) => q > 0)),
       });
-      if (d.balance > 0) applyTransfers(st, [{ from: d.id, to: creditor, amount: d.balance, reason: `Falência de ${d.name}`, kind: 'bankrupt' }], now);
-      d.balance = 0;
-      d.out = true;
-      d.jailed = false;
-      log(st, `${d.name} faliu e saiu do jogo`, now, actor, true);
-      checkWinner(st);
-      if (st.winner) log(st, `${pname(st, st.winner)} venceu a partida!`, now, actor, true);
-      else if (currentPlayer(st).id === d.id) nextTurn(st);
+      const t: Trade = { id: `${st.code}-N${String(st.tradeCount).padStart(3, '0')}`, from: actor, to, give: clean(action.give), get: clean(action.get), at: now.toISOString(), round: st.round };
+      st.trades = [...tradesOf(st), t];
+      log(st, `${me.name} propôs uma negociação a ${pname(st, to)}`, now, actor);
+      return keep(state, st);
+    }
+    case 'cancelTrade':
+    case 'declineTrade': {
+      const t = tradesOf(st).find((x) => x.id === action.id);
+      need(t, 'Esta proposta não existe mais.');
+      if (action.type === 'cancelTrade') need(t.from === actor, 'Só quem fez a proposta pode cancelar.');
+      else need(t.to === actor, 'Só quem recebeu a proposta pode recusar.');
+      st.trades = tradesOf(st).filter((x) => x.id !== t.id);
+      log(st, action.type === 'cancelTrade' ? `${me.name} cancelou a proposta a ${pname(st, t.to)}` : `${me.name} recusou a proposta de ${pname(st, t.from)}`, now, actor);
+      return keep(state, st);
+    }
+    case 'acceptTrade': {
+      const t = tradesOf(st).find((x) => x.id === action.id);
+      need(t, 'Esta proposta não existe mais.');
+      need(t.to === actor, 'Só quem recebeu a proposta pode aceitar.');
+      const problem = tradeProblem(st, t.from, t.to, t.give, t.get);
+      need(!problem, `A proposta não vale mais: ${problem}`);
+      const a = findPlayer(st, t.from)!;
+      const reason = `Negociação ${t.id}: ${a.name} deu ${describeSide(t.give)} e recebeu ${describeSide(t.get)}`;
+      const list: Transfer[] = [];
+      if (t.give.money) list.push({ from: t.from, to: t.to, amount: t.give.money, reason, kind: 'trade', ref: t.id });
+      if (t.get.money) list.push({ from: t.to, to: t.from, amount: t.get.money, reason, kind: 'trade', ref: t.id });
+      // troca só de bens: registra uma linha de valor zero para ter o ID no extrato e no comprovante
+      if (!list.length) list.push({ from: t.from, to: t.to, amount: 0, reason, kind: 'trade', ref: t.id });
+      pay(st, list, now);
+      const move = (side: TradeSide, from: string, to: string) => {
+        for (const i of side.props) Object.assign(st.props[i], { owner: to, round: st.round }); // hipotecado continua hipotecado
+        for (const [k, q] of Object.entries(side.shares)) {
+          if (!q) continue;
+          const sh = st.shares[Number(k)];
+          sh[from] -= q;
+          if (!sh[from]) delete sh[from];
+          sh[to] = (sh[to] || 0) + q;
+        }
+      };
+      move(t.give, t.from, t.to);
+      move(t.get, t.to, t.from);
+      st.trades = tradesOf(st).filter((x) => x.id !== t.id);
+      log(st, `Negociação fechada entre ${a.name} e ${me.name}: ${describeSide(t.give)} por ${describeSide(t.get)}`, now, actor);
+      break;
+    }
+    case 'takeLoan': {
+      turnOnly();
+      need(!loanOf(st, actor), 'Você já tem um empréstimo ativo. Quite antes de pedir outro.');
+      const amt = action.amount;
+      const limit = loanLimit(st, actor);
+      need(limit > 0, `Seu patrimônio não permite empréstimo agora (mínimo ${money(LOAN.min)}).`);
+      need(Number.isInteger(amt) && amt >= LOAN.min && amt % LOAN.step === 0, `Peça a partir de ${money(LOAN.min)}, em múltiplos de ${money(LOAN.step)}.`);
+      need(amt <= limit, `Seu limite é ${money(limit)}.`);
+      const interest = loanInterest(amt);
+      const due = st.round + LOAN.rounds;
+      st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due } };
+      applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco: devolver ${money(amt + interest)} até a rodada ${due}`, kind: 'loan' }], now);
+      log(st, `${me.name} pegou ${money(amt)} emprestado no banco`, now, actor);
+      break;
+    }
+    case 'payLoan': {
+      turnOnly();
+      const l = loanOf(st, actor);
+      need(l, 'Você não tem empréstimo.');
+      const owed = loanOwed(l);
+      const amt = action.amount;
+      need(Number.isInteger(amt) && amt > 0, 'Valor inválido.');
+      need(amt <= owed, `Você deve só ${money(owed)}.`);
+      const full = amt === owed;
+      pay(st, transfersFor(state, action, actor), now);
+      if (full) delete st.loans![actor];
+      else l.paid += amt;
+      log(st, full ? `${me.name} quitou o empréstimo` : `${me.name} pagou ${money(amt)} do empréstimo`, now, actor);
       break;
     }
     default: {

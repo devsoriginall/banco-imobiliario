@@ -1,8 +1,9 @@
 'use client';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { currentPlayer, findPlayer, RuleError } from '@/lib/game/rules';
-import type { Action, GameState, Tx } from '@/lib/game/types';
+import { money } from '@/lib/game/format';
+import { currentPlayer, debtOf, describeSide, findPlayer, loanRoundsLeft, pname, RuleError, tradesOf } from '@/lib/game/rules';
+import type { Action, GameState, Trade, Tx } from '@/lib/game/types';
 import { getStore, isLocalMode, type RoomSnapshot } from '@/lib/room';
 import { getIdentity, saveName, type Identity } from '@/lib/room/identity';
 import { describeIncoming, incomingSince } from '@/lib/room/notify';
@@ -18,6 +19,11 @@ export interface RunResult {
   state: GameState;
 }
 export type Run = (action: Action) => Promise<RunResult | null>;
+/** Comprovante que chega de fora (negociação aceita no celular do outro jogador). */
+export interface PushedReceipt {
+  txs: Tx[];
+  title: string;
+}
 
 export function Room({ code }: { code: string }) {
   const toast = useToast();
@@ -29,6 +35,10 @@ export function Room({ code }: { code: string }) {
   const lastFeed = useRef<number | null>(null);
   const lastTurn = useRef<string | null>(null);
   const mySeqs = useRef(new Set<number>());
+  const lastTrades = useRef<Trade[]>([]);
+  /** propostas que eu mesmo aceitei, recusei ou cancelei (não precisam de aviso) */
+  const myTradeActs = useRef(new Set<string>());
+  const [pushed, setPushed] = useState<PushedReceipt | null>(null);
 
   // Aceita só versões mais novas (o Realtime e a resposta da gravação podem chegar fora de ordem)
   const accept = useCallback((s: RoomSnapshot) => {
@@ -74,18 +84,40 @@ export function Room({ code }: { code: string }) {
       lastSeen.current = st.txCount;
       lastFeed.current = st.feedCount;
       lastTurn.current = st.phase === 'playing' ? currentPlayer(st)?.id ?? null : null;
+      lastTrades.current = tradesOf(st);
       return;
     }
     for (const t of incomingSince(st, me.id, lastSeen.current)) {
       if (mySeqs.current.has(t.seq) && t.kind !== 'salary') continue;
+      // negociação e penhora têm avisos próprios; empréstimo é sempre do próprio jogador
+      if (t.kind === 'trade' || t.kind === 'penhora' || t.kind === 'loan') continue;
       const d = describeIncoming(st, t);
       toast(d.title, d.text);
     }
     for (const f of [...st.feed].reverse()) {
       if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast('Na mesa', f.text);
     }
+    // Negociação: proposta nova para mim, fechada, recusada ou cancelada
+    const nowTrades = tradesOf(st);
+    for (const t of nowTrades)
+      if (t.to === me.id && !lastTrades.current.some((x) => x.id === t.id))
+        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give)} e pede ${describeSide(t.get)}.`);
+    for (const t of lastTrades.current) {
+      if (nowTrades.some((x) => x.id === t.id) || myTradeActs.current.has(t.id)) continue;
+      const deal = st.tx.filter((x) => x.ref === t.id).sort((a, b) => a.seq - b.seq);
+      if (t.from === me.id) {
+        if (deal.length) {
+          toast('Negociação fechada', `Negociação fechada com ${pname(st, t.to)}`);
+          setPushed({ txs: deal, title: 'Negociação fechada' });
+        } else toast('Proposta recusada', `${pname(st, t.to)} recusou sua proposta.`);
+      } else if (t.to === me.id && !deal.length) toast('Proposta cancelada', `${pname(st, t.from)} cancelou a proposta.`);
+    }
+    lastTrades.current = nowTrades;
     const turnId = st.phase === 'playing' && !st.winner ? currentPlayer(st)?.id ?? null : null;
-    if (turnId === me.id && lastTurn.current !== me.id && findPlayer(st, me.id)) toast('Sua vez', 'Jogue os dados e toque na casa onde parou.');
+    if (turnId === me.id && lastTurn.current !== me.id && findPlayer(st, me.id)) {
+      toast('Sua vez', 'Jogue os dados e toque na casa onde parou.');
+      if (loanRoundsLeft(st, me.id) === 1) toast('Empréstimo vence na próxima rodada', `Pague ${money(debtOf(st, me.id))} na aba Banco até a sua próxima vez, ou o banco cobra e faz a penhora.`);
+    }
     lastSeen.current = Math.max(lastSeen.current, st.txCount);
     lastFeed.current = Math.max(lastFeed.current ?? 0, st.feedCount);
     lastTurn.current = turnId;
@@ -95,6 +127,7 @@ export function Room({ code }: { code: string }) {
     async (action) => {
       if (!me) return null;
       try {
+        if (action.type === 'acceptTrade' || action.type === 'declineTrade' || action.type === 'cancelTrade') myTradeActs.current.add(action.id);
         const { base, next } = await dispatch(getStore(), code, action, me.id, snapRef.current);
         const created = next.state.tx.filter((t) => t.seq > base.txCount);
         created.forEach((t) => mySeqs.current.add(t.seq));
@@ -175,7 +208,7 @@ export function Room({ code }: { code: string }) {
   return (
     <>
       {banner}
-      {st.phase === 'lobby' ? <Lobby state={st} me={me.id} run={run} /> : <Game state={st} me={me.id} run={run} />}
+      {st.phase === 'lobby' ? <Lobby state={st} me={me.id} run={run} /> : <Game state={st} me={me.id} run={run} pushed={pushed} onPushedClose={() => setPushed(null)} />}
     </>
   );
 }
