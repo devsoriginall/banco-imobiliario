@@ -114,3 +114,17 @@ export const NEWS: NewsCard[] = [
 export const PLAYER_COLORS = ['#0B6E50', '#1F4E79', '#B45309', '#7C3AED', '#BE185D', '#0E7490'];
 export const MAX_PLAYERS = 6;
 export const DEFAULTS: Settings = { start: 25000, salary: 2000, bail: 500, mortgageRate: 0.2 };
+
+/** Empréstimo do banco (mude aqui para ajustar a regra). */
+export const LOAN = {
+  /** limite = esta fração do patrimônio líquido (patrimônio − dívida atual) */
+  limitRate: 0.5,
+  /** menor empréstimo */
+  min: 1000,
+  /** valores em múltiplos de */
+  step: 500,
+  /** juros simples sobre o principal, cobrados uma vez */
+  interest: 0.1,
+  /** vence no início da vez do jogador, esta quantidade de rodadas depois de pegar */
+  rounds: 5,
+};
