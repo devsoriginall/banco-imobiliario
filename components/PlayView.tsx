@@ -79,8 +79,12 @@ export function PlayView({ ui }: { ui: GameUi }) {
       <div className={`turn${mine ? ' mine' : ''}`} data-testid="turn">
         <span className="sub">{mine ? 'É a sua vez' : 'Vez de'}</span>
         <span className="who">{p.name}</span>
-        <span className="sub">Saldo</span>
-        <span className="big num">{money(p.balance)}</span>
+        {mine && (
+          <>
+            <span className="sub">Saldo</span>
+            <span className="big num">{money(p.balance)}</span>
+          </>
+        )}
         <span className="sub">
           Está em: {SPACES[p.pos].name}
           {p.freeCards ? ` · ${p.freeCards} carta de saída livre` : ''}

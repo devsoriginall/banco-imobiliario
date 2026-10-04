@@ -87,7 +87,7 @@ export function ScoreView({ state }: { state: GameState }) {
           const props = Object.values(state.props).filter((x) => x.owner === p.id).length;
           const cotas = COMPANY_IDX.reduce((a, i) => a + (sharesOf(state, i)[p.id] || 0), 0);
           return (
-            <div className="li" key={p.id}>
+            <div className="li" key={p.id} data-player={p.name}>
               <div className="row" style={{ flexWrap: 'nowrap', minWidth: 0 }}>
                 <Avatar name={p.name} color={p.color} />
                 <div className="main">
@@ -96,7 +96,7 @@ export function ScoreView({ state }: { state: GameState }) {
                     {p.out ? ' · faliu' : ''}
                   </b>
                   <span>
-                    Dinheiro {money(p.balance)} · {props} imóveis · {cotas} cotas
+                    Dinheiro <span className="cash">{money(p.balance)}</span> · {props} imóveis · {cotas} cotas
                     {d > 0 ? ` · dívida ${money(d)}` : ''}
                   </span>
                   <CreditPill score={creditOf(p)} />
