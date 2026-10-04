@@ -2,6 +2,9 @@
 
 export type GroupId = 'verde' | 'vermelho' | 'azulclaro' | 'roxo' | 'azulescuro' | 'laranja' | 'amarelo';
 
+/** As 3 casas que se escolhe ao comprar um imóvel. */
+export type TierId = 'basica' | 'intermediaria' | 'alto';
+
 export interface StreetSpace {
   type: 'street';
   name: string;
@@ -51,6 +54,45 @@ export interface Player {
   builtRound?: number;
   /** rodada em que comprou cota da empresa pela última vez (uma cota por rodada) */
   shareRound?: number;
+  /** renda tributável desde a última volta (aluguéis, taxas de empresa, notícias) */
+  income?: number;
+  /** voltas completas (anos de IR já fechados) */
+  year?: number;
+  /** score de crédito, 0 a 1000 (salas antigas: 500) */
+  credit?: number;
+  /** últimas mudanças do score (mais nova primeiro) */
+  creditLog?: CreditEvent[];
+  /** resultado da última declaração do IR */
+  irLast?: IrResult;
+}
+
+export interface CreditEvent {
+  delta: number;
+  reason: string;
+  round: number;
+}
+
+export interface IrResult {
+  year: number;
+  income: number;
+  tax: number;
+  /** 'isento' | 'declarou' | 'pego' (malha fina) | 'passou' (sonegou e não foi pego) */
+  outcome: 'isento' | 'declarou' | 'pego' | 'passou';
+  /** quanto pagou (imposto, ou imposto + multa) */
+  paid: number;
+  round: number;
+}
+
+/** Declaração do IR pendente do jogador da vez (aparece ao completar a volta). */
+export interface IrPending {
+  pid: string;
+  year: number;
+  income: number;
+  tax: number;
+  /** caiu na malha fina e ainda não teve saldo para pagar imposto + multa */
+  caught?: boolean;
+  /** valor a pagar agora (imposto, ou imposto + multa se caught) */
+  due: number;
 }
 
 export interface Property {
@@ -59,6 +101,10 @@ export interface Property {
   mortgaged: boolean;
   /** rodada em que o dono atual adquiriu o imóvel (compra, negociação ou falência) */
   round?: number;
+  /** casa escolhida na compra (salas antigas: Intermediária) */
+  tier?: TierId;
+  /** valor recebido ao hipotecar (base do custo para tirar a hipoteca) */
+  mortgageValue?: number;
 }
 
 export type TxKind =
@@ -79,7 +125,8 @@ export type TxKind =
   | 'trade'
   | 'loan'
   | 'loanpay'
-  | 'penhora';
+  | 'penhora'
+  | 'ir';
 
 export interface Tx {
   id: string;
@@ -94,6 +141,8 @@ export interface Tx {
   space?: number;
   /** id da negociação que gerou esta transação */
   ref?: string;
+  /** casa do imóvel (compra e aluguel) */
+  tier?: TierId;
 }
 
 /** Um lado de uma proposta de negociação: dinheiro, imóveis (índices) e cotas (empresa → quantidade). */
@@ -121,6 +170,10 @@ export interface Loan {
   paid: number;
   takenRound: number;
   dueRound: number;
+  /** taxa travada ao pegar (taxa da rodada + ajuste do score); salas antigas: LOAN.interest */
+  rate?: number;
+  /** rodada do último pagamento parcial que contou para o score */
+  partRound?: number;
 }
 
 export interface FeedItem {
@@ -141,6 +194,8 @@ export interface TurnInfo {
   news: number | null;
   /** taxa da empresa paga */
   feePaid: boolean;
+  /** jogadores que já perderam score por falta de saldo nesta jogada */
+  short?: string[];
 }
 
 export interface Settings {
@@ -179,6 +234,18 @@ export interface GameState {
   tradeCount?: number;
   /** empréstimos ativos por jogador */
   loans?: Record<string, Loan>;
+  /** multiplicador de preço e aluguel por bairro (grupo de cor); ausente = 1,0 */
+  hood?: Partial<Record<GroupId, number>>;
+  /** casas que voltaram ao banco (penhora ou falência): quem comprar o terreno leva esta casa */
+  lots?: Record<number, TierId>;
+  /** estado do sorteio determinístico (mulberry32), igual em todos os celulares */
+  seed?: number;
+  /** taxa de juros do banco nesta rodada (salas antigas: LOAN.interest) */
+  bankRate?: number;
+  /** rodada em que a taxa foi sorteada */
+  bankRateRound?: number;
+  /** declaração do IR esperando o jogador da vez */
+  irPending?: IrPending | null;
 }
 
 export type Action =
@@ -187,7 +254,7 @@ export type Action =
   | { type: 'start' }
   | { type: 'reset' }
   | { type: 'land'; idx: number }
-  | { type: 'buy' }
+  | { type: 'buy'; tier?: TierId }
   | { type: 'skipBuy' }
   | { type: 'payRent' }
   | { type: 'payFee'; dice: number }
@@ -212,7 +279,9 @@ export type Action =
   | { type: 'declineTrade'; id: string }
   | { type: 'cancelTrade'; id: string }
   | { type: 'takeLoan'; amount: number }
-  | { type: 'payLoan'; amount: number };
+  | { type: 'payLoan'; amount: number }
+  | { type: 'declareIR' }
+  | { type: 'evadeIR' };
 
 /** Transferência ainda não aplicada (prévia do Pix) */
 export interface Transfer {
@@ -223,6 +292,7 @@ export interface Transfer {
   kind: TxKind;
   space?: number;
   ref?: string;
+  tier?: TierId;
 }
 
 export interface ActionContext {

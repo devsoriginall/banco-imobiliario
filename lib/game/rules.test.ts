@@ -25,6 +25,8 @@ function game(): GameState {
   let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
   st = act(st, 'beto', { type: 'join', name: 'Beto' });
   st = act(st, 'ana', { type: 'start' });
+  // os testes antigos do empréstimo contam com juros de 10%: fixa a taxa sorteada da rodada
+  st.bankRate = 0.1;
   return st;
 }
 
@@ -64,7 +66,7 @@ describe('cair na casa e comprar', () => {
     let st = act(game(), 'ana', { type: 'land', idx: NOVE_JULHO });
     expect(st.turnInfo.resolved).toBe(false);
     st = act(st, 'ana', { type: 'buy' });
-    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false, round: 1 });
+    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false, round: 1, tier: 'intermediaria' });
     expect(bal(st, 'ana')).toBe(24000);
     expect(st.turnInfo.resolved).toBe(true);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 1000, kind: 'buy' });
@@ -591,7 +593,7 @@ describe('empréstimo do banco', () => {
   it('pega o empréstimo na própria vez, com 10% de juros e vencimento em 5 rodadas', () => {
     const st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
     expect(bal(st, 'ana')).toBe(27000);
-    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 6 });
+    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 6, rate: 0.1 });
     expect(debtOf(st, 'ana')).toBe(2200);
     expect(equity(st, pl(st, 'ana'))).toBe(24800);
     expect(loanRoundsLeft(st, 'ana')).toBe(5);

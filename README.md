@@ -13,7 +13,14 @@ Regras do Super Banco Imobiliário portadas da versão "da mesa": pró-labore de
 - **Construção**: em qualquer imóvel seu sem hipoteca (não precisa do grupo completo), na sua vez, uma construção por rodada no total e não no imóvel adquirido nesta rodada (compra, negociação ou falência). Hotel depois de 4 casas no mesmo imóvel. Vender construção vale a qualquer momento, de qualquer imóvel, pela metade do custo.
 - **Cotas da empresa**: só ao cair nela e no máximo uma por rodada.
 - **Negociação** (aba Banco, a qualquer momento): proponha a outro jogador uma troca de dinheiro, imóveis e cotas. Imóvel com casas não entra; hipotecado entra e continua hipotecado. A proposta fica pendente até ser aceita, recusada ou cancelada (uma por dupla de jogadores) e é validada de novo ao aceitar.
-- **Empréstimo** (aba Banco, na sua vez): até 50% do patrimônio líquido, a partir de $ 1.000 em múltiplos de $ 500, juros de 10% sobre o valor, vence em 5 rodadas; pode pagar antes, inteiro ou em partes. No vencimento, no início da sua vez, o banco cobra do saldo; se faltar, faz a **penhora** (vende as construções pela metade do custo e toma os imóveis do mais barato para o mais caro, pelo valor de hipoteca, ou 0 se já hipotecado; o que sobrar fica com o jogador). Se nem assim cobrir, falência. As constantes ficam em `LOAN` (`lib/game/data.ts`).
+- **Empréstimo** (aba Banco, na sua vez): até 50% do patrimônio líquido (depende do score, abaixo), a partir de $ 1.000 em múltiplos de $ 500, juros sobre o valor pela taxa da rodada (abaixo), vence em 5 rodadas; pode pagar antes, inteiro ou em partes. No vencimento, no início da sua vez, o banco cobra do saldo; se faltar, faz a **penhora** (vende as construções pela metade do custo e toma os imóveis do mais barato para o mais caro, pelo valor de hipoteca, ou 0 se já hipotecado; o que sobrar fica com o jogador). Se nem assim cobrir, falência. As constantes ficam em `LOAN` (`lib/game/data.ts`).
+- **Três casas na compra**: ao comprar um imóvel livre, escolha uma das 3 casas do terreno, como num site de imóveis: **Básica** (80% do preço do tabuleiro, aluguéis a 80%), **Intermediária** (100%, igual ao tabuleiro) ou **Alto padrão** (130% do preço, aluguéis a 140%). Todos os aluguéis (sem casa, com casas e hotel) e o valor de hipoteca seguem a casa; o custo de construir não muda. Cada casa tem um anúncio fictício (tipo, m², quartos, vagas) que acompanha o padrão do bairro, com ilustração própria. A casa aparece em Imóveis, no aluguel, nos comprovantes e nas negociações, e vai junto na negociação e na falência. Imóvel que volta ao banco (penhora ou falência) fica com a casa: quem comprar depois leva a mesma. Salas antigas: Intermediária.
+- **Valorização do bairro**: cada grupo de cor tem um multiplicador de preço, aluguel e hipoteca (começa em 1,0; vai de 0,5 a 2,0). Aparece como "Bairro valorizado +10%". A função pura `applyNeighbourhoodChange(estado, grupo, pct)` (`lib/game/rules.ts`) é o gancho para as Notícias.
+- **Imposto de renda a cada volta** (1 volta = 1 ano): conta como renda o que o jogador recebe de aluguel, taxa de empresa e notícias (pró-labore, negociação, empréstimo e vendas não contam). Ao passar ou parar no Início, a renda do ano fecha: os primeiros $ 2.000 são isentos e o resto paga 15%. Na **Declaração do IR**, o jogador escolhe **Declarar** (paga ao banco, +20 no score) ou **Sonegar** (não paga agora; 30% de chance de cair na **malha fina**, sorteada na hora: paga imposto + 100% de multa e perde 150 de score; se faltar saldo, paga pelo Pix como qualquer dívida, podendo vender, hipotecar ou falir). Não dá para passar a vez com a declaração pendente. A renda do ano aparece na carteira e no Extrato.
+- **Score de crédito** (0 a 1000, começa em 500): quitar empréstimo em dia ou antes +80 (também quando o banco cobra no vencimento e o saldo cobre); pagamento parcial +10 (uma vez por rodada, a partir de $ 500); declarar o IR +20; ficar sem saldo para um pagamento obrigatório −30 (aluguel ou imposto ao cair, a menor taxa da empresa, notícia de pagar, aposta da mesa, multa da malha fina; uma vez por jogada); malha fina −150; empréstimo vencido com penhora −200. Faixas: **Ruim** (<300) empresta até 25% do patrimônio líquido com +5 pp de juros, **Regular** (300–599) 50% e taxa da rodada, **Bom** (600–799) 70% e −2 pp, **Excelente** (800+) 90% e −4 pp. Abaixo de 200, o banco não empresta. Medidor na aba Banco e score de cada um no Placar.
+- **Juros sorteados por rodada**: no começo de cada rodada o banco sorteia a taxa entre 5%, 8%, 10%, 12%, 15% e 20% (aviso para todos quando muda). Empréstimo novo = taxa da rodada + ajuste do score (mínimo 2%), travada ao pegar; os que já existem não mudam. O sorteio (taxa e malha fina) usa uma semente guardada no estado da sala, então todos os celulares, a reaplicação depois de conflito e o desfazer chegam ao mesmo resultado.
+
+Os números destas regras ficam em `TIERS`, `HOOD`, `IR`, `CREDIT`, `CREDIT_BANDS` e `BANK_RATES` (`lib/game/data.ts`); os anúncios das casas em `lib/game/listings.ts`.
 
 ## Rodar no computador
 
@@ -36,6 +43,8 @@ npm run build && npm start
 PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e
 # negociação e empréstimo
 PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e:banco
+# três casas, IR e score de crédito
+PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 npm run e2e:fase2
 ```
 
 ## Configurar o Supabase
@@ -69,9 +78,10 @@ PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3000 np
 
 ```
 app/                    páginas (início e /sala/[code])
-components/             telas: Room, Lobby, Game, PlayView, PropsView, BankView, TradeViews, LedgerViews, Modals, Toasts
+components/             telas: Room, Lobby, Game, PlayView, PropsView, BankView, TradeViews, LedgerViews, Modals, Toasts, HouseArt, Credit
 lib/game/data.ts        40 casas, 6 empresas, 32 cartas Notícia
-lib/game/rules.ts       regras (funções puras) + rules.test.ts
+lib/game/rules.ts       regras (funções puras) + rules.test.ts e fase2.test.ts
+lib/game/listings.ts    anúncios fictícios das 3 casas de cada imóvel
 lib/room/               Supabase, modo local, sincronização otimista, identidade, notificações
 supabase/schema.sql     tabela, RLS e Realtime
 scripts/                teste de ponta a ponta com Playwright

@@ -25,6 +25,7 @@ const fail = (msg) => {
   console.error('FALHOU:', msg);
   process.exitCode = 1;
 };
+const brl = (n) => `$ ${n.toLocaleString('pt-BR')}`;
 const expectEq = (got, want, what) => {
   if (got !== want) fail(`${what}: esperado "${want}", veio "${got}"`);
 };
@@ -49,7 +50,7 @@ await ana.getByText('É a sua vez').waitFor();
 
 // 1. Ana compra a Av. 9 de Julho ($ 1.000)
 await ana.locator('[data-space="1"]').click();
-await ana.getByRole('button', { name: /Comprar por/ }).click();
+await ana.getByRole('button', { name: /Comprar .*por/ }).click();
 await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
 await ana.getByRole('button', { name: 'Fechar' }).click();
 await ana.getByRole('button', { name: 'Passar a vez' }).click();
@@ -58,7 +59,7 @@ await ana.getByRole('button', { name: 'Passar a vez' }).click();
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
 await beto.locator('[data-space="2"]').click();
-await beto.getByRole('button', { name: /Comprar por/ }).click();
+await beto.getByRole('button', { name: /Comprar .*por/ }).click();
 await beto.getByRole('button', { name: 'Confirmar Pix' }).click();
 await beto.getByRole('button', { name: 'Fechar' }).click();
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
@@ -139,6 +140,12 @@ await ana.getByRole('tab', { name: /Banco/ }).click();
 await ana.getByRole('button', { name: /Mais .* no empréstimo/ }).click();
 await ana.getByRole('button', { name: /Mais .* no empréstimo/ }).click();
 expectEq(norm(await ana.getByTestId('loan-amount').textContent()), '$ 2.000', 'valor do empréstimo');
+// a taxa é sorteada a cada rodada e ajustada pelo score: lê a taxa da tela e calcula a dívida
+const rateTxt = norm(await ana.getByTestId('my-rate').textContent());
+const rate = Number(rateTxt.replace('%', '').replace(',', '.')) / 100;
+const owed = 2000 + Math.round(2000 * rate);
+console.log('Taxa do empréstimo:', rateTxt, '→ deve', brl(owed));
+await ana.evaluate(() => document.querySelector('[data-testid="loan-card"]').scrollIntoView({ block: 'start' }));
 await shot(ana, 'emprestimo-1-pedido.png');
 await ana.getByRole('button', { name: /Pegar .* emprestado/ }).click();
 await ana.getByText('Empréstimo liberado').waitFor();
@@ -152,9 +159,10 @@ const l = {
 };
 console.log('Com o empréstimo:', JSON.stringify(l));
 expectEq(l.anaCarteira, '$ 25.500', 'carteira com o empréstimo');
-expectEq(l.divida, 'Dívida $ 2.200 · vence em 5 rodadas', 'dívida no cabeçalho');
-expectEq(l.deve, '$ 2.200', 'valor devido');
+expectEq(l.divida, `Dívida ${brl(owed)} · vence em 5 rodadas`, 'dívida no cabeçalho');
+expectEq(l.deve, brl(owed), 'valor devido');
 await noToasts(ana);
+await ana.evaluate(() => document.querySelector('[data-testid="loan-card"]').scrollIntoView({ block: 'start' }));
 await shot(ana, 'emprestimo-3-divida.png');
 
 // 8. Ana quita (principal + juros)
@@ -172,8 +180,8 @@ const q = {
   semDivida: (await ana.getByTestId('wallet-debt').count()) === 0,
 };
 console.log('Depois de quitar:', JSON.stringify(q));
-expectEq(q.anaCarteira, '$ 23.300', 'carteira depois de quitar');
-expectEq(q.betoVeAna, '$ 23.300', 'Ana no celular do Beto depois de quitar');
+expectEq(q.anaCarteira, brl(25500 - owed), 'carteira depois de quitar');
+expectEq(q.betoVeAna, brl(25500 - owed), 'Ana no celular do Beto depois de quitar');
 if (!q.semDivida) fail('a dívida continua no cabeçalho');
 
 await browser.close();

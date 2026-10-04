@@ -1,6 +1,6 @@
 // Dados do jogo, portados do Banco Imobiliário da Mesa (tabuleiro Super Banco Imobiliário,
 // marcas trocadas por empresas fictícias).
-import type { CompanySpace, GroupId, NewsCard, Settings, Space, StreetSpace } from './types';
+import type { CompanySpace, GroupId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
 
 export const GROUPS: Record<GroupId, { name: string; c: string }> = {
   verde: { name: 'Verde', c: '--g-verde' },
@@ -128,3 +128,58 @@ export const LOAN = {
   /** vence no início da vez do jogador, esta quantidade de rodadas depois de pegar */
   rounds: 5,
 };
+
+// ---------- Fase 2: casas, valorização, IR, score de crédito e juros por rodada ----------
+
+/** As 3 casas que se pode escolher ao comprar um imóvel (multiplicadores sobre o preço e os aluguéis do tabuleiro). */
+export const TIERS: Record<TierId, { name: string; price: number; rent: number }> = {
+  basica: { name: 'Básica', price: 0.8, rent: 0.8 },
+  intermediaria: { name: 'Intermediária', price: 1, rent: 1 },
+  alto: { name: 'Alto padrão', price: 1.3, rent: 1.4 },
+};
+export const TIER_IDS: TierId[] = ['basica', 'intermediaria', 'alto'];
+/** Casa de salas antigas e de compras sem escolha: a Intermediária custa o preço do tabuleiro. */
+export const DEFAULT_TIER: TierId = 'intermediaria';
+
+/** Valorização do bairro (grupo de cor): multiplicador do preço e dos aluguéis, começa em 1,0. */
+export const HOOD = { start: 1, min: 0.5, max: 2 };
+
+/** Imposto de renda a cada volta (1 volta = 1 ano). */
+export const IR = {
+  /** alíquota sobre a renda do ano acima da isenção */
+  rate: 0.15,
+  /** os primeiros $ 2.000 de renda do ano são isentos */
+  exempt: 2000,
+  /** o pró-labore conta como renda? */
+  salaryIsIncome: false,
+  /** chance de cair na malha fina ao sonegar */
+  catchChance: 0.3,
+  /** multa sobre o imposto quando cai na malha fina (1 = 100%) */
+  fine: 1,
+};
+
+/** Score de crédito (0 a 1000). */
+export const CREDIT = {
+  start: 500,
+  min: 0,
+  max: 1000,
+  loanPaid: 80,
+  partialPay: 10,
+  penhora: -200,
+  malhaFina: -150,
+  irDeclared: 20,
+  shortfall: -30,
+  /** abaixo deste score o banco não empresta */
+  noLoanBelow: 200,
+};
+
+/** Faixas do score: a partir de `from`, limite do empréstimo (fração do patrimônio líquido) e ajuste da taxa (pontos percentuais). */
+export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name: string; from: number; limitRate: number; rateOffset: number }[] = [
+  { id: 'ruim', name: 'Ruim', from: 0, limitRate: 0.25, rateOffset: 0.05 },
+  { id: 'regular', name: 'Regular', from: 300, limitRate: 0.5, rateOffset: 0 },
+  { id: 'bom', name: 'Bom', from: 600, limitRate: 0.7, rateOffset: -0.02 },
+  { id: 'excelente', name: 'Excelente', from: 800, limitRate: 0.9, rateOffset: -0.04 },
+];
+
+/** Juros sorteados no começo de cada rodada (sorteio uniforme) e a menor taxa possível de um empréstimo. */
+export const BANK_RATES = { options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2], minLoanRate: 0.02 };

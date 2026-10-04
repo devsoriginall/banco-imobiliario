@@ -1,12 +1,12 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, equity, findPlayer, loanOf, loanOwed, loanRoundsLeft } from '@/lib/game/rules';
+import { currentPlayer, equity, findPlayer, incomeOf, loanOf, loanOwed, loanRoundsLeft } from '@/lib/game/rules';
 import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
 import { ScoreView, TxView } from './LedgerViews';
-import { ConfirmModal, PixModal, ReceiptModal, type PixRequest } from './Modals';
+import { ConfirmModal, IrModal, IrPassedModal, PixModal, ReceiptModal, type PixRequest } from './Modals';
 import { PlayView } from './PlayView';
 import { PropsView } from './PropsView';
 import type { PushedReceipt, Run } from './Room';
@@ -41,6 +41,9 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   const [receipt, setReceipt] = useState<{ txs: Tx[]; title?: string } | null>(null);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  /** resultado de sonegar sem cair na malha fina (imposto que deixou de pagar) */
+  const [irPassed, setIrPassed] = useState<number | null>(null);
+  const irMine = state.irPending?.pid === me && !state.winner ? state.irPending : null;
   const mine = findPlayer(state, me);
   const cur = currentPlayer(state);
 
@@ -94,6 +97,11 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
                 {money(mine.balance)}
               </div>
               <div className="lbl">Patrimônio {money(equity(state, mine))}</div>
+              {!mine.out && (
+                <div className="lbl" data-testid="wallet-income">
+                  Renda no ano {(mine.year || 0) + 1}: {money(incomeOf(mine))}
+                </div>
+              )}
               <DebtLine state={state} me={me} />
             </div>
             <Avatar name={mine.name} color={mine.color} style={{ width: 44, height: 44, borderRadius: 22 }} />
@@ -154,13 +162,28 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
           onConfirm={async () => {
             const r = await run(pixReq.action);
             setPixReq(null);
-            if (r?.created.length) setReceipt({ txs: r.created, title: pixReq.action.type === 'payLoan' ? 'Pagamento ao banco' : undefined });
+            const titles: Partial<Record<Action['type'], string>> = { payLoan: 'Pagamento ao banco', declareIR: 'Imposto de renda pago' };
+            if (r?.created.length) setReceipt({ txs: r.created, title: titles[pixReq.action.type] });
           }}
         />
       )}
       {tradeWith && !pixReq && <TradeBuilder ui={ui} partner={tradeWith} onClose={() => setTradeWith(null)} />}
       {!pixReq && !tradeWith && receipt && <ReceiptModal state={state} receipt={receipt.txs} title={receipt.title} onClose={() => setReceipt(null)} />}
       {!pixReq && !tradeWith && !receipt && pushed && <ReceiptModal state={state} receipt={pushed.txs} title={pushed.title} onClose={() => onPushedClose?.()} />}
+      {irMine && !pixReq && !tradeWith && !receipt && !pushed && (
+        <IrModal
+          ir={irMine}
+          onDeclare={() => setPixReq({ action: { type: 'declareIR' }, title: irMine.caught ? 'Malha fina: imposto + multa' : 'Imposto de renda' })}
+          onEvade={async () => {
+            const r = await run({ type: 'evadeIR' });
+            const last = r && findPlayer(r.state, me)?.irLast;
+            if (!r || !last) return;
+            if (last.outcome === 'passou') setIrPassed(last.tax);
+            else if (r.created.length) setReceipt({ txs: r.created, title: 'Malha fina' });
+          }}
+        />
+      )}
+      {irPassed !== null && !pixReq && !receipt && <IrPassedModal tax={irPassed} onClose={() => setIrPassed(null)} />}
       {confirmReset && (
         <ConfirmModal
           title="Começar uma nova partida?"

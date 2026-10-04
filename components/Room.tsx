@@ -95,13 +95,13 @@ export function Room({ code }: { code: string }) {
       toast(d.title, d.text);
     }
     for (const f of [...st.feed].reverse()) {
-      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast('Na mesa', f.text);
+      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast(f.text.includes('taxa do banco') ? 'Juros do banco' : 'Na mesa', f.text);
     }
     // Negociação: proposta nova para mim, fechada, recusada ou cancelada
     const nowTrades = tradesOf(st);
     for (const t of nowTrades)
       if (t.to === me.id && !lastTrades.current.some((x) => x.id === t.id))
-        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give)} e pede ${describeSide(t.get)}.`);
+        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give, st)} e pede ${describeSide(t.get, st)}.`);
     for (const t of lastTrades.current) {
       if (nowTrades.some((x) => x.id === t.id) || myTradeActs.current.has(t.id)) continue;
       const deal = st.tx.filter((x) => x.ref === t.id).sort((a, b) => a.seq - b.seq);
