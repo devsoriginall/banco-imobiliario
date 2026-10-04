@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DEFAULT_TIER, DEFAULTS, GROUPS, HOOD, IR, JAIL_POS, LOAN, LOAN_PLANS, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES, TIERS } from './data';
-import type { Action, ActionContext, CompanySpace, GameState, GroupId, Loan, LoanPlanId, Player, StreetSpace, TierId, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
+import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, GROUPS, HEADLINES, HOOD, IR, JAIL_POS, JORNAL, LOAN, LOAN_PLANS, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
+import type { Action, ActionContext, CompanySpace, DecisionId, Edition, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -127,13 +127,46 @@ export const groupName = (g: GroupId) => GROUPS[g].name;
 const round10 = (x: number) => Math.round(x / 10) * 10;
 const round4 = (x: number) => Math.round(x * 10000) / 10000;
 
-/** Multiplicador de preço e aluguel do bairro (grupo de cor); 1 = sem mudança. */
-export const hoodMult = (st: GameState, g: GroupId) => st.hood?.[g] ?? HOOD.start;
+/** Valorização permanente do bairro (grupo de cor); 1 = sem mudança. */
+export const hoodBase = (st: GameState, g: GroupId) => st.hood?.[g] ?? HOOD.start;
+/** Modificadores temporários do bairro (manchetes do Jornal) ainda valendo nesta rodada. */
+export const hoodModsOf = (st: GameState, g: GroupId): HoodMod[] => (st.hoodMods ?? []).filter((m) => m.group === g && m.until >= st.round);
+/**
+ * Multiplicador de preço e aluguel do bairro: o permanente × cada modificador temporário ativo (1 + pct/100),
+ * dentro de HOOD.min..HOOD.max; 1 = sem mudança.
+ */
+export function hoodMult(st: GameState, g: GroupId): number {
+  const base = hoodBase(st, g);
+  const mods = hoodModsOf(st, g);
+  if (!mods.length) return base;
+  const m = mods.reduce((a, x) => a * (1 + x.pct / 100), base);
+  return Math.min(HOOD.max, Math.max(HOOD.min, round4(m)));
+}
 /** Texto da valorização, ex.: "Bairro valorizado +10%" (null quando o bairro está no preço normal). */
 export function hoodLabel(mult: number): string | null {
   const pct = Math.round((mult - 1) * 100);
   if (!pct) return null;
   return pct > 0 ? `Bairro valorizado +${pct}%` : `Bairro desvalorizado −${-pct}%`;
+}
+const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
+/** Até quando vale um efeito: "só nesta rodada" ou "até a rodada 9". */
+const untilText = (st: GameState, until: number) => (until <= st.round ? 'só nesta rodada' : `até a rodada ${until}`);
+/**
+ * Selos do bairro: a valorização permanente e cada efeito temporário,
+ * ex.: ["Bairro valorizado +20%", "Assaltos −15% até a rodada 9"].
+ */
+export function hoodTags(st: GameState, g: GroupId): { text: string; up: boolean }[] {
+  const out: { text: string; up: boolean }[] = [];
+  const base = hoodBase(st, g);
+  const label = hoodLabel(base);
+  if (label) out.push({ text: label, up: base > 1 });
+  for (const m of hoodModsOf(st, g)) out.push({ text: `${m.why} ${signed(m.pct)}% ${untilText(st, m.until)}`, up: m.pct > 0 });
+  return out;
+}
+/** Os selos do bairro numa linha só (null quando o bairro está no preço normal). */
+export function hoodText(st: GameState, g: GroupId): string | null {
+  const t = hoodTags(st, g);
+  return t.length ? t.map((x) => x.text).join(' · ') : null;
 }
 /**
  * Padrão das casas do imóvel, ou null se é só terreno (sem casas). Salas antigas: com casas e sem padrão, Intermediária;
@@ -181,12 +214,17 @@ export function applyNeighbourhoodChange(state: GameState, group: GroupId, pct: 
   if (!GROUPS[group]) throw new RuleError('Bairro inválido.');
   if (!Number.isFinite(pct)) throw new RuleError('Variação inválida.');
   const st = clone(state);
-  const before = hoodMult(st, group);
-  const after = Math.min(HOOD.max, Math.max(HOOD.min, round4(before + pct / 100)));
-  st.hood = { ...(st.hood || {}), [group]: after };
-  const delta = Math.round((after - before) * 100);
+  const delta = shiftHood(st, group, pct);
   if (delta) log(st, `Bairro ${GROUPS[group].name.toLowerCase()} ${delta > 0 ? 'valorizou' : 'desvalorizou'} ${Math.abs(delta)}%: preços e aluguéis ${delta > 0 ? 'sobem' : 'caem'}`, now, undefined, true);
   return st;
+}
+
+/** Soma `pct` pontos ao multiplicador permanente do bairro (sobre o próprio estado); devolve a mudança em pontos. */
+function shiftHood(st: GameState, group: GroupId, pct: number): number {
+  const before = hoodBase(st, group);
+  const after = Math.min(HOOD.max, Math.max(HOOD.min, round4(before + pct / 100)));
+  st.hood = { ...(st.hood || {}), [group]: after };
+  return Math.round((after - before) * 100);
 }
 
 /** Aluguel atual: tabela da casa pelo número de construções; hipotecado não cobra.
@@ -206,8 +244,258 @@ export function netWorth(st: GameState, p: Player): number {
     w += pr.mortgaged ? price - mortgageValueOf(st, i) : price;
     w += (pr.houses || 0) * buildPrice(st, i);
   }
-  COMPANY_IDX.forEach((i) => (w += (sharesOf(st, i)[p.id] || 0) * SHARE_PRICE));
+  COMPANY_IDX.forEach((i) => (w += (sharesOf(st, i)[p.id] || 0) * sharePrice(st, i)));
   return w;
+}
+
+// ---------- Bolsa (cotações, dividendos, gerência) ----------
+
+/** Jornal e Bolsa ligados nesta sala (salas antigas e novas: ligado; o anfitrião pode desligar no lobby). */
+export const marketOn = (st: GameState) => st.settings?.mercado !== false;
+const clampPrice = (x: number) => Math.min(STOCK.max, Math.max(STOCK.min, Math.round(x / STOCK.round) * STOCK.round));
+const activeIn = (m: TimedMod, round: number) => m.from <= round && round <= m.until;
+
+/** Cotação e efeitos da empresa (salas antigas, sem Bolsa: SHARE_PRICE, sem efeitos). */
+export const stockOf = (st: GameState, i: number): Stock => st.stocks?.[i] ?? { price: SHARE_PRICE, hist: [SHARE_PRICE] };
+/** Preço atual da cota: o que se paga ao comprar da empresa e o que ela paga de volta. */
+export const sharePrice = (st: GameState, i: number) => stockOf(st, i).price;
+/** Preço no começo da rodada anterior (para a variação). */
+export function prevPrice(st: GameState, i: number): number {
+  const s = stockOf(st, i);
+  return s.hist.length >= 2 ? s.hist[s.hist.length - 2] : s.price;
+}
+/** Variação desde a rodada anterior, em fração (0,1 = +10%). */
+export function priceChange(st: GameState, i: number): number {
+  const before = prevPrice(st, i);
+  return before ? round4((sharePrice(st, i) - before) / before) : 0;
+}
+function ensureStock(st: GameState, i: number): Stock {
+  st.stocks = st.stocks || {};
+  if (!st.stocks[i]) st.stocks[i] = { price: SHARE_PRICE, hist: [SHARE_PRICE] };
+  return st.stocks[i];
+}
+/** Rendimento do dividendo na rodada (fração): base + ajustes ativos; greve ativa = 0. */
+export function dividendYield(st: GameState, i: number, round = st.round): number {
+  const mods = (stockOf(st, i).yieldMods ?? []).filter((m) => activeIn(m, round));
+  if (mods.some((m) => m.zero)) return 0;
+  return Math.max(0, round4(STOCK.yield + mods.reduce((a, m) => a + (m.pp || 0), 0) / 100));
+}
+/** Dividendo por cota nesta rodada (cotação × rendimento, arredondado a $ 1). */
+export const dividendPerShare = (st: GameState, i: number) => Math.round(sharePrice(st, i) * dividendYield(st, i));
+/** Greve ativa (dividendo zero) nesta rodada. */
+export const onStrike = (st: GameState, i: number) => (stockOf(st, i).yieldMods ?? []).some((m) => m.zero && activeIn(m, st.round));
+/** Soma dos aumentos da taxa da casa ativos nesta rodada (em %). */
+export const feeBoost = (st: GameState, i: number) => (stockOf(st, i).feeMods ?? []).filter((m) => activeIn(m, st.round)).reduce((a, m) => a + m.pct, 0);
+/** Efeitos ativos ou programados da empresa, para mostrar na Bolsa. */
+export function stockEffects(st: GameState, i: number): string[] {
+  const s = stockOf(st, i);
+  const r = st.round;
+  const out: string[] = [];
+  for (const m of s.yieldMods ?? []) {
+    if (m.until < r) continue;
+    const when = m.from > r ? (m.from === m.until ? `na rodada ${m.from}` : `das rodadas ${m.from} a ${m.until}`) : untilText(st, m.until);
+    out.push(m.zero ? `${m.why}: dividendo zero ${when}` : `${m.why}: dividendo ${signed(m.pp || 0)} ponto${Math.abs(m.pp || 0) === 1 ? '' : 's'} ${when}`);
+  }
+  for (const m of s.feeMods ?? []) if (m.until >= r) out.push(`${m.why}: taxa da casa ${signed(m.pct)}% ${untilText(st, m.until)}`);
+  for (const p of s.pend ?? []) {
+    if (p.round <= r) continue;
+    if (p.invest) out.push(`${p.why}: cota sobe de ${DECISIONS.investir.min}% a ${DECISIONS.investir.max}% na rodada ${p.round}`);
+    if (p.pct) out.push(`${p.why}: cota ${signed(p.pct)}% na rodada ${p.round}`);
+    if (p.strike) out.push(`${p.why}: ${Math.round(p.strike * 100)}% de chance de greve na rodada ${p.round}`);
+  }
+  return out;
+}
+
+/** Dividendo extra por cota (decisão da gerência): cotação × DECISIONS.dividendo.rate, a $ 1. */
+export const extraDividendPerShare = (st: GameState, i: number) => Math.round(sharePrice(st, i) * DECISIONS.dividendo.rate);
+function extraDividendTransfers(st: GameState, i: number): Transfer[] {
+  const each = extraDividendPerShare(st, i);
+  const name = company(i).name;
+  return Object.entries(sharesOf(st, i))
+    .filter(([pid, q]) => q > 0 && !findPlayer(st, pid)?.out)
+    .map(([pid, q]) => ({ from: BANK, to: pid, amount: q * each, reason: `Dividendo extra da ${name}: ${q} cota${q > 1 ? 's' : ''} × ${money(each)}`, kind: 'dividend' as const, space: i }))
+    .filter((t) => t.amount > 0);
+}
+
+/** Por que `actor` não pode tomar uma decisão da gerência nesta empresa agora (null = pode). */
+export function manageBlock(st: GameState, i: number, actor: string): string | null {
+  if (!marketOn(st)) return 'A Bolsa está desligada nesta sala.';
+  if (controller(st, i) !== actor) return `Só o dono da ${company(i).name} (${CONTROL} ou mais cotas) decide.`;
+  if (!isMyTurn(st, actor)) return 'Decisões da gerência só na sua vez.';
+  if (stockOf(st, i).decRound === st.round) return 'A gerência já decidiu nesta rodada. Na próxima, pode decidir de novo.';
+  return null;
+}
+
+/** Edições do Jornal que falam desta empresa (ou de todas as empresas), mais novas primeiro. */
+export function editionsAbout(st: GameState, i: number): Edition[] {
+  return (st.jornal ?? []).filter((e) => {
+    const h = HEADLINES[e.h];
+    return !!h && h.effects.some((x) => ('co' in x && x.co === i) || x.k === 'stockAll' || (x.k === 'yield' && x.co === undefined));
+  });
+}
+
+// ---------- Jornal da Cidade ----------
+
+const groupStreets = (g: GroupId) => {
+  const names = groupIdx(g).map((i) => street(i).name);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}` : names.join('');
+};
+
+/** Próxima manchete do baralho (sorteio da sala, sem repetir até acabar; aí embaralha de novo). */
+function drawHeadline(st: GameState): number {
+  const n = HEADLINES.length;
+  let deck = (st.jornalDeck ?? []).filter((x) => x >= 0 && x < n);
+  let ptr = st.jornalPtr ?? 0;
+  if (deck.length !== n || ptr >= n) {
+    const last = st.jornal?.[0]?.h;
+    deck = shuffle(n, () => nextRandom(st));
+    // a última manchete do baralho anterior não abre o novo
+    if (deck[0] === last && n > 1) [deck[0], deck[1]] = [deck[1], deck[0]];
+    ptr = 0;
+  }
+  st.jornalDeck = deck;
+  st.jornalPtr = ptr + 1;
+  return deck[ptr];
+}
+
+/** Aplica um efeito da manchete; devolve o texto do "Efeito no jogo". `stockPct` acumula a variação das cotações. */
+function applyHeadlineEffect(st: GameState, h: Headline, e: HeadlineEffect, stockPct: Record<number, number>): string {
+  const r = st.round;
+  const untilOf = (rounds: number) => r + Math.max(1, rounds) - 1;
+  switch (e.k) {
+    case 'hood': {
+      const name = GROUPS[e.group].name;
+      if (e.rounds === undefined) {
+        shiftHood(st, e.group, e.pct);
+        return `Bairro ${name} ${signed(e.pct)}% para sempre (${groupStreets(e.group)})`;
+      }
+      const until = untilOf(e.rounds);
+      st.hoodMods = [...(st.hoodMods ?? []), { group: e.group, pct: e.pct, until, why: h.tag }];
+      return `Bairro ${name} ${signed(e.pct)}% ${untilText(st, until)} (${groupStreets(e.group)})`;
+    }
+    case 'hoodAll': {
+      const groups = Object.keys(GROUPS) as GroupId[];
+      if (e.rounds === undefined) {
+        groups.forEach((g) => shiftHood(st, g, e.pct));
+        return `Todos os bairros ${signed(e.pct)}% para sempre`;
+      }
+      const until = untilOf(e.rounds);
+      st.hoodMods = [...(st.hoodMods ?? []), ...groups.map((g) => ({ group: g, pct: e.pct, until, why: h.tag }))];
+      return `Todos os bairros ${signed(e.pct)}% ${untilText(st, until)}`;
+    }
+    case 'stock':
+      stockPct[e.co] = (stockPct[e.co] || 0) + e.pct;
+      return `Cotação da ${company(e.co).name} ${signed(e.pct)}% nesta rodada`;
+    case 'stockAll':
+      COMPANY_IDX.forEach((i) => (stockPct[i] = (stockPct[i] || 0) + e.pct));
+      return `Todas as cotações ${signed(e.pct)}% nesta rodada`;
+    case 'yield': {
+      const until = untilOf(e.rounds);
+      const cos = e.co === undefined ? COMPANY_IDX : [e.co];
+      cos.forEach((i) => {
+        const sk = ensureStock(st, i);
+        sk.yieldMods = [...(sk.yieldMods ?? []), { pp: e.pp, from: r, until, why: h.tag }];
+      });
+      const who = e.co === undefined ? 'de todas as empresas' : `da ${company(e.co).name}`;
+      return `Dividendo ${who} ${signed(e.pp)} ponto${Math.abs(e.pp) === 1 ? '' : 's'} ${untilText(st, until)}`;
+    }
+    case 'strike': {
+      const until = untilOf(e.rounds);
+      const sk = ensureStock(st, e.co);
+      sk.yieldMods = [...(sk.yieldMods ?? []), { zero: true, from: r, until, why: h.tag }];
+      return `Dividendo da ${company(e.co).name} zero ${untilText(st, until)}`;
+    }
+    case 'fee': {
+      const until = untilOf(e.rounds);
+      const sk = ensureStock(st, e.co);
+      sk.feeMods = [...(sk.feeMods ?? []), { pct: e.pct, from: r, until, why: h.tag }];
+      return `Taxa da casa da ${company(e.co).name} ${signed(e.pct)}% ${untilText(st, until)}`;
+    }
+    case 'rate': {
+      const before = bankRate(st);
+      const after = Math.max(BANK_RATES.minLoanRate, round4(before + e.pp / 100));
+      st.bankRate = after;
+      return `Taxa do banco nesta rodada: ${pct(after)} (era ${pct(before)})`;
+    }
+  }
+}
+
+/**
+ * Começo de rodada do Jornal e da Bolsa (logo depois do sorteio dos juros):
+ * 1. tira os efeitos vencidos; 2. sorteia a manchete e aplica os efeitos; 3. atualiza as cotações
+ * (variação sorteada de ±5% + manchete + decisões da gerência, entre $ 50 e $ 1.000, a $ 10);
+ * 4. paga os dividendos. Tudo pelo sorteio da sala. Na primeira rodada (começo da partida) não há variação sorteada.
+ */
+function marketRound(st: GameState, now: Date, first = false) {
+  if (!marketOn(st)) return;
+  const r = st.round;
+  // 1. efeitos vencidos
+  for (const m of (st.hoodMods ?? []).filter((x) => x.until < r)) log(st, `Acabou o efeito no bairro ${GROUPS[m.group].name.toLowerCase()}: ${m.why}`, now);
+  st.hoodMods = (st.hoodMods ?? []).filter((x) => x.until >= r);
+  for (const i of COMPANY_IDX) {
+    const sk = ensureStock(st, i);
+    if (sk.yieldMods) sk.yieldMods = sk.yieldMods.filter((m) => m.until >= r);
+    if (sk.feeMods) sk.feeMods = sk.feeMods.filter((m) => m.until >= r);
+  }
+  // 2. manchete
+  const hi = drawHeadline(st);
+  const h = HEADLINES[hi];
+  const stockPct: Record<number, number> = {};
+  const effects = h.effects.map((e) => applyHeadlineEffect(st, h, e, stockPct));
+  st.jornal = [{ round: r, h: hi, effects }, ...(st.jornal ?? [])].slice(0, JORNAL.keep);
+  log(st, `Jornal da Cidade, edição ${r}: ${h.title}`, now);
+  // 3. cotações
+  for (const i of COMPANY_IDX) {
+    const sk = ensureStock(st, i);
+    const name = company(i).name;
+    let change = first ? 0 : (nextRandom(st) * 2 - 1) * STOCK.drift;
+    change += (stockPct[i] || 0) / 100;
+    for (const p of (sk.pend ?? []).filter((x) => x.round <= r)) {
+      if (p.pct) change += p.pct / 100;
+      if (p.invest) {
+        const D = DECISIONS.investir;
+        const up = D.min + Math.min(D.max - D.min, Math.floor(nextRandom(st) * (D.max - D.min + 1)));
+        change += up / 100;
+        log(st, `Investimento na ${name} deu resultado: cota +${up}%`, now, undefined, true);
+      }
+      if (p.strike !== undefined) {
+        if (nextRandom(st) < p.strike) {
+          sk.yieldMods = [...(sk.yieldMods ?? []), { zero: true, from: r, until: r, why: 'Greve' }];
+          log(st, `Greve na ${name} depois do corte de custos: dividendo zero nesta rodada`, now, undefined, true);
+        } else log(st, `Corte de custos na ${name} sem greve: dividendo maior`, now);
+      }
+    }
+    sk.pend = (sk.pend ?? []).filter((x) => x.round > r);
+    if (!sk.pend.length) delete sk.pend;
+    sk.price = clampPrice(sk.price * (1 + change));
+    sk.hist = [...sk.hist, sk.price].slice(-STOCK.history);
+  }
+  // 4. dividendos
+  for (const i of COMPANY_IDX) {
+    const each = dividendPerShare(st, i);
+    if (!each) continue;
+    const name = company(i).name;
+    const list: Transfer[] = Object.entries(sharesOf(st, i))
+      .filter(([pid, q]) => q > 0 && findPlayer(st, pid) && !findPlayer(st, pid)!.out)
+      .map(([pid, q]) => ({ from: BANK, to: pid, amount: q * each, reason: `Dividendos da ${name}: ${q} cota${q > 1 ? 's' : ''} × ${money(each)}`, kind: 'dividend' as const, space: i }));
+    if (!list.length) continue;
+    applyTransfers(st, list, now);
+    log(st, `Dividendos da ${name}: ${money(each)} por cota`, now);
+  }
+}
+
+/** Texto de cada decisão da gerência para a tela da empresa. */
+export function decisionText(d: DecisionId): string {
+  switch (d) {
+    case 'investir':
+      return `Paga ${money(DECISIONS.investir.cost)} à empresa: na próxima rodada a cota sobe de ${DECISIONS.investir.min}% a ${DECISIONS.investir.max}%.`;
+    case 'dividendo':
+      return `O banco paga agora ${Math.round(DECISIONS.dividendo.rate * 100)}% da cotação por cota a quem tem cotas; na próxima rodada a cota cai ${-DECISIONS.dividendo.nextPct}%.`;
+    case 'cortar':
+      return `Dividendo +${DECISIONS.cortar.pp} pontos nas próximas ${DECISIONS.cortar.rounds} rodadas, com ${Math.round(DECISIONS.cortar.strikeChance * 100)}% de chance de greve (dividendo zero) na próxima.`;
+    case 'marketing':
+      return `Paga ${money(DECISIONS.marketing.cost)}: a taxa da casa sobe ${DECISIONS.marketing.pct}% nesta rodada e na próxima.`;
+  }
 }
 
 // ---------- Empréstimo ----------
@@ -361,7 +649,7 @@ export const irTax = (income: number) => Math.max(0, Math.round((income - IR.exe
 /** Renda tributável desde a última volta. */
 export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
 /** Tipos de transação que contam como renda para o IR. */
-const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news']);
+const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend']);
 export const isIncome = (kind: TxKind) => INCOME_KINDS.has(kind) || (IR.salaryIsIncome && kind === 'salary');
 
 const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
@@ -408,12 +696,17 @@ export function canUnmortgage(st: GameState, i: number, actor: string): boolean 
   return !!pr && pr.owner === actor && pr.mortgaged && isMyTurn(st, actor);
 }
 
-/** Taxa total da empresa: soma dos dados × $500, em dobro se o mesmo dono controla as 6 empresas. */
+/**
+ * Taxa total da empresa: soma dos dados × $500 × cotação ÷ $200 × (1 + aumentos da taxa ativos), arredondada a $ 10,
+ * em dobro se o mesmo dono controla as 6 empresas.
+ */
 export function feeTotal(st: GameState, i: number, dice: number): number {
   const ctrl = controller(st, i);
   const ctrlAll = !!ctrl && COMPANY_IDX.every((c) => controller(st, c) === ctrl);
-  return dice * COMPANY_RATE * (ctrlAll ? 2 : 1);
+  return round10(dice * feeRate(st, i)) * (ctrlAll ? 2 : 1);
 }
+/** Taxa por ponto dos dados: $500 × cotação ÷ $200 × (1 + aumentos ativos). */
+export const feeRate = (st: GameState, i: number) => (COMPANY_RATE * sharePrice(st, i) * (1 + feeBoost(st, i) / 100)) / SHARE_PRICE;
 
 /** Quem recebe a taxa: o dono (≥6 cotas) leva tudo; sem dono, divide pelas cotas. Ninguém paga a si mesmo. */
 export function feeTransfers(st: GameState, i: number, dice: number, payer: string): Transfer[] {
@@ -465,7 +758,22 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
     case 'buyShares': {
       const s = company(landed ?? -1);
       const q = action.qty;
-      return [{ from: p.id, to: BANK, amount: q * SHARE_PRICE, reason: `${q} cota${q > 1 ? 's' : ''} da ${s.name}`, kind: 'shares', space: landed! }];
+      const price = sharePrice(st, landed!);
+      return [{ from: p.id, to: BANK, amount: q * price, reason: `${q} cota${q > 1 ? 's' : ''} da ${s.name} a ${money(price)}`, kind: 'shares', space: landed! }];
+    }
+    case 'sellShares': {
+      const s = company(action.idx);
+      const q = action.qty;
+      const price = sharePrice(st, action.idx);
+      return [{ from: BANK, to: actor, amount: q * price, reason: `Venda de ${q} cota${q > 1 ? 's' : ''} da ${s.name} à empresa a ${money(price)}`, kind: 'shares', space: action.idx }];
+    }
+    case 'manage': {
+      const s = company(action.idx);
+      const d = action.decision;
+      if (d === 'investir') return [{ from: actor, to: BANK, amount: DECISIONS.investir.cost, reason: `Gerência da ${s.name}: investimento na empresa`, kind: 'gestao', space: action.idx }];
+      if (d === 'marketing') return [{ from: actor, to: BANK, amount: DECISIONS.marketing.cost, reason: `Gerência da ${s.name}: campanha de marketing`, kind: 'gestao', space: action.idx }];
+      if (d === 'dividendo') return extraDividendTransfers(st, action.idx);
+      return [];
     }
     case 'applyNews': {
       if (st.turnInfo.news === null) return [];
@@ -611,7 +919,10 @@ function nextTurn(st: GameState, now: Date) {
   }
   st.turn = i;
   st.turnInfo = emptyTurn();
-  if (st.round !== roundBefore) drawBankRate(st, now);
+  if (st.round !== roundBefore) {
+    drawBankRate(st, now);
+    marketRound(st, now);
+  }
   // Início da vez: empréstimo vencido é cobrado antes de qualquer jogada
   const p = st.players[i];
   const l = loanOf(st, p.id);
@@ -806,6 +1117,11 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       st.settings.start = Math.max(1000, Math.round(action.amount) || DEFAULTS.start);
       return keep(state, st);
     }
+    case 'setMercado': {
+      need(actor === st.hostId && st.phase === 'lobby', 'Só quem criou a sala liga ou desliga o Jornal e a Bolsa.');
+      st.settings.mercado = !!action.on;
+      return keep(state, st);
+    }
     case 'start': {
       need(actor === st.hostId, 'Só quem criou a sala pode começar.');
       need(st.phase === 'lobby', 'A partida já começou.');
@@ -818,8 +1134,15 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       st.turn = 0;
       st.seed = Math.floor(rng() * 4294967296) >>> 0;
       st.irPending = null;
+      st.hood = {};
+      st.hoodMods = [];
+      st.jornal = [];
+      delete st.jornalDeck;
+      delete st.jornalPtr;
+      delete st.stocks;
       log(st, `Partida começou com ${st.players.length} jogadores`, now, actor, true);
       drawBankRate(st, now);
+      marketRound(st, now, true);
       return keep(state, st);
     }
     case 'reset': {
@@ -957,7 +1280,67 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       p.shareRound = st.round;
       const sh = st.shares[ti.landed!] || (st.shares[ti.landed!] = {});
       sh[p.id] = (sh[p.id] || 0) + q;
-      log(st, `${p.name} comprou ${q} cota${q > 1 ? 's' : ''} da ${s.name}`, now, actor);
+      log(st, `${p.name} comprou ${q} cota${q > 1 ? 's' : ''} da ${s.name} por ${money(q * sharePrice(state, ti.landed!))}`, now, actor);
+      break;
+    }
+    case 'sellShares': {
+      turnOnly();
+      need(marketOn(st), 'A Bolsa está desligada nesta sala.');
+      const i = action.idx;
+      need(COMPANY_IDX.includes(i), 'Empresa inválida.');
+      const q = action.qty;
+      const have = sharesOf(st, i)[actor] || 0;
+      need(Number.isInteger(q) && q >= 1, 'Quantidade de cotas inválida.');
+      need(q <= have, `Você tem ${have} cota${have === 1 ? '' : 's'} da ${company(i).name}.`);
+      pay(st, transfersFor(state, action, actor), now);
+      const sh = st.shares[i];
+      sh[actor] -= q;
+      if (!sh[actor]) delete sh[actor];
+      log(st, `${me.name} vendeu ${q} cota${q > 1 ? 's' : ''} da ${company(i).name} à empresa por ${money(q * sharePrice(state, i))}`, now, actor);
+      break;
+    }
+    case 'manage': {
+      const i = action.idx;
+      need(COMPANY_IDX.includes(i), 'Empresa inválida.');
+      need(DECISIONS[action.decision], 'Decisão inválida.');
+      const block = manageBlock(state, i, actor);
+      need(!block, block!);
+      const list = transfersFor(state, action, actor);
+      pay(st, list, now);
+      const sk = ensureStock(st, i);
+      const r = st.round;
+      const name = company(i).name;
+      let what: string;
+      switch (action.decision) {
+        case 'investir': {
+          const D = DECISIONS.investir;
+          sk.pend = [...(sk.pend || []), { round: r + 1, invest: true, why: 'Investimento' }];
+          what = `investiu ${money(D.cost)} na empresa: a cota sobe de ${D.min}% a ${D.max}% na próxima rodada`;
+          break;
+        }
+        case 'dividendo': {
+          const D = DECISIONS.dividendo;
+          sk.pend = [...(sk.pend || []), { round: r + 1, pct: D.nextPct, why: 'Dividendo extra' }];
+          what = `pagou dividendo extra de ${money(extraDividendPerShare(state, i))} por cota: a cota cai ${-D.nextPct}% na próxima rodada`;
+          break;
+        }
+        case 'cortar': {
+          const D = DECISIONS.cortar;
+          sk.yieldMods = [...(sk.yieldMods || []), { pp: D.pp, from: r + 1, until: r + D.rounds, why: 'Corte de custos' }];
+          sk.pend = [...(sk.pend || []), { round: r + 1, strike: D.strikeChance, why: 'Corte de custos' }];
+          what = `cortou custos: dividendo +${D.pp} pontos até a rodada ${r + D.rounds}, com risco de greve`;
+          break;
+        }
+        case 'marketing': {
+          const D = DECISIONS.marketing;
+          sk.feeMods = [...(sk.feeMods || []), { pct: D.pct, from: r, until: r + D.rounds - 1, why: 'Marketing' }];
+          what = `fez campanha de marketing (${money(D.cost)}): taxa da casa +${D.pct}% ${untilText(st, r + D.rounds - 1)}`;
+          break;
+        }
+      }
+      sk.decRound = r;
+      sk.decision = action.decision;
+      log(st, `Gerência da ${name}: ${me.name} ${what}`, now, actor, true);
       break;
     }
     case 'drawNews': {
