@@ -1,6 +1,6 @@
-/* Estilo portado do Banco Imobiliário da Mesa: tokens, DM Sans/Sora, claro e escuro. */
+/* Estilo portado do Banco Imobiliário da Mesa: tokens, DM Sans/Sora. O site usa sempre o tema claro (data-theme="light" no <html>). */
 :root{
-  --bg:#F3F4F1; --surface:#FFFFFF; --surface-2:#EEF0EC; --line:#E2E5DF;
+  --bg:#FFFFFF; --surface:#FFFFFF; --surface-2:#EEF0EC; --line:#E2E5DF;
   --fg:#12161C; --muted:#5B6470; --ink:#12161C; --on-ink:#FFFFFF; --ink-muted:#B9C0C9;
   --accent:#0B6E50; --accent-soft:#E7F2EE; --on-accent:#FFFFFF;
   --warn:#8A4A06; --warn-soft:#FFF4E0; --bad:#B42318; --bad-soft:#FDECEA; --info:#1F4E79; --info-soft:#E6EEF7;

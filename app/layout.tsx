@@ -14,15 +14,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#F3F4F1' },
-    { media: '(prefers-color-scheme: dark)', color: '#0F1317' },
-  ],
+  themeColor: '#FFFFFF',
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="pt-BR" className={`${sora.variable} ${dmSans.variable}`}>
+    <html lang="pt-BR" data-theme="light" className={`${sora.variable} ${dmSans.variable}`}>
       <body>
         <Toasts>{children}</Toasts>
       </body>
