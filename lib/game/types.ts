@@ -64,6 +64,8 @@ export interface Player {
   creditLog?: CreditEvent[];
   /** resultado da última declaração do IR */
   irLast?: IrResult;
+  /** saldo da poupança (salas antigas: 0) */
+  savings?: number;
 }
 
 export interface CreditEvent {
@@ -105,6 +107,8 @@ export interface Property {
   tier?: TierId;
   /** valor recebido ao hipotecar (base do custo para tirar a hipoteca) */
   mortgageValue?: number;
+  /** seguro do imóvel: cobre até a rodada `insuredUntil`, inclusive (ausente = sem seguro) */
+  insuredUntil?: number;
 }
 
 export type TxKind =
@@ -130,7 +134,17 @@ export type TxKind =
   /** dividendos das cotas (contam como renda) */
   | 'dividend'
   /** decisões da gerência pagas pelo dono da empresa (investimento, marketing) */
-  | 'gestao';
+  | 'gestao'
+  /** depósito e resgate da poupança */
+  | 'poupanca'
+  /** rendimento da poupança (conta como renda) */
+  | 'rendimento'
+  /** prêmio do seguro do imóvel */
+  | 'seguro'
+  /** indenização do seguro */
+  | 'indenizacao'
+  /** entrada, parcela e quitação do financiamento de imóvel */
+  | 'financiamento';
 
 export interface Tx {
   id: string;
@@ -195,6 +209,22 @@ export interface Loan {
   penhora?: boolean;
 }
 
+/**
+ * Financiamento de um imóvel (terreno ou casa): o jogador paga a entrada e o resto vira uma dívida com os mesmos
+ * planos e regras de cobrança do empréstimo. Enquanto existir, o imóvel fica alienado ao banco
+ * (não pode ser negociado nem hipotecado).
+ */
+export interface Financing extends Loan {
+  owner: string;
+  /** índice do imóvel no tabuleiro */
+  idx: number;
+  /** o que foi financiado */
+  what: 'terreno' | 'casa';
+  /** preço do que foi financiado e entrada paga */
+  price: number;
+  entrada: number;
+}
+
 export interface FeedItem {
   seq: number;
   at: string;
@@ -215,6 +245,8 @@ export interface TurnInfo {
   feePaid: boolean;
   /** jogadores que já perderam score por falta de saldo nesta jogada */
   short?: string[];
+  /** duplas seguidas já tiradas nesta vez (a 3ª leva à detenção) */
+  doubles?: number;
 }
 
 export interface Settings {
@@ -351,6 +383,8 @@ export interface GameState {
   hoodMods?: HoodMod[];
   /** Bolsa: cotação de cada empresa (índice da casa); ausente = SHARE_PRICE */
   stocks?: Record<number, Stock>;
+  /** financiamentos ativos, pelo índice do imóvel (salas antigas: nenhum) */
+  fin?: Record<number, Financing>;
 }
 
 export type Action =
@@ -360,7 +394,7 @@ export type Action =
   | { type: 'start' }
   | { type: 'reset' }
   | { type: 'land'; idx: number }
-  | { type: 'buy' }
+  | { type: 'buy'; finance?: LoanPlanId }
   | { type: 'skipBuy' }
   | { type: 'payRent' }
   | { type: 'payFee'; dice: number }
@@ -375,7 +409,7 @@ export type Action =
   | { type: 'jailFail' }
   | { type: 'bail' }
   | { type: 'useCard' }
-  | { type: 'build'; idx: number; tier?: TierId }
+  | { type: 'build'; idx: number; tier?: TierId; finance?: LoanPlanId }
   | { type: 'sellHouse'; idx: number }
   | { type: 'mortgage'; idx: number }
   | { type: 'unmortgage'; idx: number }
@@ -389,7 +423,11 @@ export type Action =
   | { type: 'takeLoan'; amount: number; plan?: LoanPlanId }
   | { type: 'payLoan'; amount: number }
   | { type: 'declareIR' }
-  | { type: 'evadeIR' };
+  | { type: 'evadeIR' }
+  | { type: 'deposit'; amount: number }
+  | { type: 'withdraw'; amount: number }
+  | { type: 'insure'; idx: number }
+  | { type: 'payFin'; idx: number };
 
 /** Transferência ainda não aplicada (prévia do Pix) */
 export interface Transfer {

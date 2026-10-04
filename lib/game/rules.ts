@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, GROUPS, HEADLINES, HOOD, IR, JAIL_POS, JORNAL, LOAN, LOAN_PLANS, MAX_PLAYERS, NEWS, PLAYER_COLORS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
-import type { Action, ActionContext, CompanySpace, DecisionId, Edition, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
+import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
+import type { Action, ActionContext, CompanySpace, DecisionId, Edition, Financing, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -236,7 +236,7 @@ export function rentOf(st: GameState, i: number): number {
 }
 
 export function netWorth(st: GameState, p: Player): number {
-  let w = p.balance;
+  let w = p.balance + savingsOf(p);
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== p.id) continue;
     const i = Number(k);
@@ -437,13 +437,25 @@ function marketRound(st: GameState, now: Date, first = false) {
     if (sk.yieldMods) sk.yieldMods = sk.yieldMods.filter((m) => m.until >= r);
     if (sk.feeMods) sk.feeMods = sk.feeMods.filter((m) => m.until >= r);
   }
-  // 2. manchete
+  // 2. manchete (o seguro cobre o valor que os imóveis segurados perderem com ela)
+  const insured = Object.keys(st.props)
+    .map(Number)
+    .filter((i) => insuredUntil(st, i) !== null && !findPlayer(st, st.props[i].owner)?.out)
+    .map((i) => ({ i, before: propValue(st, i) }));
   const hi = drawHeadline(st);
   const h = HEADLINES[hi];
   const stockPct: Record<number, number> = {};
   const effects = h.effects.map((e) => applyHeadlineEffect(st, h, e, stockPct));
   st.jornal = [{ round: r, h: hi, effects }, ...(st.jornal ?? [])].slice(0, JORNAL.keep);
   log(st, `Jornal da Cidade, edição ${r}: ${h.title}`, now);
+  for (const { i, before } of insured) {
+    const lost = before - propValue(st, i);
+    if (lost <= 0) continue;
+    const owner = st.props[i].owner;
+    const name = street(i).name;
+    applyTransfers(st, [{ from: BANK, to: owner, amount: lost, reason: `Indenização do seguro da ${name}: ${h.tag} (valor caiu de ${money(before)} para ${money(before - lost)})`, kind: 'indenizacao', space: i }], now);
+    log(st, `Seguro: ${pname(st, owner)} recebeu ${money(lost)} de indenização pela ${name} (${h.tag})`, now, undefined, true);
+  }
   // 3. cotações
   for (const i of COMPANY_IDX) {
     const sk = ensureStock(st, i);
@@ -506,8 +518,70 @@ export const debtOf = (st: GameState, pid: string) => {
   const l = loanOf(st, pid);
   return l ? loanOwed(l) : 0;
 };
-/** Patrimônio líquido: patrimônio menos a dívida com o banco. */
-export const equity = (st: GameState, p: Player) => netWorth(st, p) - debtOf(st, p.id);
+/** Patrimônio líquido: patrimônio menos a dívida com o banco (empréstimo e financiamentos). */
+export const equity = (st: GameState, p: Player) => netWorth(st, p) - debtOf(st, p.id) - finDebtOf(st, p.id);
+
+// ---------- Poupança ----------
+
+export const savingsOf = (p: Player | undefined) => p?.savings ?? 0;
+/** Rendimento da poupança no início da vez: saldo × metade da taxa do banco na rodada, arredondado a $ 10. */
+export const savingsYield = (st: GameState, p: Player) => round10(savingsOf(p) * bankRate(st) * SAVINGS.rateShare);
+/** Taxa da poupança por vez (fração). */
+export const savingsRate = (st: GameState) => round4(bankRate(st) * SAVINGS.rateShare);
+
+// ---------- Seguro do imóvel ----------
+
+/** Valor atual do imóvel: terreno + construções, no preço do bairro agora. */
+export const propValue = (st: GameState, i: number) => lotPrice(st, i) + houses(st, i) * buildPrice(st, i);
+/** Prêmio do seguro: INSURANCE.premium × valor atual, arredondado a $ 10. */
+export const insurancePremium = (st: GameState, i: number) => round10(propValue(st, i) * INSURANCE.premium);
+/** Rodada até a qual o imóvel está segurado (null = sem seguro ou vencido). */
+export function insuredUntil(st: GameState, i: number): number | null {
+  const u = st.props[i]?.insuredUntil;
+  return u !== undefined && u >= st.round ? u : null;
+}
+/** Por que `actor` não pode contratar (ou renovar) o seguro deste imóvel agora (null = pode). */
+export function insureBlock(st: GameState, i: number, actor: string): string | null {
+  const pr = st.props[i];
+  if (SPACES[i]?.type !== 'street' || !pr || pr.owner !== actor) return 'Não é seu';
+  if (!marketOn(st)) return 'Sem o Jornal nesta sala, não há manchete para segurar';
+  if (!isMyTurn(st, actor)) return 'Só na sua vez';
+  const u = insuredUntil(st, i);
+  if (u !== null && u > st.round) return `Já segurado até a rodada ${u}`;
+  return null;
+}
+
+// ---------- Financiamento ----------
+
+export const finsOf = (st: GameState, pid: string): Financing[] =>
+  Object.values(st.fin ?? {})
+    .filter((f) => f.owner === pid)
+    .sort((a, b) => a.idx - b.idx);
+export const finOf = (st: GameState, i: number): Financing | null => st.fin?.[i] ?? null;
+/** Soma do que o jogador deve em financiamentos. */
+export const finDebtOf = (st: GameState, pid: string) => finsOf(st, pid).reduce((a, f) => a + loanOwed(f), 0);
+/** Parcelas que faltam (pagamento único: 1). */
+export const finLeft = (f: Financing) => (isParcelado(f) ? f.parcels!.length - (f.parcelsPaid ?? 0) : 1);
+/** Entrada do financiamento: FINANCE.entrada × preço, arredondada a $ 10. */
+export const financeEntrada = (price: number) => round10(price * FINANCE.entrada);
+/** O que for financiado de um preço: preço − entrada. */
+export const financeAmount = (price: number) => price - financeEntrada(price);
+/** Simulação dos planos para financiar `price` agora (mesma taxa e parcelas do empréstimo, sobre preço − entrada). */
+export const financeOptions = (st: GameState, pid: string, price: number) => loanOptions(st, pid, financeAmount(price));
+/** Por que `pid` não pode financiar `price` agora (null = pode). `idx`: imóvel que já tem financiamento não aceita outro. */
+export function financeBlock(st: GameState, pid: string, price: number, idx?: number): string | null {
+  const p = findPlayer(st, pid);
+  if (!p || p.out) return 'Você não está jogando';
+  if (creditOf(p) < FINANCE.minScore) return `Score ${creditOf(p)} abaixo de ${FINANCE.minScore} (faixa Regular): o banco não financia`;
+  if (idx !== undefined && finOf(st, idx)) return 'Este imóvel já tem um financiamento: quite antes de financiar outra construção';
+  if (p.balance < financeEntrada(price)) return `Saldo insuficiente para a entrada de ${money(financeEntrada(price))}`;
+  return null;
+}
+/** Selo do imóvel financiado, ex.: "Financiado · faltam 3 parcelas". */
+export function finBadge(f: Financing): string {
+  const n = finLeft(f);
+  return `Financiado · falta${n === 1 ? '' : 'm'} ${n} parcela${n === 1 ? '' : 's'}`;
+}
 // ---------- Score de crédito e juros ----------
 
 export const creditOf = (p: Player | undefined) => p?.credit ?? CREDIT.start;
@@ -603,6 +677,7 @@ export function tradeBlock(st: GameState, i: number, owner: string): string | nu
   const pr = st.props[i];
   if (!pr || pr.owner !== owner) return `${s.name} não é mais de ${pname(st, owner)}.`;
   if (houses(st, i) > 0) return `${s.name}: venda as casas antes de negociar.`;
+  if (finOf(st, i)) return `${s.name} está financiada (alienada ao banco): quite o financiamento antes de negociar.`;
   return null;
 }
 
@@ -649,7 +724,7 @@ export const irTax = (income: number) => Math.max(0, Math.round((income - IR.exe
 /** Renda tributável desde a última volta. */
 export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
 /** Tipos de transação que contam como renda para o IR. */
-const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend']);
+const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend', 'rendimento']);
 export const isIncome = (kind: TxKind) => INCOME_KINDS.has(kind) || (IR.salaryIsIncome && kind === 'salary');
 
 const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
@@ -688,7 +763,7 @@ export const boughtShareThisRound = (st: GameState, pid: string) => findPlayer(s
 
 export function canMortgage(st: GameState, i: number, actor: string): boolean {
   const pr = st.props[i];
-  return st.phase === 'playing' && !!pr && pr.owner === actor && !pr.mortgaged && !houses(st, i);
+  return st.phase === 'playing' && !!pr && pr.owner === actor && !pr.mortgaged && !houses(st, i) && !finOf(st, i);
 }
 
 export function canUnmortgage(st: GameState, i: number, actor: string): boolean {
@@ -744,7 +819,9 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
   switch (action.type) {
     case 'buy': {
       const s = street(landed ?? -1);
-      return [{ from: p.id, to: BANK, amount: lotPrice(st, landed!), reason: `Compra do terreno da ${s.name}`, kind: 'buy', space: landed! }];
+      const price = lotPrice(st, landed!);
+      if (action.finance) return [finEntradaTransfer(st, p.id, price, action.finance, `do terreno da ${s.name}`, landed!)];
+      return [{ from: p.id, to: BANK, amount: price, reason: `Compra do terreno da ${s.name}`, kind: 'buy', space: landed! }];
     }
     case 'payRent': {
       const s = street(landed ?? -1);
@@ -800,7 +877,10 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       const s = street(action.idx);
       const tier = buildTier(st, action.idx, action.tier);
       const h = houses(st, action.idx);
-      return [{ from: actor, to: BANK, amount: buildPrice(st, action.idx, tier), reason: `${h === 4 ? 'Hotel' : h === 0 ? 'Primeira casa' : 'Casa'} ${tierName(tier)} na ${s.name}`, kind: 'build', space: action.idx, tier }];
+      const what = `${h === 4 ? 'Hotel' : h === 0 ? 'Primeira casa' : 'Casa'} ${tierName(tier)} na ${s.name}`;
+      const price = buildPrice(st, action.idx, tier);
+      if (action.finance) return [{ ...finEntradaTransfer(st, actor, price, action.finance, `${h === 4 ? 'do hotel' : h === 0 ? 'da primeira casa' : 'da casa'} ${tierName(tier)} na ${s.name}`, action.idx), tier }];
+      return [{ from: actor, to: BANK, amount: price, reason: what, kind: 'build', space: action.idx, tier }];
     }
     case 'sellHouse': {
       const s = street(action.idx);
@@ -831,9 +911,47 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       }
       return [{ from: actor, to: BANK, amount: action.amount, reason: action.amount >= owed ? 'Quitação do empréstimo' : `Pagamento parcial do empréstimo (resta ${money(owed - action.amount)})`, kind: 'loanpay' }];
     }
+    case 'deposit':
+      return [{ from: actor, to: BANK, amount: action.amount, reason: 'Depósito na poupança', kind: 'poupanca' }];
+    case 'withdraw':
+      return [{ from: BANK, to: actor, amount: action.amount, reason: 'Resgate da poupança', kind: 'poupanca' }];
+    case 'insure': {
+      const s = street(action.idx);
+      const until = insureUntilNew(st, action.idx);
+      return [{ from: actor, to: BANK, amount: insurancePremium(st, action.idx), reason: `Seguro da ${s.name} (${Math.round(INSURANCE.premium * 100)}% do valor) até a rodada ${until}`, kind: 'seguro', space: action.idx }];
+    }
+    case 'payFin': {
+      const f = finOf(st, action.idx);
+      if (!f) return [];
+      const left = finLeft(f);
+      return [{ from: actor, to: BANK, amount: loanOwed(f), reason: `Quitação do financiamento da ${street(f.idx).name} (${left} parcela${left === 1 ? '' : 's'} restante${left === 1 ? '' : 's'})`, kind: 'financiamento', space: f.idx }];
+    }
     default:
       return [];
   }
+}
+
+/** Rodada final do seguro contratado agora: INSURANCE.rounds rodadas a partir desta (renovação no último dia emenda). */
+const insureUntilNew = (st: GameState, i: number) => Math.max(st.round - 1, insuredUntil(st, i) ?? 0) + INSURANCE.rounds;
+
+/** Texto curto das parcelas de um plano, ex.: "4 parcelas de $ 220" ou "pagamento único de $ 900 na rodada 7". */
+function parcelText(o: LoanOption): string {
+  if (o.plan === 'unico') return `pagamento único de ${money(o.total)} na rodada ${o.dueRound}`;
+  const ps = o.parcels;
+  return ps.every((x) => x === ps[0]) ? `${ps.length} parcelas de ${money(ps[0])}` : `${ps.length - 1} parcelas de ${money(ps[0])} e 1 de ${money(ps[ps.length - 1])}`;
+}
+
+function finEntradaTransfer(st: GameState, pid: string, price: number, plan: LoanPlanId, what: string, space: number): Transfer {
+  const o = financeOptions(st, pid, price).find((x) => x.plan === plan) ?? financeOptions(st, pid, price)[0];
+  const amt = financeAmount(price);
+  return {
+    from: pid,
+    to: BANK,
+    amount: financeEntrada(price),
+    reason: `Entrada (${Math.round(FINANCE.entrada * 100)}%) ${what}: financia ${money(amt)} a ${pct(o.rate)}: ${parcelText(o)}`,
+    kind: 'financiamento',
+    space,
+  };
 }
 
 // ---------- Mutações internas (sobre um clone) ----------
@@ -923,8 +1041,14 @@ function nextTurn(st: GameState, now: Date) {
     drawBankRate(st, now);
     marketRound(st, now);
   }
-  // Início da vez: empréstimo vencido é cobrado antes de qualquer jogada
+  // Início da vez: a poupança rende; empréstimo e financiamentos vencidos são cobrados antes de qualquer jogada
   const p = st.players[i];
+  savingsTurn(st, p, now);
+  collectFins(st, p, now);
+  if (p.out) {
+    if (!st.winner) nextTurn(st, now);
+    return;
+  }
   const l = loanOf(st, p.id);
   if (!l) return;
   if (isParcelado(l)) {
@@ -939,8 +1063,84 @@ function nextTurn(st: GameState, now: Date) {
   if (p.out && !st.winner) nextTurn(st, now);
 }
 
+/** Rendimento da poupança no início da vez do jogador (conta como renda para o IR e fica na poupança). */
+function savingsTurn(st: GameState, p: Player, now: Date) {
+  const y = savingsYield(st, p);
+  if (y <= 0) return;
+  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct(savingsRate(st))} de ${money(savingsOf(p))} (metade da taxa do banco)`, kind: 'rendimento' }], now);
+  // o rendimento entra na poupança, não na carteira
+  p.balance -= y;
+  p.savings = savingsOf(p) + y;
+  log(st, `Poupança de ${p.name} rendeu ${money(y)}`, now, p.id);
+}
+
+/** Tira `amount` da poupança para a carteira (resgate), com a linha no extrato. */
+function fromSavings(st: GameState, p: Player, amount: number, reason: string, now: Date) {
+  if (amount <= 0) return;
+  applyTransfers(st, [{ from: BANK, to: p.id, amount, reason, kind: 'poupanca' }], now);
+  p.savings = savingsOf(p) - amount;
+}
+
+/** Cobra no início da vez as parcelas vencidas de cada financiamento do jogador (e o pagamento único no vencimento). */
+function collectFins(st: GameState, p: Player, now: Date) {
+  for (const f0 of finsOf(st, p.id)) {
+    for (let k = 0; k < 5 && !p.out; k++) {
+      const f = finOf(st, f0.idx);
+      if (!f || f.owner !== p.id) break;
+      const np = nextParcel(f);
+      if (np) {
+        if (st.round < np.round) break;
+        collectFin(st, p, f, np.amount, `Parcela ${np.n}/${np.of} do financiamento da ${street(f.idx).name}`, np.n, now);
+      } else {
+        if (st.round < f.dueRound) break;
+        collectFin(st, p, f, loanOwed(f), `Vencimento do financiamento da ${street(f.idx).name}`, 1, now);
+      }
+    }
+    if (p.out) return;
+  }
+}
+
 /**
- * Cobra `owed` do jogador para o banco: primeiro o dinheiro; se faltar, PENHORA:
+ * Cobra uma parcela (ou o pagamento único) do financiamento: carteira, depois poupança. Se ainda faltar, o banco
+ * toma o próprio imóvel financiado (as construções nele são vendidas pela metade do custo para o jogador), o
+ * financiamento é cancelado e nada mais é cobrado dele.
+ */
+function collectFin(st: GameState, p: Player, f: Financing, amount: number, tag: string, n: number, now: Date) {
+  const name = street(f.idx).name;
+  log(st, `${tag} de ${p.name}: ${money(amount)}`, now, undefined, true);
+  if (p.balance < amount) fromSavings(st, p, Math.min(savingsOf(p), amount - p.balance), `Cobrança do banco: resgate da poupança para ${tag.toLowerCase()}`, now);
+  if (p.balance < amount) {
+    repossess(st, p, f.idx, now);
+    changeCredit(st, p, CREDIT.parcelPenhora, `${tag} sem saldo: imóvel retomado`);
+    log(st, `Sem saldo para a parcela: o banco retomou a ${name} de ${p.name} e cancelou o financiamento`, now, undefined, true);
+    return;
+  }
+  applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: tag, kind: 'financiamento', space: f.idx }], now);
+  f.paid += amount;
+  if (isParcelado(f)) {
+    f.parcelsPaid = n;
+    if (n <= 5) changeCredit(st, p, CREDIT.parcelPaid, `${tag} paga em dia`);
+  }
+  if (loanOwed(f) <= 0) {
+    delete st.fin![f.idx];
+    changeCredit(st, p, isParcelado(f) ? CREDIT.parcelLoanPaid : CREDIT.loanPaid, `Financiamento da ${name} quitado`);
+    log(st, `${p.name} quitou o financiamento da ${name}: o imóvel não está mais alienado ao banco`, now, undefined, true);
+  }
+}
+
+/** O banco retoma o imóvel financiado: construções vendidas pela metade do custo ao dono, terreno volta ao banco, financiamento cancelado. */
+function repossess(st: GameState, p: Player, i: number, now: Date) {
+  const s = street(i);
+  const h = houses(st, i);
+  if (h > 0) {
+    const value = (h * buildPrice(st, i)) / 2;
+    applyTransfers(st, [{ from: BANK, to: p.id, amount: value, reason: `Retomada da ${s.name}: ${h === 5 ? 'hotel vendido' : `${h} casa${h > 1 ? 's' : ''} vendida${h > 1 ? 's' : ''}`} ao banco pela metade do custo`, kind: 'penhora', space: i }], now);
+  }
+  toBank(st, i);
+}
+
+/**
+ * Cobra `owed` do jogador para o banco: primeiro o dinheiro e a poupança; se faltar, PENHORA:
  * vende as construções ao banco pela metade do custo (sempre do imóvel com mais construções; empate, o mais barato),
  * depois toma os imóveis do mais barato para o mais caro, cada um pelo valor de hipoteca (já hipotecado vale 0).
  * A penhora para assim que o saldo cobre `owed`; o que sobrar do valor dos imóveis fica com o jogador.
@@ -951,6 +1151,8 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
     Object.keys(st.props)
       .map(Number)
       .filter((i) => st.props[i].owner === p.id);
+  // a poupança é dinheiro: resgata antes de penhorar
+  if (p.balance < owed) fromSavings(st, p, Math.min(savingsOf(p), owed - p.balance), `Cobrança do banco: resgate da poupança (${reason.toLowerCase()})`, now);
   let sold = 0;
   while (p.balance < owed) {
     const built = mine().filter((i) => houses(st, i) > 0);
@@ -967,11 +1169,13 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
   if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true);
   let taken = 0;
   while (p.balance < owed) {
-    const props = mine().sort((a, b) => lotPrice(st, a) - lotPrice(st, b) || a - b);
+    // imóveis financiados (já alienados ao banco) por último; ao tomar um, o financiamento é cancelado e só sobra a diferença
+    const props = mine().sort((a, b) => Number(!!finOf(st, a)) - Number(!!finOf(st, b)) || lotPrice(st, a) - lotPrice(st, b) || a - b);
     if (!props.length) break;
     const i = props[0];
     const s = street(i);
-    const value = st.props[i].mortgaged ? 0 : lotMortgage(st, i);
+    const f = finOf(st, i);
+    const value = st.props[i].mortgaged ? 0 : Math.max(0, lotMortgage(st, i) - (f ? loanOwed(f) : 0));
     toBank(st, i);
     taken += 1;
     applyTransfers(
@@ -1030,9 +1234,12 @@ function collectParcel(st: GameState, p: Player, l: Loan, np: NonNullable<Return
 
 /** Falência: imóveis e cotas vão ao credor (ao banco, ou imóveis hipotecados), o saldo também; dívida e propostas somem. */
 function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: string | undefined) {
+  // a poupança vai junto com o saldo
+  fromSavings(st, d, savingsOf(d), `Falência de ${d.name}: resgate da poupança`, now);
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== d.id) continue;
-    if (creditor === BANK || pr.mortgaged) toBank(st, Number(k));
+    // financiado (alienado ao banco) volta ao banco e o financiamento é cancelado
+    if (creditor === BANK || pr.mortgaged || finOf(st, Number(k))) toBank(st, Number(k));
     else Object.assign(pr, { owner: creditor, round: st.round }); // a casa (tier) vai junto
   }
   COMPANY_IDX.forEach((i) => {
@@ -1053,9 +1260,10 @@ function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: s
   if (st.winner) log(st, `${pname(st, st.winner)} venceu a partida!`, now, by, true);
 }
 
-/** Imóvel volta ao banco como terreno, sem casa (e sem padrão). */
+/** Imóvel volta ao banco como terreno, sem casa (e sem padrão, seguro ou financiamento). */
 function toBank(st: GameState, i: number) {
   delete st.props[i];
+  if (st.fin?.[i]) delete st.fin[i];
   if (st.lots?.[i]) delete st.lots[i];
 }
 
@@ -1227,12 +1435,17 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const s = landedSpace();
       need(s.type === 'street' && !ownedBy(st, ti.landed!), 'Este imóvel não está à venda.');
       need(!ti.resolved, 'Esta casa já foi resolvida.');
+      const price = lotPrice(state, ti.landed!);
+      if (action.finance) checkFinance(state, actor, price, action.finance);
       const list = transfersFor(state, action, actor);
       pay(st, list, now);
       st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round };
       if (st.lots) delete st.lots[ti.landed!];
       ti.resolved = true;
-      log(st, `${p.name} comprou o terreno da ${s.name} por ${money(list[0].amount)}`, now, actor);
+      if (action.finance) {
+        const f = startFinance(state, st, actor, ti.landed!, 'terreno', price, action.finance);
+        log(st, `${p.name} comprou o terreno da ${s.name} financiado: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)}`, now, actor);
+      } else log(st, `${p.name} comprou o terreno da ${s.name} por ${money(list[0].amount)}`, now, actor);
       break;
     }
     case 'skipBuy': {
@@ -1434,12 +1647,18 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(!action.tier || TIERS[action.tier], 'Escolha uma das 3 casas.');
       need(!current || !action.tier || action.tier === current, `As casas deste imóvel são ${tierName(current ?? DEFAULT_TIER)}: as próximas seguem o mesmo padrão.`);
       const tier = buildTier(state, action.idx, action.tier);
+      const price = buildPrice(state, action.idx, tier);
+      if (action.finance) checkFinance(state, actor, price, action.finance, action.idx);
       pay(st, transfersFor(state, action, actor), now);
       me.builtRound = st.round;
       const pr = st.props[action.idx];
       pr.houses += 1;
       pr.tier = tier;
-      log(st, `${me.name} construiu ${pr.houses === 5 ? 'um hotel' : pr.houses === 1 ? `a primeira casa (${tierName(tier)})` : 'uma casa'} na ${s.name}`, now, actor);
+      const what = pr.houses === 5 ? 'um hotel' : pr.houses === 1 ? `a primeira casa (${tierName(tier)})` : 'uma casa';
+      if (action.finance) {
+        const f = startFinance(state, st, actor, action.idx, 'casa', price, action.finance);
+        log(st, `${me.name} construiu ${what} na ${s.name} financiada: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)}`, now, actor);
+      } else log(st, `${me.name} construiu ${what} na ${s.name}`, now, actor);
       break;
     }
     case 'sellHouse': {
@@ -1472,8 +1691,16 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(st.irPending?.pid !== p.id, 'Entregue a declaração do IR antes de passar a vez.');
       if (action.again) {
         need(!p.jailed, 'Na detenção não se joga de novo.');
-        st.turnInfo = emptyTurn();
-        log(st, `${p.name} tirou dupla e joga de novo`, now, actor);
+        const doubles = (ti.doubles ?? 0) + 1;
+        if (doubles >= MAX_DOUBLES) {
+          sendToJail(p);
+          log(st, `${p.name} tirou ${MAX_DOUBLES} duplas seguidas e foi para a detenção`, now, actor, true);
+          nextTurn(st, now);
+          if (!st.winner) log(st, `Vez de ${currentPlayer(st).name}`, now, actor);
+          break;
+        }
+        st.turnInfo = { ...emptyTurn(), doubles };
+        log(st, `${p.name} tirou dupla e joga de novo${doubles > 1 ? ` (${doubles}ª seguida)` : ''}`, now, actor);
       } else {
         nextTurn(st, now);
         if (!st.winner) log(st, `Vez de ${currentPlayer(st).name}`, now, actor);
@@ -1651,6 +1878,44 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       }
       break;
     }
+    case 'deposit': {
+      turnOnly();
+      const amt = action.amount;
+      need(Number.isInteger(amt) && amt >= SAVINGS.step && amt % SAVINGS.step === 0, `Deposite em múltiplos de ${money(SAVINGS.step)}.`);
+      pay(st, transfersFor(state, action, actor), now);
+      me.savings = savingsOf(me) + amt;
+      log(st, `${me.name} depositou ${money(amt)} na poupança`, now, actor);
+      break;
+    }
+    case 'withdraw': {
+      const amt = action.amount;
+      const have = savingsOf(me);
+      need(have > 0, 'Sua poupança está vazia.');
+      need(Number.isInteger(amt) && amt > 0 && amt <= have, `Você tem ${money(have)} na poupança.`);
+      need(amt === have || amt % SAVINGS.step === 0, `Resgate em múltiplos de ${money(SAVINGS.step)}, ou tudo.`);
+      fromSavings(st, me, amt, 'Resgate da poupança', now);
+      log(st, `${me.name} resgatou ${money(amt)} da poupança`, now, actor);
+      break;
+    }
+    case 'insure': {
+      const block = insureBlock(state, action.idx, actor);
+      need(!block, `Não dá para contratar o seguro agora: ${block?.toLowerCase()}.`);
+      const until = insureUntilNew(state, action.idx);
+      pay(st, transfersFor(state, action, actor), now);
+      st.props[action.idx].insuredUntil = until;
+      log(st, `${me.name} contratou o seguro da ${street(action.idx).name} até a rodada ${until}`, now, actor);
+      break;
+    }
+    case 'payFin': {
+      turnOnly();
+      const f = finOf(st, action.idx);
+      need(f && f.owner === actor, 'Este imóvel não tem financiamento seu.');
+      pay(st, transfersFor(state, action, actor), now);
+      delete st.fin![action.idx];
+      changeCredit(st, me, isParcelado(f) ? CREDIT.parcelLoanPaid : CREDIT.loanPaid, `Financiamento da ${street(f.idx).name} quitado antes do fim`);
+      log(st, `${me.name} quitou o financiamento da ${street(f.idx).name}`, now, actor);
+      break;
+    }
     default: {
       const never: never = action;
       throw new RuleError(`Ação desconhecida: ${(never as Action).type}`);
@@ -1664,6 +1929,36 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
     st.prevBy = actor;
   }
   return st;
+}
+
+/** Valida um pedido de financiamento (plano, score, entrada) contra o estado antes da ação. */
+function checkFinance(st: GameState, pid: string, price: number, plan: LoanPlanId, idx?: number) {
+  need(LOAN_PLANS.some((x) => x.id === plan), 'Plano de pagamento inválido.');
+  const block = financeBlock(st, pid, price, idx);
+  need(!block, `Não dá para financiar: ${block?.charAt(0).toLowerCase()}${block?.slice(1)}.`);
+}
+
+/** Cria o financiamento de `price` − entrada no plano (mesmas taxa e parcelas do empréstimo, travadas agora). */
+function startFinance(before: GameState, st: GameState, pid: string, idx: number, what: Financing['what'], price: number, plan: LoanPlanId): Financing {
+  const o = financeOptions(before, pid, price).find((x) => x.plan === plan)!;
+  const principal = financeAmount(price);
+  const f: Financing = {
+    owner: pid,
+    idx,
+    what,
+    price,
+    entrada: financeEntrada(price),
+    principal,
+    interest: o.interest,
+    paid: 0,
+    takenRound: st.round,
+    dueRound: o.dueRound,
+    rate: o.rate,
+    plan,
+    ...(plan === 'unico' ? {} : { parcels: o.parcels, parcelsPaid: 0 }),
+  };
+  st.fin = { ...(st.fin || {}), [idx]: f };
+  return f;
 }
 
 /** Mantém o ponto de desfazer existente (ações de sala não mexem nele). */
