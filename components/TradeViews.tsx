@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { COMPANY_IDX, GROUPS, SHARE_PRICE, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { describeSide, emptySide, findPlayer, pname, sharesOf, street, tierName, tierOf, tierPrice, tradeBlock, tradeProblem, tradesOf } from '@/lib/game/rules';
+import { describeSide, emptySide, findPlayer, lotPrice, pname, sharesOf, street, tradeBlock, tradeProblem, tradesOf } from '@/lib/game/rules';
 import type { GameState, Trade, TradeSide } from '@/lib/game/types';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
@@ -11,7 +11,7 @@ import { useToast } from './Toasts';
 import { Avatar } from './ui';
 
 /** Itens de um lado da proposta, um por linha. */
-function SideItems({ side, state }: { side: TradeSide; state: GameState }) {
+function SideItems({ side }: { side: TradeSide }) {
   const rows: React.ReactNode[] = [];
   if (side.money)
     rows.push(
@@ -24,7 +24,7 @@ function SideItems({ side, state }: { side: TradeSide; state: GameState }) {
     rows.push(
       <li key={`p${i}`}>
         <span className="swatch" style={{ background: `var(${GROUPS[s.group].c})` }} />
-        {s.name} · {tierName(tierOf(state, i))}
+        {s.name} · terreno
       </li>,
     );
   }
@@ -77,11 +77,11 @@ function TradeCard({ ui, t }: { ui: GameUi; t: Trade }) {
       <div className="trade-sides">
         <div>
           <span className="label">Você recebe</span>
-          <SideItems side={youGet} state={state} />
+          <SideItems side={youGet} />
         </div>
         <div>
           <span className="label">Você dá</span>
-          <SideItems side={youGive} state={state} />
+          <SideItems side={youGive} />
         </div>
       </div>
       {problem && <div className="banner warn">Esta proposta não vale mais: {problem}</div>}
@@ -157,7 +157,7 @@ function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; 
             <span className="main">
               <b>{s.name}</b>
               <span>
-                {tierName(tierOf(state, i))} · {money(tierPrice(state, i))}
+                Terreno · {money(lotPrice(state, i))}
                 {state.props[i].mortgaged ? ' · hipotecado' : ''}
                 {block ? ' · com casas' : ''}
               </span>
@@ -225,7 +225,7 @@ export function TradeBuilder({ ui, partner, onClose }: { ui: GameUi; partner: st
       </div>
       {!problem && (
         <div className="banner info" data-testid="trade-summary">
-          Você dá {describeSide(give, state)} e recebe {describeSide(get, state)}.
+          Você dá {describeSide(give)} e recebe {describeSide(get)}.
         </div>
       )}
       {problem && (give.money || get.money || give.props.length || get.props.length || Object.values({ ...give.shares, ...get.shares }).some(Boolean)) ? <div className="banner warn">{problem}</div> : null}

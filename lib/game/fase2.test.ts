@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { BANK_RATES, CREDIT, IR, SPACES, TIERS } from './data';
 import { houseListing, listingFacts, priceLevel } from './listings';
+import { HOUSE_PHOTOS, housePhotos } from './photos';
 import {
   applyAction,
   applyNeighbourhoodChange,
@@ -18,9 +19,10 @@ import {
   newRoom,
   nextRandom,
   rentOf,
-  tierMortgage,
+  lotMortgage,
+  lotPrice,
+  buildPrice,
   tierOf,
-  tierPrice,
   tierRents,
   unmortgageCost,
 } from './rules';
@@ -68,99 +70,147 @@ function lap(income: number, st = game()): GameState {
   return act(st, 'ana', { type: 'land', idx: NOVE_JULHO });
 }
 
-describe('três opções de casa na compra', () => {
-  it('preço 80% / 100% / 130% do tabuleiro, arredondado a $ 10', () => {
-    const st = game();
-    expect([tierPrice(st, NOVE_JULHO, 'basica'), tierPrice(st, NOVE_JULHO, 'intermediaria'), tierPrice(st, NOVE_JULHO, 'alto')]).toEqual([800, 1000, 1300]);
-    expect([tierPrice(st, BRASIL, 'basica'), tierPrice(st, BRASIL, 'intermediaria'), tierPrice(st, BRASIL, 'alto')]).toEqual([600, 750, 980]);
+/** Ana parou no próprio imóvel numa rodada depois da compra (pode construir). */
+function onOwn(st: GameState, i: number): GameState {
+  st = structuredClone(st);
+  st.round += 1;
+  st.props[i].round = st.round - 1;
+  st.turn = 0;
+  st.turnInfo = { landed: null, resolved: false, news: null, feePaid: false };
+  return act(st, 'ana', { type: 'land', idx: i });
+}
+
+describe('terreno na compra e três padrões de casa na construção', () => {
+  it('compra só o terreno, pelo preço do tabuleiro, sem padrão', () => {
+    let st = act(game(), 'ana', { type: 'land', idx: NOVE_JULHO });
+    st = act(st, 'ana', { type: 'buy' });
+    expect(bal(st, 'ana')).toBe(25000 - 1000);
+    expect(st.props[NOVE_JULHO]).toEqual({ owner: 'ana', houses: 0, mortgaged: false, round: 1 });
+    expect(tierOf(st, NOVE_JULHO)).toBeNull();
+    expect(st.tx[0]).toMatchObject({ amount: 1000, kind: 'buy', reason: 'Compra do terreno da Av. 9 de Julho' });
+    expect(st.tx[0].tier).toBeUndefined();
+    expect(n(st.feed[0].text)).toBe('Ana comprou o terreno da Av. 9 de Julho por $ 1.000');
   });
 
-  it('aluguéis (sem casa, casas e hotel) escalam 80% / 100% / 140%', () => {
+  it('aluguel do terreno = "sem casa" do tabuleiro × bairro, igual para todos os padrões', () => {
+    const st = give(game(), 'ana', [NOVE_JULHO]);
+    expect(rentOf(st, NOVE_JULHO)).toBe(60);
+    expect(tierRents(st, NOVE_JULHO, 'basica')[0]).toBe(60);
+    expect(tierRents(st, NOVE_JULHO, 'alto')[0]).toBe(60);
+  });
+
+  it('custo da casa 80% / 100% / 130% do custo de construção, arredondado a $ 10', () => {
     const st = game();
-    expect(tierRents(st, NOVE_JULHO, 'basica')).toEqual([48, 240, 720, 2160, 3200, 4000]);
+    expect([buildPrice(st, NOVE_JULHO, 'basica'), buildPrice(st, NOVE_JULHO, 'intermediaria'), buildPrice(st, NOVE_JULHO, 'alto')]).toEqual([400, 500, 650]);
+    expect([buildPrice(st, PAULISTA, 'basica'), buildPrice(st, PAULISTA, 'intermediaria'), buildPrice(st, PAULISTA, 'alto')]).toEqual([800, 1000, 1300]);
+    expect(lotPrice(st, BRASIL)).toBe(750);
+  });
+
+  it('aluguéis com casas e hotel escalam 80% / 100% / 140%', () => {
+    const st = game();
+    expect(tierRents(st, NOVE_JULHO, 'basica')).toEqual([60, 240, 720, 2160, 3200, 4000]);
     expect(tierRents(st, NOVE_JULHO, 'intermediaria')).toEqual([60, 300, 900, 2700, 4000, 5000]);
-    expect(tierRents(st, NOVE_JULHO, 'alto')).toEqual([84, 420, 1260, 3780, 5600, 7000]);
+    expect(tierRents(st, NOVE_JULHO, 'alto')).toEqual([60, 420, 1260, 3780, 5600, 7000]);
     const built = give(st, 'ana', [NOVE_JULHO], 'alto', 3);
     expect(rentOf(built, NOVE_JULHO)).toBe(3780);
     built.props[NOVE_JULHO].houses = 5;
     expect(rentOf(built, NOVE_JULHO)).toBe(7000);
   });
 
-  it('compra escolhendo o Alto padrão: paga 130%, guarda a casa e o comprovante mostra', () => {
-    let st = act(game(), 'ana', { type: 'land', idx: NOVE_JULHO });
-    st = act(st, 'ana', { type: 'buy', tier: 'alto' });
-    expect(bal(st, 'ana')).toBe(25000 - 1300);
-    expect(st.props[NOVE_JULHO]).toMatchObject({ owner: 'ana', tier: 'alto' });
-    expect(st.tx[0]).toMatchObject({ amount: 1300, kind: 'buy', tier: 'alto', reason: 'Compra da Av. 9 de Julho · casa Alto padrão' });
-    expect(n(st.feed[0].text)).toBe('Ana comprou Av. 9 de Julho (casa Alto padrão) por $ 1.300');
+  it('a primeira casa escolhe o padrão; as próximas seguem o mesmo, cada uma pelo custo do padrão', () => {
+    let st = onOwn(give(game(), 'ana', [NOVE_JULHO]), NOVE_JULHO);
+    st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO, tier: 'alto' });
+    expect(st.props[NOVE_JULHO]).toMatchObject({ houses: 1, tier: 'alto' });
+    expect(bal(st, 'ana')).toBe(25000 - 650);
+    expect(st.tx[0]).toMatchObject({ amount: 650, kind: 'build', tier: 'alto', reason: 'Primeira casa Alto padrão na Av. 9 de Julho' });
+    expect(rentOf(st, NOVE_JULHO)).toBe(420);
+    // próxima rodada: mais uma casa do mesmo padrão; outro padrão é recusado
+    let next = onOwn(st, NOVE_JULHO);
+    expect(() => act(next, 'ana', { type: 'build', idx: NOVE_JULHO, tier: 'basica' })).toThrow(/mesmo padrão/);
+    next = act(next, 'ana', { type: 'build', idx: NOVE_JULHO });
+    expect(next.props[NOVE_JULHO]).toMatchObject({ houses: 2, tier: 'alto' });
+    expect(next.tx[0].amount).toBe(650);
   });
 
-  it('sem escolha, compra a Intermediária pelo preço do tabuleiro', () => {
-    const st = act(act(game(), 'ana', { type: 'land', idx: BRASIL }), 'ana', { type: 'buy' });
-    expect(bal(st, 'ana')).toBe(25000 - 750);
-    expect(tierOf(st, BRASIL)).toBe('intermediaria');
+  it('não constrói no terreno comprado nesta rodada', () => {
+    let st = act(act(game(), 'ana', { type: 'land', idx: NOVE_JULHO }), 'ana', { type: 'buy' });
+    expect(() => act(st, 'ana', { type: 'build', idx: NOVE_JULHO, tier: 'basica' })).toThrow(/comprado nesta rodada/);
+    st = onOwn(st, NOVE_JULHO);
+    expect(act(st, 'ana', { type: 'build', idx: NOVE_JULHO, tier: 'basica' }).tx[0].amount).toBe(400);
   });
 
-  it('o outro jogador paga o aluguel da casa escolhida', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO], 'alto');
+  it('vender todas as casas volta a ser terreno, sem padrão; vende pela metade do custo do padrão', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO], 'alto', 2);
+    st = act(st, 'ana', { type: 'sellHouse', idx: NOVE_JULHO });
+    expect(st.tx[0].amount).toBe(325);
+    expect(st.props[NOVE_JULHO]).toMatchObject({ houses: 1, tier: 'alto' });
+    st = act(st, 'ana', { type: 'sellHouse', idx: NOVE_JULHO });
+    expect(st.props[NOVE_JULHO].houses).toBe(0);
+    expect(st.props[NOVE_JULHO].tier).toBeUndefined();
+    expect(tierOf(st, NOVE_JULHO)).toBeNull();
+  });
+
+  it('o outro jogador paga o aluguel da casa do padrão', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
     st.turn = 1;
     st = act(act(st, 'beto', { type: 'land', idx: NOVE_JULHO }), 'beto', { type: 'payRent' });
-    expect(bal(st, 'beto')).toBe(25000 - 84);
-    expect(bal(st, 'ana')).toBe(25000 + 84);
-    expect(st.tx[0]).toMatchObject({ amount: 84, kind: 'rent', tier: 'alto', reason: 'Aluguel da Av. 9 de Julho (Alto padrão)' });
+    expect(bal(st, 'beto')).toBe(25000 - 420);
+    expect(st.tx[0]).toMatchObject({ amount: 420, kind: 'rent', tier: 'alto', reason: 'Aluguel da Av. 9 de Julho (casa Alto padrão)' });
+    let lot = give(game(), 'ana', [NOVE_JULHO]);
+    lot.turn = 1;
+    lot = act(act(lot, 'beto', { type: 'land', idx: NOVE_JULHO }), 'beto', { type: 'payRent' });
+    expect(lot.tx[0]).toMatchObject({ amount: 60, reason: 'Aluguel da Av. 9 de Julho (terreno)' });
   });
 
-  it('hipoteca acompanha o preço da casa e fica travada ao hipotecar', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO], 'alto');
-    expect(tierMortgage(st, NOVE_JULHO)).toBe(650);
+  it('hipoteca do terreno = tabuleiro × bairro, travada ao hipotecar', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO]);
+    expect(lotMortgage(st, NOVE_JULHO)).toBe(500);
     st = act(st, 'ana', { type: 'mortgage', idx: NOVE_JULHO });
-    expect(bal(st, 'ana')).toBe(25650);
-    expect(st.props[NOVE_JULHO].mortgageValue).toBe(650);
+    expect(bal(st, 'ana')).toBe(25500);
+    expect(st.props[NOVE_JULHO].mortgageValue).toBe(500);
     st = applyNeighbourhoodChange(st, 'verde', 50, now);
-    expect(unmortgageCost(st, NOVE_JULHO)).toBe(780); // 650 + 20%, mesmo depois da valorização
-    st = act(st, 'ana', { type: 'unmortgage', idx: NOVE_JULHO });
-    expect(bal(st, 'ana')).toBe(25650 - 780);
-    expect(st.props[NOVE_JULHO].mortgageValue).toBeUndefined();
+    expect(lotMortgage(st, NOVE_JULHO)).toBe(750);
+    expect(unmortgageCost(st, NOVE_JULHO)).toBe(600); // 500 + 20%, mesmo depois da valorização
   });
 
-  it('patrimônio usa o preço da casa', () => {
-    const st = give(game(), 'ana', [NOVE_JULHO], 'basica');
-    expect(netWorth(st, pl(st, 'ana'))).toBe(25800);
+  it('patrimônio = terreno + casas pelo custo do padrão', () => {
+    const lot = give(game(), 'ana', [NOVE_JULHO]);
+    expect(netWorth(lot, pl(lot, 'ana'))).toBe(26000);
+    const st = give(game(), 'ana', [NOVE_JULHO], 'basica', 2);
+    expect(netWorth(st, pl(st, 'ana'))).toBe(25000 + 1000 + 2 * 400);
   });
 
-  it('negociação mantém a casa e o resumo mostra o nível', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO], 'alto');
+  it('negociação leva o terreno (com casas não entra)', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO]);
     st = act(st, 'ana', { type: 'proposeTrade', to: 'beto', give: { money: 0, props: [NOVE_JULHO], shares: {} }, get: { money: 100, props: [], shares: {} } });
     st = act(st, 'beto', { type: 'acceptTrade', id: st.trades![0].id });
-    expect(st.props[NOVE_JULHO]).toMatchObject({ owner: 'beto', tier: 'alto' });
-    expect(st.tx[0].reason).toContain('Av. 9 de Julho (Alto padrão)');
+    expect(st.props[NOVE_JULHO]).toMatchObject({ owner: 'beto', houses: 0 });
+    const built = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
+    expect(() => act(built, 'ana', { type: 'proposeTrade', to: 'beto', give: { money: 0, props: [NOVE_JULHO], shares: {} }, get: { money: 100, props: [], shares: {} } })).toThrow();
   });
 
-  it('penhora devolve o terreno ao banco com a casa: o próximo comprador leva a mesma casa', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO], 'alto');
-    st.bankRate = 0.1;
+  it('penhora vende casas pela metade do custo do padrão e o terreno volta ao banco sem casa', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
+    st.bankRate = 0.02; // pagamento único: +8 pp = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(st.round === 5 && st.turn === 1)) st = pass(st);
-    st.players[0].balance = 500; // 500 + 650 da penhora cobre os 1.100
-    st = pass(st); // vence: toma a 9 de Julho pelo valor de hipoteca do Alto padrão
+    st.players[0].balance = 500; // 500 + 325 da casa + 500 do terreno cobre os 1.100
+    st = pass(st);
+    expect(st.tx.filter((t) => t.kind === 'penhora').map((t) => t.amount).reverse()).toEqual([325, 500]);
     expect(st.props[NOVE_JULHO]).toBeUndefined();
-    expect(st.tx.find((t) => t.kind === 'penhora')!.amount).toBe(650);
-    expect(st.lots![NOVE_JULHO]).toBe('alto');
-    expect(tierOf(st, NOVE_JULHO)).toBe('alto');
-    st.turn = 1; // Beto cai no terreno
+    expect(st.lots?.[NOVE_JULHO]).toBeUndefined();
+    expect(tierOf(st, NOVE_JULHO)).toBeNull();
+    st.turn = 1; // Beto cai no terreno: compra só o terreno, pelo preço do tabuleiro
     st.turnInfo = { landed: null, resolved: false, news: null, feePaid: false };
-    st = act(st, 'beto', { type: 'land', idx: NOVE_JULHO });
-    expect(() => act(st, 'beto', { type: 'buy', tier: 'basica' })).toThrow(/já tem uma casa Alto padrão/);
-    const bought = act(st, 'beto', { type: 'buy' });
-    expect(bought.props[NOVE_JULHO].tier).toBe('alto');
-    expect(bought.tx[0].amount).toBe(1300);
-    expect(bought.lots![NOVE_JULHO]).toBeUndefined();
+    st = act(act(st, 'beto', { type: 'land', idx: NOVE_JULHO }), 'beto', { type: 'buy' });
+    expect(st.tx[0].amount).toBe(1000);
+    expect(st.props[NOVE_JULHO].tier).toBeUndefined();
   });
 
-  it('falência para outro jogador passa o imóvel com a casa', () => {
-    let st = give(game(), 'ana', [NOVE_JULHO], 'basica');
+  it('falência para outro jogador passa o imóvel com as casas e o padrão', () => {
+    let st = give(game(), 'ana', [NOVE_JULHO], 'basica', 2);
     st = act(st, 'ana', { type: 'bankrupt', debtor: 'ana', creditor: 'beto' });
-    expect(st.props[NOVE_JULHO]).toMatchObject({ owner: 'beto', tier: 'basica' });
+    expect(st.props[NOVE_JULHO]).toMatchObject({ owner: 'beto', tier: 'basica', houses: 2 });
   });
 
   it('anúncios determinísticos, diferentes por nível e de acordo com o preço do bairro', () => {
@@ -177,19 +227,33 @@ describe('três opções de casa na compra', () => {
     }
     // varia entre bairros
     expect(new Set(streets.map((i) => houseListing(i, 'intermediaria').title)).size).toBeGreaterThan(4);
-    expect(listingFacts({ kind: 'sobrado', title: '', area: 120, rooms: 3, suites: 1, vagas: 2 })).toBe('120 m² · 3 quartos (1 suíte) · 2 vagas');
+    expect(listingFacts({ kind: 'sobrado', title: '', area: 120, rooms: 3, suites: 1, vagas: 2, baths: 2, extras: [] })).toBe('120 m² · 3 quartos (1 suíte) · 2 vagas');
     expect(houseListing(35, 'alto').perk).toBe('vista para o mar'); // Av. Vieira Souto
+    expect(houseListing(35, 'alto').extras).toContain('vista para o mar');
+    for (const i of streets) for (const t of ['basica', 'intermediaria', 'alto'] as TierId[]) expect(houseListing(i, t).baths).toBeGreaterThanOrEqual(1);
+  });
+
+  it('fotos do anúncio: escolha determinística por imóvel e padrão; sem fotos, lista vazia (usa a ilustração)', () => {
+    const list = ['/a.jpg', '/b.jpg', '/c.jpg'];
+    const a = housePhotos(NOVE_JULHO, 'alto', list);
+    expect(housePhotos(NOVE_JULHO, 'alto', list)).toEqual(a);
+    expect([...a].sort()).toEqual(list);
+    const covers = new Set(SPACES.map((s, i) => (s.type === 'street' ? housePhotos(i, 'alto', list)[0] : null)).filter(Boolean));
+    expect(covers.size).toBeGreaterThan(1); // imóveis diferentes começam em fotos diferentes
+    expect(housePhotos(NOVE_JULHO, 'basica', [])).toEqual([]);
+    expect(housePhotos(NOVE_JULHO, 'intermediaria')).toEqual(HOUSE_PHOTOS.intermediaria);
   });
 });
 
 describe('valorização do bairro', () => {
   it('multiplicador começa em 1,0 e escala preço e aluguéis da casa', () => {
-    const st = give(game(), 'ana', [NOVE_JULHO], 'alto');
+    const st = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
     expect(hoodMult(st, 'verde')).toBe(1);
     const up = applyNeighbourhoodChange(st, 'verde', 10, now);
     expect(hoodMult(up, 'verde')).toBe(1.1);
-    expect(tierPrice(up, NOVE_JULHO)).toBe(1430);
-    expect(rentOf(up, NOVE_JULHO)).toBe(92); // 60 × 1,4 × 1,1 = 92,4
+    expect(lotPrice(up, NOVE_JULHO)).toBe(1100);
+    expect(buildPrice(up, NOVE_JULHO)).toBe(720); // 500 × 1,3 × 1,1 = 715
+    expect(rentOf(up, NOVE_JULHO)).toBe(462); // 300 × 1,4 × 1,1
     expect(tierRents(up, NOVE_JULHO, 'intermediaria')[5]).toBe(5500);
     expect(hoodMult(up, 'roxo')).toBe(1);
     expect(up.feed[0]).toMatchObject({ text: 'Bairro verde valorizou 10%: preços e aluguéis sobem', important: true });
@@ -211,8 +275,8 @@ describe('valorização do bairro', () => {
 
   it('compra num bairro valorizado custa mais', () => {
     let st = applyNeighbourhoodChange(game(), 'verde', 20, now);
-    st = act(act(st, 'ana', { type: 'land', idx: NOVE_JULHO }), 'ana', { type: 'buy', tier: 'basica' });
-    expect(st.tx[0].amount).toBe(960);
+    st = act(act(st, 'ana', { type: 'land', idx: NOVE_JULHO }), 'ana', { type: 'buy' });
+    expect(st.tx[0].amount).toBe(1200);
   });
 });
 
@@ -364,7 +428,7 @@ describe('score de crédito', () => {
 
   it('quitar o empréstimo +80; pagamento parcial +10 (uma vez por rodada, a partir de $ 500)', () => {
     let st = game();
-    st.bankRate = 0.1;
+    st.bankRate = 0.02; // pagamento único: +8 pp = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     st = act(st, 'ana', { type: 'payLoan', amount: 100 });
     expect(creditOf(pl(st, 'ana'))).toBe(500);
@@ -385,7 +449,7 @@ describe('score de crédito', () => {
     expect(creditOf(pl(ok, 'ana'))).toBe(580);
 
     let bad = give(game(), 'ana', [PAULISTA]);
-    bad.bankRate = 0.1;
+    bad.bankRate = 0.02;
     bad = act(bad, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(bad.round === 5 && bad.turn === 1)) bad = pass(bad);
     bad.players[0].balance = 500;
@@ -442,7 +506,7 @@ describe('juros sorteados por rodada', () => {
 
   it('a taxa trava ao pegar; empréstimos existentes não mudam com a rodada', () => {
     let st = game();
-    st.bankRate = 0.12;
+    st.bankRate = 0.04; // pagamento único: +8 pp = 12%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
     for (let k = 0; k < 4; k++) st = pass(st);
@@ -473,6 +537,26 @@ describe('juros sorteados por rodada', () => {
 });
 
 describe('salas antigas', () => {
+  it('padrão guardado com 0 casas é terreno; com casas mantém o padrão; casas sem padrão são Intermediária', () => {
+    const st = give(game(), 'ana', [NOVE_JULHO, BRASIL, PAULISTA], 'alto');
+    st.props[BRASIL].houses = 2;
+    st.props[PAULISTA] = { owner: 'ana', houses: 1, mortgaged: false };
+    st.lots = { 4: 'alto' }; // terreno que "voltou com casa" na regra antiga: hoje é só terreno
+    expect(tierOf(st, NOVE_JULHO)).toBeNull();
+    expect(rentOf(st, NOVE_JULHO)).toBe(60);
+    expect(tierOf(st, BRASIL)).toBe('alto');
+    expect(tierOf(st, PAULISTA)).toBe('intermediaria');
+    expect(netWorth(st, pl(st, 'ana'))).toBe(25000 + 1000 + 750 + 2 * 650 + 1600 + 1000);
+    // ao construir a primeira casa no terreno antigo, escolhe o padrão de novo
+    const own = onOwn(st, NOVE_JULHO);
+    expect(act(own, 'ana', { type: 'build', idx: NOVE_JULHO, tier: 'basica' }).props[NOVE_JULHO].tier).toBe('basica');
+    const lot = structuredClone(st);
+    lot.turn = 1;
+    const bought = act(act(lot, 'beto', { type: 'land', idx: 4 }), 'beto', { type: 'buy' });
+    expect(bought.tx[0].amount).toBe(600);
+    expect(tierOf(bought, 4)).toBeNull();
+  });
+
   it('sem os campos novos: Intermediária, multiplicador 1, score 500, taxa de 10%, IR funciona', () => {
     const st = give(game(), 'ana', [NOVE_JULHO]);
     delete st.hood;
@@ -487,9 +571,9 @@ describe('salas antigas', () => {
       delete p.year;
       delete p.creditLog;
     }
-    expect(tierOf(st, NOVE_JULHO)).toBe('intermediaria');
+    expect(tierOf(st, NOVE_JULHO)).toBeNull();
     expect(rentOf(st, NOVE_JULHO)).toBe(60);
-    expect(tierPrice(st, BRASIL)).toBe(750);
+    expect(lotPrice(st, BRASIL)).toBe(750);
     expect(bankRate(st)).toBe(0.1);
     expect(loanRateFor(st, 'ana')).toBe(0.1);
     expect(loanLimit(st, 'ana')).toBe(13000);

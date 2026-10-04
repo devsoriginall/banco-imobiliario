@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, debtOf, describeSide, findPlayer, loanRoundsLeft, pname, RuleError, tradesOf } from '@/lib/game/rules';
+import { currentPlayer, debtOf, describeSide, findPlayer, isParcelado, loanOf, loanRoundsLeft, pname, RuleError, tradesOf } from '@/lib/game/rules';
 import type { Action, GameState, Trade, Tx } from '@/lib/game/types';
 import { getStore, isLocalMode, type RoomSnapshot } from '@/lib/room';
 import { getIdentity, saveName, type Identity } from '@/lib/room/identity';
@@ -95,13 +95,13 @@ export function Room({ code }: { code: string }) {
       toast(d.title, d.text);
     }
     for (const f of [...st.feed].reverse()) {
-      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast(f.text.includes('taxa do banco') ? 'Juros do banco' : 'Na mesa', f.text);
+      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast(f.text.includes('taxa do banco') ? 'Juros do banco' : f.text.startsWith('Parcela ') ? 'Parcela do empréstimo' : 'Na mesa', f.text);
     }
     // Negociação: proposta nova para mim, fechada, recusada ou cancelada
     const nowTrades = tradesOf(st);
     for (const t of nowTrades)
       if (t.to === me.id && !lastTrades.current.some((x) => x.id === t.id))
-        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give, st)} e pede ${describeSide(t.get, st)}.`);
+        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give)} e pede ${describeSide(t.get)}.`);
     for (const t of lastTrades.current) {
       if (nowTrades.some((x) => x.id === t.id) || myTradeActs.current.has(t.id)) continue;
       const deal = st.tx.filter((x) => x.ref === t.id).sort((a, b) => a.seq - b.seq);
@@ -116,7 +116,8 @@ export function Room({ code }: { code: string }) {
     const turnId = st.phase === 'playing' && !st.winner ? currentPlayer(st)?.id ?? null : null;
     if (turnId === me.id && lastTurn.current !== me.id && findPlayer(st, me.id)) {
       toast('Sua vez', 'Jogue os dados e toque na casa onde parou.');
-      if (loanRoundsLeft(st, me.id) === 1) toast('Empréstimo vence na próxima rodada', `Pague ${money(debtOf(st, me.id))} na aba Banco até a sua próxima vez, ou o banco cobra e faz a penhora.`);
+      const myLoan = loanOf(st, me.id);
+      if (myLoan && !isParcelado(myLoan) && loanRoundsLeft(st, me.id) === 1) toast('Empréstimo vence na próxima rodada', `Pague ${money(debtOf(st, me.id))} na aba Banco até a sua próxima vez, ou o banco cobra e faz a penhora.`);
     }
     lastSeen.current = Math.max(lastSeen.current, st.txCount);
     lastFeed.current = Math.max(lastFeed.current ?? 0, st.feedCount);

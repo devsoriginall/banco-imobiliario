@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, equity, findPlayer, incomeOf, loanOf, loanOwed, loanRoundsLeft } from '@/lib/game/rules';
+import { currentPlayer, equity, findPlayer, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextParcel } from '@/lib/game/rules';
 import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
@@ -204,6 +204,15 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
 function DebtLine({ state, me }: { state: GameState; me: string }) {
   const loan = loanOf(state, me);
   if (!loan) return null;
+  const next = nextParcel(loan);
+  if (next) {
+    const short = (findPlayer(state, me)?.balance ?? 0) < next.amount;
+    return (
+      <div className={`debt${short ? ' urgent' : ''}`} data-testid="wallet-debt">
+        Parcela {money(next.amount)} na próxima vez
+      </div>
+    );
+  }
   const left = loanRoundsLeft(state, me)!;
   return (
     <div className={`debt${left <= 1 ? ' urgent' : ''}`} data-testid="wallet-debt">

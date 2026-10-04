@@ -12,15 +12,15 @@ import {
   hoodLabel,
   hoodMult,
   houses,
-  lotTier,
+  buildPrice,
+  lotMortgage,
+  lotPrice,
   pname,
   rentOf,
   sharesOf,
   street,
-  tierMortgage,
   tierName,
   tierOf,
-  tierPrice,
   tierRents,
   unmortgageCost,
 } from '@/lib/game/rules';
@@ -58,13 +58,13 @@ export function PropsView({ ui }: { ui: GameUi }) {
                 if (canSellHouse(state, i, me))
                   acts.push(
                     <button key="s" className="btn small" onClick={() => ui.runWithReceipt({ type: 'sellHouse', idx: i })}>
-                      Vender {h === 5 ? 'hotel' : 'casa'} +{money(s.build / 2)}
+                      Vender {h === 5 ? 'hotel' : 'casa'} +{money(buildPrice(state, i) / 2)}
                     </button>,
                   );
                 if (canMortgage(state, i, me))
                   acts.push(
                     <button key="m" className="btn small" onClick={() => ui.runWithReceipt({ type: 'mortgage', idx: i })}>
-                      Hipotecar +{money(tierMortgage(state, i))}
+                      Hipotecar +{money(lotMortgage(state, i))}
                     </button>,
                   );
                 if (canUnmortgage(state, i, me))
@@ -79,15 +79,15 @@ export function PropsView({ ui }: { ui: GameUi }) {
                   <div className="main">
                     <b>{s.name}</b>
                     <span>
-                      {pr || lotTier(state, i)
-                        ? `Casa ${i} · ${pr ? '' : `terreno com casa ${tierName(tierOf(state, i))} · `}${money(tierPrice(state, i))} · aluguel atual ${money(pr ? rentOf(state, i) : tierRents(state, i)[0])}`
-                        : `Casa ${i} · 3 casas de ${money(tierPrice(state, i, 'basica'))} a ${money(tierPrice(state, i, 'alto'))}`}
+                      {pr
+                        ? `Casa ${i} · terreno ${money(lotPrice(state, i))} · aluguel atual ${money(rentOf(state, i))}`
+                        : `Casa ${i} · terreno ${money(lotPrice(state, i))} · aluguel ${money(tierRents(state, i)[0])}`}
                     </span>
                     <div className="row" style={{ gap: 6, marginTop: 4 }}>
                       {!pr ? <span className="pill ok">À venda</span> : <span className="pill info">{pr.owner === me ? 'Seu' : pname(state, pr.owner)}</span>}
                       {pr && (
                         <span className="pill tier-pill" data-testid={`tier-${i}`}>
-                          {tierName(tierOf(state, i))}
+                          {tierOf(state, i) ? `Casa ${tierName(tierOf(state, i)!)}` : 'Terreno'}
                         </span>
                       )}
                       {pr?.mortgaged && <span className="pill warn">Hipotecado</span>}
