@@ -2,10 +2,10 @@
 import { useState } from 'react';
 import { BANK_RATES, CREDIT, CREDIT_BANDS, FINANCE, LOAN, LOAN_PLANS, SAVINGS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, pct, planInfo, savingsOf, savingsRate, savingsYield, street, tradesOf } from '@/lib/game/rules';
+import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, planInfo, savingsOf, savingsRate, savingsYield, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
 import type { Financing, Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
-import { PlanTable } from './Finance';
+import { PARCEL_RULE, planSummary, PlanTable } from './Finance';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
@@ -188,8 +188,8 @@ function FinancingItem({ ui, f, myTurn }: { ui: GameUi; f: Financing; myTurn: bo
       </div>
       <div className={`banner ${short ? 'bad' : 'info'}`}>
         {next
-          ? `Próxima parcela (${next.n}/${next.of}): ${money(next.amount)}, no início da sua vez${next.round > state.round ? ` na rodada ${next.round}` : ''}.`
-          : `Pagamento único de ${money(owed)} no início da sua vez na rodada ${f.dueRound}.`}
+          ? `Próxima parcela (${next.n}/${next.of}): ${money(next.amount)}, ${whenText(next.round, state.round)}.`
+          : `Pagamento único de ${money(owed)}, ${whenText(f.dueRound, state.round)}.`}
       </div>
       {myTurn && (
         <button className="btn" disabled={p.balance < owed} onClick={() => ui.pix({ type: 'payFin', idx: f.idx }, 'Quitar financiamento')}>
@@ -198,6 +198,11 @@ function FinancingItem({ ui, f, myTurn }: { ui: GameUi; f: Financing; myTurn: bo
       )}
     </div>
   );
+}
+
+/** Quando cai uma cobrança, ex.: "na rodada 7 (início do 1º semestre do ano 2)". */
+function whenText(round: number, now: number): string {
+  return round <= now ? `no início da sua próxima vez (${semesterText(round)})` : `na rodada ${round} (${semesterText(round)})`;
 }
 
 const pp = (r: number) => (r === 0 ? '0 pp' : `${r > 0 ? '+' : '−'}${Math.round(Math.abs(r) * 100)} pp`);
@@ -325,8 +330,8 @@ function LoanCard({ ui }: { ui: GameUi }) {
             <span className="num">{money(loan.paid)}</span>
           </div>
         </div>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Vence no início da sua vez na rodada {loan.dueRound}. Aí o banco cobra do seu saldo; se faltar, faz a penhora: vende suas casas pela metade e toma seus imóveis, do mais barato para o mais caro, pelo valor de hipoteca.
+        <p className="muted" style={{ margin: 0, fontSize: 13 }} data-testid="loan-due">
+          Vence {whenText(loan.dueRound, state.round)}, no início da sua vez naquela rodada. Aí o banco cobra do seu saldo; se faltar, faz a penhora: vende suas casas pela metade e toma seus imóveis, do mais barato para o mais caro, pelo valor de hipoteca.
         </p>
         {left <= 1 && <div className="banner bad">Falta 1 rodada. Pague até a sua próxima vez para evitar a penhora.</div>}
         {myTurn ? (
@@ -374,7 +379,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
       </span>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
         Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Escolha o valor e depois o plano: parcelado em 2x a 5x
-        (uma parcela cobrada no início de cada vez sua, a partir da próxima rodada) ou pagamento único em {rodadas(LOAN.rounds)}. Cada plano tem a sua taxa (taxa da rodada {pct(bankRate(state))} + adicional do plano
+        ({PARCEL_RULE}) ou pagamento único no {LOAN.unicoSemesters}º semestre. Cada plano tem a sua taxa (taxa da rodada {pct(bankRate(state))} + adicional do plano
         {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''}), juros sobre o valor, travados ao pegar. Um empréstimo por vez.
       </p>
       <div className="kv">
@@ -421,9 +426,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
           <PlanTable options={options} plan={plan} onPick={setPlan} label="Simulação do empréstimo" testId="loan-sim" />
           {chosen && (
             <p className="muted" style={{ margin: 0, fontSize: 13 }} data-testid="loan-plan-summary">
-              {chosen.plan === 'unico'
-                ? `Paga ${money(chosen.total)} de uma vez no início da sua vez na rodada ${chosen.dueRound}. Dá para pagar antes, inteiro ou em partes.`
-                : `${chosen.parcels.length} parcelas cobradas sozinhas no início da sua vez, das rodadas ${state.round + 1} a ${chosen.dueRound}. Dá para quitar o saldo antes, sem desconto de juros.`}
+              {planSummary(chosen, chosen.plan === 'unico' ? 'Dá para pagar antes, inteiro ou em partes.' : 'Dá para quitar o saldo antes, sem desconto de juros.')}
             </p>
           )}
           <button className="btn primary" disabled={!chosen} onClick={() => chosen && ui.runWithReceipt({ type: 'takeLoan', amount: q, plan: chosen.plan }, 'Empréstimo liberado')}>
@@ -471,7 +474,7 @@ function ParcelLoanCard({ ui, loan, myTurn }: { ui: GameUi; loan: Loan; myTurn: 
       {next && (
         <div className={`banner ${short ? 'bad' : 'info'}`} data-testid="loan-next">
           <span>
-            Próxima parcela ({next.n}/{next.of}): <b className="num">{money(next.amount)}</b>, cobrada no início da sua vez{next.round > state.round ? ` na rodada ${next.round}` : ''}.
+            Próxima parcela ({next.n}/{next.of}): <b className="num">{money(next.amount)}</b>, {whenText(next.round, state.round)}.
             {short ? ' Seu saldo não cobre: se faltar, o banco faz a penhora no valor da parcela.' : ''}
           </span>
         </div>
@@ -494,14 +497,14 @@ function ParcelLoanCard({ ui, loan, myTurn }: { ui: GameUi; loan: Loan; myTurn: 
         {loan.parcels!.map((v, k) => (
           <li key={k} className={k < paidN ? 'paid' : k === paidN ? 'next' : ''}>
             <span>
-              Parcela {k + 1}/{total} · rodada {loan.takenRound + k + 1}
+              Parcela {k + 1}/{total} · rodada {parcelRound(loan, k)} ({semesterOf(parcelRound(loan, k))}º sem. do ano {yearOf(parcelRound(loan, k))})
             </span>
             <b className="num">{k < paidN ? `${money(v)} paga` : money(v)}</b>
           </li>
         ))}
       </ol>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        As parcelas são cobradas sozinhas. Se o saldo não cobrir, o banco faz a penhora só no valor da parcela (vende casas pela metade do custo e toma imóveis, do mais barato para o mais caro, pelo valor de hipoteca); se nem
+        Uma parcela por semestre (a cada 3 rodadas), cobrada sozinha no início da sua vez na rodada que abre o semestre. Se o saldo não cobrir, o banco faz a penhora só no valor da parcela (vende casas pela metade do custo e toma imóveis, do mais barato para o mais caro, pelo valor de hipoteca); se nem
         assim cobrir, falência.
       </p>
       {myTurn ? (

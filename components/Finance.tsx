@@ -1,13 +1,21 @@
 'use client';
 // Tabela dos planos (empréstimo e financiamento) e a escolha do financiamento na compra do terreno ou da casa.
 import { useState } from 'react';
-import { FINANCE, LOAN } from '@/lib/game/data';
+import { CALENDAR, FINANCE, LOAN } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { financeAmount, financeBlock, financeEntrada, financeOptions, pct, type LoanOption } from '@/lib/game/rules';
+import { financeAmount, financeBlock, financeEntrada, financeOptions, pct, semesterText, type LoanOption } from '@/lib/game/rules';
 import type { Action, LoanPlanId } from '@/lib/game/types';
 import type { GameUi } from './Game';
 
-const rodadas = (n: number) => `${n} rodada${n === 1 ? '' : 's'}`;
+/** Regra das parcelas em uma frase (empréstimo e financiamento). */
+export const PARCEL_RULE = `1 parcela por semestre (a cada ${CALENDAR.roundsPerSemester} rodadas), cobrada sozinha no início da sua vez na rodada que abre o semestre; a primeira só no semestre seguinte`;
+
+/** Resumo do plano escolhido: quando cada cobrança cai no calendário. */
+export function planSummary(o: LoanOption, early: string): string {
+  if (o.plan === 'unico') return `Paga ${money(o.total)} de uma vez na rodada ${o.dueRound} (${semesterText(o.dueRound)}). ${early}`;
+  const list = o.rounds.length > 2 ? `${o.rounds.slice(0, -1).join(', ')} e ${o.rounds[o.rounds.length - 1]}` : o.rounds.join(' e ');
+  return `${o.parcels.length} parcelas semestrais, nas rodadas ${list}: a 1ª na rodada ${o.firstRound} (${semesterText(o.firstRound)}). ${early}`;
+}
 
 /** Simulação dos 5 planos (taxa, parcela e total), como botões de escolha. */
 export function PlanTable({ options, plan, onPick, label, testId }: { options: LoanOption[]; plan: LoanPlanId | null; onPick: (p: LoanPlanId) => void; label: string; testId: string }) {
@@ -30,11 +38,11 @@ export function PlanTable({ options, plan, onPick, label, testId }: { options: L
             aria-checked={plan === o.plan}
             data-plan={o.plan}
             onClick={() => onPick(o.plan)}
-            aria-label={`${o.name}: taxa ${pct(o.rate)}, ${unico ? `paga ${money(o.total)} em ${rodadas(LOAN.rounds)}` : `${o.parcels.length} parcelas de ${money(o.parcels[0])}`}, total ${money(o.total)}`}
+            aria-label={`${o.name}: taxa ${pct(o.rate)}, ${unico ? `paga ${money(o.total)} na rodada ${o.dueRound}, no ${LOAN.unicoSemesters}º semestre` : `${o.parcels.length} parcelas semestrais de ${money(o.parcels[0])}`}, total ${money(o.total)}`}
           >
             <span className="plan">
               <b>{unico ? 'Único' : o.short}</b>
-              <small>{unico ? `em ${rodadas(LOAN.rounds)}` : 'parcelado'}</small>
+              <small>{unico ? `no ${LOAN.unicoSemesters}º semestre` : `${o.parcels.length} semestres`}</small>
             </span>
             <span className="num">{pct(o.rate)}</span>
             <span className="num">
@@ -83,7 +91,7 @@ export function FinanceChooser({ ui, price, idx, what, action, onCancel }: { ui:
         </div>
       </div>
       <span className="muted" style={{ fontSize: 13 }}>
-        Mesmos planos e taxas do empréstimo, sem usar o seu limite. Enquanto não quitar, o imóvel fica alienado ao banco: não dá para negociar nem hipotecar. Se uma parcela não for paga, o banco retoma este imóvel.
+        Mesmos planos e taxas do empréstimo, sem usar o seu limite: {PARCEL_RULE}. Enquanto não quitar, o imóvel fica alienado ao banco: não dá para negociar nem hipotecar. Se uma parcela não for paga, o banco retoma este imóvel.
       </span>
       {block ? (
         <div className="banner warn">{block}.</div>
@@ -92,9 +100,7 @@ export function FinanceChooser({ ui, price, idx, what, action, onCancel }: { ui:
           <PlanTable options={options} plan={plan} onPick={setPlan} label="Planos do financiamento" testId="finance-sim" />
           {chosen && (
             <p className="muted" style={{ margin: 0, fontSize: 13 }} data-testid="finance-summary">
-              {chosen.plan === 'unico'
-                ? `Paga ${money(chosen.total)} de uma vez no início da sua vez na rodada ${chosen.dueRound}.`
-                : `${chosen.parcels.length} parcelas cobradas sozinhas no início da sua vez, das rodadas ${state.round + 1} a ${chosen.dueRound}. Dá para quitar antes na aba Banco.`}
+              {planSummary(chosen, 'Dá para quitar antes na aba Banco.')}
             </p>
           )}
         </>

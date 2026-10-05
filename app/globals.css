@@ -55,6 +55,7 @@ h3{font-size:15px;font-weight:600}
 /* Barra superior */
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .top .meta{font-size:13px;color:var(--muted)}
+.top .meta.cal{color:var(--accent);font-weight:600}
 .players{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .player{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;gap:10px;align-items:center;min-width:0}
 .player.current{border:2px solid var(--accent);padding:9px 11px}

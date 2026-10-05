@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { fmtTime, money } from '@/lib/game/format';
 import { CREDIT, IR } from '@/lib/game/data';
 import { houseListing } from '@/lib/game/listings';
-import { currentPlayer, findPlayer, loanLimit, pname, savingsOf, shortPayers, tierName, transfersFor } from '@/lib/game/rules';
+import { currentPlayer, findPlayer, loanLimit, pname, savingsOf, shortPayers, tierName, transfersFor, yearRounds } from '@/lib/game/rules';
 import type { Action, GameState, IrPending, Transfer, Tx } from '@/lib/game/types';
 import { Icon } from './Icon';
 
@@ -195,7 +195,7 @@ export function ConfirmModal({ title, text, confirm, onConfirm, onCancel }: { ti
 
 const pctTxt = (r: number) => `${Math.round(r * 100)}%`;
 
-/** Declaração do IR ao completar a volta: declarar (paga) ou sonegar (arrisca a malha fina). */
+/** Declaração do IR do ano do calendário que fechou: declarar (paga) ou sonegar (arrisca a malha fina). */
 export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: () => void; onEvade: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const base = Math.max(0, ir.income - IR.exempt);
@@ -221,9 +221,9 @@ export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: 
     <Sheet label="Declaração do IR">
       <div className="ir-head">
         <span className="label">Receita Federal · ano {ir.year}</span>
-        <h2>Declaração do IR</h2>
+        <h2>Declaração do ano {ir.year}</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Você completou uma volta no tabuleiro. Hora de acertar o imposto sobre a renda deste ano.
+          {ir.cal ? `O ano ${ir.year} da partida terminou (rodadas ${yearRounds(ir.year).from} a ${yearRounds(ir.year).to}) para todos. ` : ''}Hora de acertar o imposto sobre a renda do ano.
         </p>
       </div>
       <div className="lines" data-testid="ir-lines">
@@ -274,9 +274,9 @@ export function IrExemptModal({ year, income, onClose }: { year: number; income:
     <Sheet label="Declaração do IR">
       <div className="ir-head">
         <span className="label">Receita Federal · ano {year}</span>
-        <h2>Declaração do IR</h2>
+        <h2>Declaração do ano {year}</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Você completou uma volta no tabuleiro e o ano {year} foi fechado.
+          O ano {year} da partida terminou (rodadas {yearRounds(year).from} a {yearRounds(year).to}) para todos e foi fechado.
         </p>
       </div>
       <div className="lines" data-testid="ir-exempt-lines">

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_IDX, DECISION_IDS, DECISIONS, HEADLINES, SHARES, STOCK } from '@/lib/game/data';
+import { CALENDAR, COMPANY_IDX, DECISION_IDS, DECISIONS, HEADLINES, SHARES, STOCK } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
   bankShares,
@@ -9,7 +9,8 @@ import {
   currentPlayer,
   decisionText,
   dividendPerShare,
-  dividendYield,
+  nextDividendRound,
+  semesterYield,
   editionsAbout,
   feeRate,
   findPlayer,
@@ -197,7 +198,8 @@ function StockList({ ui, onOpen }: { ui: GameUi; onOpen: (i: number) => void }) 
           <span className="pill info">Rodada {state.round}</span>
         </div>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Cotação muda a cada rodada (sorteio de ±{Math.round(STOCK.drift * 100)}%, manchetes e decisões do dono). Dividendo de {pct(STOCK.yield)} da cotação por cota a cada rodada. Toque numa empresa para
+          Cotação muda a cada rodada (sorteio de ±{Math.round(STOCK.drift * 100)}%, manchetes e decisões do dono). Dividendos pagos a cada semestre (rodadas 4, 7, 10…): {pct(STOCK.yield * CALENDAR.roundsPerSemester)} da cotação por cota, pela cotação do dia do pagamento; o próximo é na rodada{' '}
+          {nextDividendRound(state.round)}. Toque numa empresa para
           ver detalhes e vender cotas.
         </p>
         {mineTotal > 0 && (
@@ -218,7 +220,7 @@ function StockList({ ui, onOpen }: { ui: GameUi; onOpen: (i: number) => void }) 
                 <span className="main">
                   <b>{s.name}</b>
                   <span>
-                    Dividendo {pct(dividendYield(state, i))} · {money(dividendPerShare(state, i))}/cota
+                    Dividendo {pct(semesterYield(state, i, nextDividendRound(state.round)))} · {money(dividendPerShare(state, i, nextDividendRound(state.round)))}/cota na rodada {nextDividendRound(state.round)}
                   </span>
                   <span>
                     {ctrl ? `Dono: ${ctrl === me ? 'você' : pname(state, ctrl)}` : 'Sem dono'}
@@ -323,9 +325,9 @@ function StockDetail({ ui, i, onBack }: { ui: GameUi; i: number; onBack: () => v
         </div>
         <div className="lines">
           <div>
-            <span>Dividendo por cota</span>
-            <span>
-              {money(dividendPerShare(state, i))} por rodada ({pct(dividendYield(state, i))})
+            <span>Dividendo por cota (por semestre)</span>
+            <span data-testid="stock-dividend">
+              {money(dividendPerShare(state, i, nextDividendRound(state.round)))} na rodada {nextDividendRound(state.round)} ({pct(semesterYield(state, i, nextDividendRound(state.round)))})
             </span>
           </div>
           <div>
