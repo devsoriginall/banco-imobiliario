@@ -180,8 +180,10 @@ export const IR = {
   exempt: 2000,
   /** o pró-labore conta como renda? */
   salaryIsIncome: false,
-  /** chance de cair na malha fina ao sonegar */
+  /** chance de cair na malha fina ao sonegar tudo (declarar renda zero) */
   catchChance: 0.3,
+  /** chance mínima de cair na malha fina ao declarar menos: escondendo quase nada; cresce até catchChance com o que escondeu */
+  catchMin: 0.1,
   /** multa sobre o imposto quando cai na malha fina (1 = 100%) */
   fine: 1,
 };

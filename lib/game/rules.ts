@@ -774,6 +774,22 @@ export function describeSide(side: TradeSide): string {
 
 /** IR do ano: alíquota sobre a renda acima da isenção. */
 export const irTax = (income: number) => Math.max(0, Math.round((income - IR.exempt) * IR.rate));
+
+/**
+ * Chance de cair na malha fina ao declarar `declared` de uma renda real `income`: cresce com a fração escondida,
+ * de IR.catchMin (escondendo quase nada) até IR.catchChance (declarando zero).
+ */
+export const irCatchChance = (income: number, declared: number) => {
+  if (income <= 0) return 0;
+  const omitted = Math.min(1, Math.max(0, (income - declared) / income));
+  return IR.catchChance - (IR.catchChance - IR.catchMin) * (1 - omitted);
+};
+
+/** Imposto que faltou mais a multa da malha fina, depois de declarar `declared` de `income`. */
+export const irFineDue = (income: number, declared: number) => Math.round((irTax(income) - irTax(declared)) * (1 + IR.fine));
+
+const irReason = (year: number, income: number) => `Imposto de renda do ano ${year}: ${Math.round(IR.rate * 100)}% de ${money(Math.max(0, income - IR.exempt))}`;
+const malhaReason = (year: number, partial: boolean) => `Malha fina: IR ${partial ? 'que faltou ' : ''}do ano ${year} + multa de ${Math.round(IR.fine * 100)}%`;
 /** Renda tributável do ano do calendário em curso. */
 export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
 /** Tipos de transação que contam como renda para o IR. */
@@ -950,9 +966,7 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
     case 'declareIR': {
       const ir = st.irPending;
       if (!ir || ir.pid !== actor) return [];
-      const reason = ir.caught
-        ? `Malha fina: IR do ano ${ir.year} + multa de ${Math.round(IR.fine * 100)}%`
-        : `Imposto de renda do ano ${ir.year}: ${Math.round(IR.rate * 100)}% de ${money(Math.max(0, ir.income - IR.exempt))}`;
+      const reason = ir.caught ? malhaReason(ir.year, !!ir.declared) : irReason(ir.year, ir.income);
       return [{ from: actor, to: BANK, amount: ir.due, reason, kind: 'ir' }];
     }
     case 'payLoan': {
@@ -1931,7 +1945,8 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       st.irPending = null;
       settleIR(p, ir);
       if (ir.caught) {
-        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: ir.due, round: st.round };
+        const before = irTax(ir.declared ?? 0);
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: before + ir.due, round: st.round, declared: ir.declared ?? 0 };
         log(st, `${p.name} pagou o IR do ano ${ir.year} com a multa da malha fina`, now, actor);
       } else {
         changeCredit(st, p, CREDIT.irDeclared, 'IR declarado em dia');
@@ -1945,28 +1960,42 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       const ir = st.irPending;
       need(ir && ir.pid === actor, 'Não há declaração de IR pendente.');
       need(!ir.caught, 'Você já caiu na malha fina: pague o imposto e a multa.');
-      const caught = nextRandom(st) < IR.catchChance;
+      const declared = action.declared ?? 0;
+      need(Number.isInteger(declared) && declared >= 0 && declared < ir.income, `Declare uma renda de ${money(0)} a ${money(ir.income - 1)}.`);
+      // declarar menos: paga já o imposto sobre o que declarou
+      const taxNow = irTax(declared);
+      if (taxNow > 0) pay(st, [{ from: p.id, to: BANK, amount: taxNow, reason: irReason(ir.year, declared), kind: 'ir' }], now);
+      const caught = nextRandom(st) < irCatchChance(ir.income, declared);
       if (!caught) {
         st.irPending = null;
         settleIR(p, ir);
-        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'passou', paid: 0, round: st.round };
-        // ninguém mais fica sabendo da sonegação
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'passou', paid: taxNow, round: st.round, declared };
+        // ninguém mais fica sabendo da sonegação (nem do quanto escondeu)
         log(st, `${p.name} entregou a declaração do ano ${ir.year}`, now, actor);
         break;
       }
-      const due = Math.round(ir.tax * (1 + IR.fine));
+      // imposto que faltou + multa só sobre a parte que faltou
+      const due = irFineDue(ir.income, declared);
       changeCredit(st, p, CREDIT.malhaFina, 'Caiu na malha fina');
-      log(st, `${p.name} sonegou o IR e caiu na malha fina: imposto + multa de ${money(due)}`, now, actor, true);
+      log(
+        st,
+        declared > 0
+          ? `${p.name} declarou ${money(declared)} de ${money(ir.income)} e caiu na malha fina: imposto que faltou + multa de ${money(due)}`
+          : `${p.name} sonegou o IR e caiu na malha fina: imposto + multa de ${money(due)}`,
+        now,
+        actor,
+        true,
+      );
       if (p.balance >= due) {
-        applyTransfers(st, [{ from: p.id, to: BANK, amount: due, reason: `Malha fina: IR do ano ${ir.year} + multa de ${Math.round(IR.fine * 100)}%`, kind: 'ir' }], now);
+        applyTransfers(st, [{ from: p.id, to: BANK, amount: due, reason: malhaReason(ir.year, declared > 0), kind: 'ir' }], now);
         st.irPending = null;
         settleIR(p, ir);
-        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: due, round: st.round };
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: taxNow + due, round: st.round, declared };
       } else {
         // sem saldo: fica devendo e paga pelo Pix (vendendo, hipotecando ou declarando falência)
         shortfall(st, p, 'a multa da malha fina');
-        st.irPending = { ...ir, caught: true, due };
-        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: 0, round: st.round };
+        st.irPending = { ...ir, caught: true, due, ...(declared > 0 ? { declared } : {}) };
+        p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: taxNow, round: st.round, declared };
       }
       break;
     }
