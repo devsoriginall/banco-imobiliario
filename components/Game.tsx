@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, equity, findPlayer, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextParcel } from '@/lib/game/rules';
+import { currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextParcel, savingsOf } from '@/lib/game/rules';
 import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
@@ -134,6 +134,11 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
                 {money(mine.balance)}
               </div>
               <div className="lbl">Patrimônio {money(equity(state, mine))}</div>
+              {savingsOf(mine) > 0 && (
+                <div className="lbl" data-testid="wallet-savings">
+                  Poupança {money(savingsOf(mine))}
+                </div>
+              )}
               {!mine.out && (
                 <div className="lbl" data-testid="wallet-income">
                   Renda no ano {(mine.year || 0) + 1}: {money(incomeOf(mine))}
@@ -255,8 +260,37 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   );
 }
 
-/** Dívida com o banco no cabeçalho da carteira. */
+/** Dívida com o banco no cabeçalho da carteira: empréstimo e financiamentos. */
 function DebtLine({ state, me }: { state: GameState; me: string }) {
+  return (
+    <>
+      <LoanLine state={state} me={me} />
+      <FinLine state={state} me={me} />
+    </>
+  );
+}
+
+/** Parcelas de financiamento cobradas no início da próxima vez. */
+function FinLine({ state, me }: { state: GameState; me: string }) {
+  const fins = finsOf(state, me);
+  if (!fins.length) return null;
+  // rodada da próxima vez: ainda nesta rodada se a vez vem depois da atual, senão na próxima
+  const next = state.players.findIndex((p) => p.id === me) > state.turn ? state.round : state.round + 1;
+  const due = fins.reduce((a, f) => {
+    const np = nextParcel(f);
+    if (np) return a + (np.round <= next ? np.amount : 0);
+    return a + (f.dueRound <= next ? loanOwed(f) : 0);
+  }, 0);
+  if (!due) return null;
+  const short = (findPlayer(state, me)?.balance ?? 0) < due;
+  return (
+    <div className={`debt${short ? ' urgent' : ''}`} data-testid="wallet-fin">
+      Financiamento {money(due)} na próxima vez
+    </div>
+  );
+}
+
+function LoanLine({ state, me }: { state: GameState; me: string }) {
   const loan = loanOf(state, me);
   if (!loan) return null;
   const next = nextParcel(loan);

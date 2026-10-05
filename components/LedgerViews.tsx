@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { COMPANY_IDX, IR } from '@/lib/game/data';
 import { fmtTime, money } from '@/lib/game/format';
-import { creditOf, debtOf, equity, findPlayer, incomeOf, irTax, pname, sharesOf } from '@/lib/game/rules';
+import { creditOf, debtOf, equity, finDebtOf, findPlayer, incomeOf, irTax, pname, savingsOf, sharesOf } from '@/lib/game/rules';
 import type { GameState } from '@/lib/game/types';
 import { CreditPill } from './Credit';
 import { Avatar } from './ui';
@@ -78,7 +78,7 @@ export function TxView({ state, me }: { state: GameState; me: string }) {
 }
 
 export function ScoreView({ state }: { state: GameState }) {
-  const rows = state.players.map((p) => ({ p, w: equity(state, p), d: debtOf(state, p.id) })).sort((a, b) => b.w - a.w);
+  const rows = state.players.map((p) => ({ p, w: equity(state, p), d: debtOf(state, p.id) + finDebtOf(state, p.id) })).sort((a, b) => b.w - a.w);
   return (
     <div className="card">
       <h2>Placar de patrimônio</h2>
@@ -96,7 +96,14 @@ export function ScoreView({ state }: { state: GameState }) {
                     {p.out ? ' · faliu' : ''}
                   </b>
                   <span>
-                    Dinheiro <span className="cash">{money(p.balance)}</span> · {props} imóveis · {cotas} cotas
+                    Dinheiro <span className="cash">{money(p.balance)}</span>
+                    {savingsOf(p) > 0 ? (
+                      <>
+                        {' '}
+                        · poupança <span className="savings">{money(savingsOf(p))}</span>
+                      </>
+                    ) : null}{' '}
+                    · {props} imóveis · {cotas} cotas
                     {d > 0 ? ` · dívida ${money(d)}` : ''}
                   </span>
                   <CreditPill score={creditOf(p)} />
@@ -108,7 +115,7 @@ export function ScoreView({ state }: { state: GameState }) {
         })}
       </div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Patrimônio: dinheiro + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas pela cotação da Bolsa, menos a dívida com o banco.
+        Patrimônio: dinheiro + poupança + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas pela cotação da Bolsa, menos a dívida com o banco (empréstimo e financiamentos).
       </p>
     </div>
   );

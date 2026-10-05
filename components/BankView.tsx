@@ -1,10 +1,11 @@
 'use client';
 import { useState } from 'react';
-import { BANK_RATES, CREDIT, CREDIT_BANDS, LOAN, LOAN_PLANS } from '@/lib/game/data';
+import { BANK_RATES, CREDIT, CREDIT_BANDS, FINANCE, LOAN, LOAN_PLANS, SAVINGS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, pct, planInfo, tradesOf } from '@/lib/game/rules';
-import type { Loan, LoanPlanId } from '@/lib/game/types';
+import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, pct, planInfo, savingsOf, savingsRate, savingsYield, street, tradesOf } from '@/lib/game/rules';
+import type { Financing, Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
+import { PlanTable } from './Finance';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
@@ -26,10 +27,176 @@ export function BankView({ ui, onTrade }: { ui: GameUi; onTrade: (pid: string) =
   return (
     <>
       <RateCard ui={ui} />
+      <SavingsCard ui={ui} />
       <CreditCard ui={ui} />
       <LoanCard ui={ui} />
+      <FinancingCard ui={ui} />
       <TradeCardList ui={ui} onTrade={onTrade} />
     </>
+  );
+}
+
+/** Poupança: saldo, rendimento por vez, depósito (na sua vez) e resgate (a qualquer momento). */
+function SavingsCard({ ui }: { ui: GameUi }) {
+  const { state, me } = ui;
+  const p = findPlayer(state, me)!;
+  const myTurn = currentPlayer(state)?.id === me && !state.winner;
+  const saved = savingsOf(p);
+  const [dep, setDep] = useState(SAVINGS.step * 10);
+  const [out, setOut] = useState(SAVINGS.step);
+  const step = SAVINGS.step;
+  const maxDep = Math.floor(p.balance / step) * step;
+  const depQ = Math.max(Math.min(dep, maxDep), Math.min(step, maxDep));
+  const outQ = Math.max(Math.min(out, saved), Math.min(step, saved));
+  const nextYield = savingsYield(state, p);
+  return (
+    <div className="card" data-testid="savings-card">
+      <div className="row between">
+        <span className="row" style={{ gap: 10 }}>
+          <span className="bank-mark">
+            <Icon name="banco" size={20} />
+          </span>
+          <h2>Poupança</h2>
+        </span>
+        <span className="pill ok">{pct(savingsRate(state))} por vez</span>
+      </div>
+      <div>
+        <div className="muted" style={{ fontSize: 13 }}>
+          Saldo na poupança
+        </div>
+        <div className="amt num" style={{ fontSize: 30 }} data-testid="savings-balance">
+          {money(saved)}
+        </div>
+      </div>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Rende metade da taxa do banco da rodada no início de cada vez sua{saved > 0 ? `: ${money(nextYield)} com a taxa de agora` : ''}. O rendimento conta como renda no IR. Deposite na sua vez; resgate a qualquer momento, até para pagar um aluguel. Se o banco cobrar uma dívida, tira da poupança antes de penhorar.
+      </p>
+      <div className="stack" style={{ gap: 8 }}>
+        {myTurn ? (
+          maxDep >= step ? (
+            <div className="row">
+              <div className="stepper">
+                <button aria-label={`Menos ${money(step)} no depósito`} onClick={() => setDep(Math.max(step, depQ - step))}>
+                  −
+                </button>
+                <span className="amt num" data-testid="savings-deposit-amount">
+                  {money(depQ)}
+                </span>
+                <button aria-label={`Mais ${money(step)} no depósito`} onClick={() => setDep(Math.min(maxDep, depQ + step))}>
+                  +
+                </button>
+              </div>
+              <button className="btn primary" onClick={() => ui.pix({ type: 'deposit', amount: depQ }, 'Depósito na poupança')}>
+                Depositar
+              </button>
+            </div>
+          ) : (
+            <div className="banner warn">Saldo insuficiente para depositar.</div>
+          )
+        ) : (
+          <div className="banner info">Depósito só na sua vez. O resgate vale a qualquer momento.</div>
+        )}
+        {saved > 0 && (
+          <div className="row">
+            <div className="stepper">
+              <button aria-label={`Menos ${money(step)} no resgate`} onClick={() => setOut(Math.max(step, outQ - step))}>
+                −
+              </button>
+              <span className="amt num" data-testid="savings-withdraw-amount">
+                {money(outQ)}
+              </span>
+              <button aria-label={`Mais ${money(step)} no resgate`} onClick={() => setOut(Math.min(saved, outQ + step))}>
+                +
+              </button>
+            </div>
+            <button className="btn" onClick={() => ui.runWithReceipt({ type: 'withdraw', amount: outQ }, 'Resgate da poupança')}>
+              Resgatar
+            </button>
+            {outQ !== saved && (
+              <button className="btn small" onClick={() => ui.runWithReceipt({ type: 'withdraw', amount: saved }, 'Resgate da poupança')}>
+                Resgatar tudo
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Financiamentos de imóveis: um cartão com cada imóvel alienado ao banco, a próxima parcela e a quitação. */
+function FinancingCard({ ui }: { ui: GameUi }) {
+  const { state, me } = ui;
+  const fins = finsOf(state, me);
+  if (!fins.length) return null;
+  const myTurn = currentPlayer(state)?.id === me && !state.winner;
+  return (
+    <div className="card" data-testid="financing-card">
+      <span className="row" style={{ gap: 10 }}>
+        <span className="bank-mark">
+          <Icon name="imoveis" size={20} />
+        </span>
+        <h2>Financiamentos de imóveis</h2>
+      </span>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Separados do empréstimo e fora do seu limite. Cada imóvel financiado fica alienado ao banco até quitar: sem negociar e sem hipotecar. Se uma parcela não for paga (nem com a poupança), o banco retoma o imóvel e cancela o financiamento. Score mínimo para financiar: {FINANCE.minScore}.
+      </p>
+      {fins.map((f) => (
+        <FinancingItem key={f.idx} ui={ui} f={f} myTurn={myTurn} />
+      ))}
+    </div>
+  );
+}
+
+function FinancingItem({ ui, f, myTurn }: { ui: GameUi; f: Financing; myTurn: boolean }) {
+  const { state, me } = ui;
+  const p = findPlayer(state, me)!;
+  const owed = loanOwed(f);
+  const next = nextParcel(f);
+  const left = finLeft(f);
+  const short = p.balance < (next ? next.amount : owed);
+  const name = street(f.idx).name;
+  return (
+    <div className="stack" style={{ gap: 8, borderTop: '1px solid var(--line)', paddingTop: 10 }} data-testid={`fin-${f.idx}`}>
+      <div className="row between">
+        <b>
+          {name} · {f.what === 'terreno' ? 'terreno' : 'casa'}
+        </b>
+        <span className={`pill ${short ? 'bad' : 'warn'}`}>
+          Falta{left === 1 ? '' : 'm'} {left} parcela{left === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div className="kv">
+        <div>
+          <span>Preço e entrada</span>
+          <span className="num">
+            {money(f.price)} · {money(f.entrada)}
+          </span>
+        </div>
+        <div>
+          <span>
+            {planInfo(loanPlan(f)).name} a {pct(loanRate(f))}
+          </span>
+          <span className="num">{money(f.principal + f.interest)}</span>
+        </div>
+        <div>
+          <span>Saldo devedor</span>
+          <span className="num" data-testid={`fin-owed-${f.idx}`}>
+            {money(owed)}
+          </span>
+        </div>
+      </div>
+      <div className={`banner ${short ? 'bad' : 'info'}`}>
+        {next
+          ? `Próxima parcela (${next.n}/${next.of}): ${money(next.amount)}, no início da sua vez${next.round > state.round ? ` na rodada ${next.round}` : ''}.`
+          : `Pagamento único de ${money(owed)} no início da sua vez na rodada ${f.dueRound}.`}
+      </div>
+      {myTurn && (
+        <button className="btn" disabled={p.balance < owed} onClick={() => ui.pix({ type: 'payFin', idx: f.idx }, 'Quitar financiamento')}>
+          Quitar {money(owed)}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -251,42 +418,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
           <span className="muted" style={{ fontSize: 13 }}>
             2. Escolha como pagar
           </span>
-          <div className="loan-sim" role="radiogroup" aria-label="Simulação do empréstimo" data-testid="loan-sim">
-            <div className="loan-sim-head" aria-hidden="true">
-              <span>Plano</span>
-              <span>Taxa</span>
-              <span>Parcela</span>
-              <span>Total</span>
-            </div>
-            {options.map((o) => {
-              const unico = o.plan === 'unico';
-              const lastDiff = o.parcels[o.parcels.length - 1] !== o.parcels[0];
-              return (
-                <button
-                  key={o.plan}
-                  className="loan-sim-row"
-                  role="radio"
-                  aria-checked={plan === o.plan}
-                  data-plan={o.plan}
-                  onClick={() => setPlan(o.plan)}
-                  aria-label={`${o.name}: taxa ${pct(o.rate)}, ${unico ? `paga ${money(o.total)} em ${rodadas(LOAN.rounds)}` : `${o.parcels.length} parcelas de ${money(o.parcels[0])}`}, total ${money(o.total)}`}
-                >
-                  <span className="plan">
-                    <b>{unico ? 'Único' : o.short}</b>
-                    <small>{unico ? `em ${rodadas(LOAN.rounds)}` : 'parcelado'}</small>
-                  </span>
-                  <span className="num">{pct(o.rate)}</span>
-                  <span className="num">
-                    {unico ? '—' : money(o.parcels[0])}
-                    {lastDiff && !unico ? <small>últ. {money(o.parcels[o.parcels.length - 1])}</small> : null}
-                  </span>
-                  <span className="num">
-                    <b>{money(o.total)}</b>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <PlanTable options={options} plan={plan} onPick={setPlan} label="Simulação do empréstimo" testId="loan-sim" />
           {chosen && (
             <p className="muted" style={{ margin: 0, fontSize: 13 }} data-testid="loan-plan-summary">
               {chosen.plan === 'unico'

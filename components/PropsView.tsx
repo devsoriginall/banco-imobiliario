@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { COMPANY_IDX, GROUPS, SPACES } from '@/lib/game/data';
+import { COMPANY_IDX, GROUPS, INSURANCE, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
   bankShares,
@@ -9,6 +9,9 @@ import {
   canUnmortgage,
   controller,
   groupIdx,
+  insurancePremium,
+  insureBlock,
+  insuredUntil,
   houses,
   buildPrice,
   lotMortgage,
@@ -25,6 +28,7 @@ import {
 } from '@/lib/game/rules';
 import type { GroupId } from '@/lib/game/types';
 import type { GameUi } from './Game';
+import { PropBadges } from './PlayView';
 import { HoodPills } from './ui';
 
 export function PropsView({ ui }: { ui: GameUi }) {
@@ -64,6 +68,12 @@ export function PropsView({ ui }: { ui: GameUi }) {
                       Hipotecar +{money(lotMortgage(state, i))}
                     </button>,
                   );
+                if (!insureBlock(state, i, me))
+                  acts.push(
+                    <button key="i" className="btn small" data-testid={`insure-${i}`} onClick={() => ui.pix({ type: 'insure', idx: i }, insuredUntil(state, i) !== null ? 'Renovar seguro' : 'Contratar seguro')}>
+                      {insuredUntil(state, i) !== null ? 'Renovar seguro' : 'Contratar seguro'} {money(insurancePremium(state, i))}
+                    </button>,
+                  );
                 if (canUnmortgage(state, i, me))
                   acts.push(
                     <button key="u" className="btn small" onClick={() => ui.pix({ type: 'unmortgage', idx: i }, 'Tirar hipoteca')}>
@@ -89,6 +99,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
                       )}
                       {pr?.mortgaged && <span className="pill warn">Hipotecado</span>}
                       {h > 0 && <span className="pill ok">{h === 5 ? 'Hotel' : `${h} casa${h > 1 ? 's' : ''}`}</span>}
+                      {pr && <PropBadges state={state} i={i} />}
                     </div>
                     {pr?.owner === me && h < 5 && (
                       <span className="build-hint" data-testid={`build-hint-${i}`}>
@@ -124,7 +135,7 @@ export function PropsView({ ui }: { ui: GameUi }) {
       </div>
       <div className="banner info">
         Construir: só no imóvel seu onde você parou, na tela da Jogada; sem hipoteca, uma construção por vez e não no imóvel comprado nesta rodada; hotel depois de 4 casas. Tirar hipoteca só na sua vez. Vender
-        casa e hipotecar valem a qualquer momento.
+        casa e hipotecar valem a qualquer momento. Seguro: na sua vez, {Math.round(INSURANCE.premium * 100)}% do valor do imóvel por {INSURANCE.rounds} rodadas; se uma manchete do Jornal derrubar o preço do bairro, o banco paga o valor perdido. Imóvel financiado não pode ser negociado nem hipotecado até quitar.
       </div>
       {groups.length === 0 && comps.length === 0 && (
         <div className="card">

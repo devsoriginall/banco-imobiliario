@@ -95,7 +95,8 @@ export function Room({ code }: { code: string }) {
       if (t.kind === 'dividend' && (divs.length > 1 || !divs.includes(t))) continue;
       if (mySeqs.current.has(t.seq) && t.kind !== 'salary' && t.kind !== 'dividend') continue;
       // negociação e penhora têm avisos próprios; empréstimo é sempre do próprio jogador
-      if (t.kind === 'trade' || t.kind === 'penhora' || t.kind === 'loan') continue;
+      // resgate da poupança pelo banco (cobrança, falência) aparece no aviso da cobrança
+      if (t.kind === 'trade' || t.kind === 'penhora' || t.kind === 'loan' || t.kind === 'poupanca') continue;
       const d = describeIncoming(st, t);
       toast(d.title, d.text);
     }
@@ -222,7 +223,10 @@ export function Room({ code }: { code: string }) {
 /** Título do aviso de um evento importante da mesa. */
 function feedTitle(text: string): string {
   if (text.includes('taxa do banco')) return 'Juros do banco';
+  if (text.includes('financiamento')) return 'Financiamento';
   if (text.startsWith('Parcela ')) return 'Parcela do empréstimo';
+  if (text.startsWith('Seguro: ')) return 'Seguro';
+  if (text.includes('duplas seguidas')) return 'Detenção';
   if (text.startsWith('Gerência da ')) return 'Decisão da gerência';
   if (text.startsWith('Greve na ') || text.startsWith('Investimento na ')) return 'Bolsa';
   return 'Na mesa';

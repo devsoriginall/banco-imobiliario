@@ -516,3 +516,29 @@ export const HEADLINES: Headline[] = [
     ],
   },
 ];
+
+// ---------- Poupança, seguro, duplas e financiamento ----------
+
+/** Poupança: depósito só na sua vez, resgate a qualquer momento; rende no início de cada vez sua. */
+export const SAVINGS = {
+  /** depósitos e resgates em múltiplos de (o resgate de tudo vale qualquer valor) */
+  step: 100,
+  /** rendimento por vez = esta fração da taxa do banco na rodada × saldo, arredondado a $ 10 */
+  rateShare: 0.5,
+};
+
+/** Seguro do imóvel: prêmio sobre o valor atual (terreno + casas), cobre esta quantidade de rodadas. */
+export const INSURANCE = { premium: 0.05, rounds: 10 };
+
+/** Duplas seguidas na mesma vez: na 3ª, detenção. */
+export const MAX_DOUBLES = 3;
+
+/**
+ * Financiamento na compra do terreno ou da casa: entrada de `entrada` × preço pelo Pix, o resto nos planos do
+ * empréstimo (LOAN_PLANS, mesma taxa). Não usa o limite do empréstimo, mas pede score a partir da faixa Regular.
+ */
+export const FINANCE = {
+  entrada: 0.2,
+  /** score mínimo: início da faixa Regular */
+  minScore: CREDIT_BANDS.find((b) => b.id === 'regular')!.from,
+};
