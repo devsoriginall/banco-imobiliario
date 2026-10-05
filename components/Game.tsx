@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
 import { calendarText, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf, yearOf } from '@/lib/game/rules';
-import type { Action, GameState, Tx } from '@/lib/game/types';
+import type { Action, GameState, IrResult, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
 import { ScoreView, TxView } from './LedgerViews';
@@ -47,8 +47,8 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   const [receipt, setReceipt] = useState<{ txs: Tx[]; title?: string } | null>(null);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
-  /** resultado de sonegar sem cair na malha fina (imposto que deixou de pagar) */
-  const [irPassed, setIrPassed] = useState<number | null>(null);
+  /** resultado de declarar menos (ou sonegar tudo) sem cair na malha fina */
+  const [irPassed, setIrPassed] = useState<IrResult | null>(null);
   const irPending = state.irPending?.pid === me && !state.winner ? state.irPending : null;
   const mine = findPlayer(state, me);
   /** declaração deixada de lado para levantar dinheiro (volta sozinha se mudar o ano ou cair na malha fina) */
@@ -238,20 +238,22 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       {!pixReq && !tradeWith && !receipt && pushed && <ReceiptModal state={state} receipt={pushed.txs} title={pushed.title} onClose={() => onPushedClose?.()} />}
       {irMine && !pixReq && !tradeWith && !receipt && !pushed && (
         <IrModal
+          key={irKey ?? undefined}
           ir={irMine}
           short={irShort}
+          balance={mine?.balance ?? 0}
           onRaise={() => setIrDeferred(irKey)}
-          onDeclare={() => setPixReq({ action: { type: 'declareIR' }, title: irMine.caught ? 'Malha fina: imposto + multa' : 'Imposto de renda' })}
-          onEvade={async () => {
-            const r = await run({ type: 'evadeIR' });
+          onDeclare={() => setPixReq({ action: { type: 'declareIR' }, title: irMine.caught ? (irMine.declared ? 'Malha fina: imposto que faltou + multa' : 'Malha fina: imposto + multa') : 'Imposto de renda' })}
+          onEvade={async (declared) => {
+            const r = await run({ type: 'evadeIR', declared });
             const last = r && findPlayer(r.state, me)?.irLast;
             if (!r || !last) return;
-            if (last.outcome === 'passou') setIrPassed(last.tax);
-            else if (r.created.length) setReceipt({ txs: r.created, title: 'Malha fina' });
+            if (last.outcome === 'passou') setIrPassed(last);
+            else if (r.created.length) setReceipt({ txs: r.created, title: declared > 0 ? `Malha fina: declarou ${money(declared)} de ${money(last.income)}` : 'Malha fina' });
           }}
         />
       )}
-      {irPassed !== null && !pixReq && !receipt && <IrPassedModal tax={irPassed} onClose={() => setIrPassed(null)} />}
+      {irPassed !== null && !pixReq && !receipt && <IrPassedModal result={irPassed} onClose={() => setIrPassed(null)} />}
       {irExempt && !irMine && !pixReq && !receipt && !pushed && <IrExemptModal year={irExempt.year} income={irExempt.income} onClose={closeExempt} />}
       {showJornal && !pixReq && !receipt && !pushed && (
         <JornalModal

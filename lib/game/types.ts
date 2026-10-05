@@ -87,6 +87,8 @@ export interface IrResult {
   /** quanto pagou (imposto, ou imposto + multa) */
   paid: number;
   round: number;
+  /** renda que declarou ao declarar menos (0 = sonegou tudo); ausente quando declarou tudo ou ficou isento */
+  declared?: number;
 }
 
 /** Declaração do IR pendente do jogador da vez (aparece na primeira vez dele depois que o ano do calendário fecha). */
@@ -101,6 +103,8 @@ export interface IrPending {
   due: number;
   /** declaração do calendário (salas antigas: declaração da volta, sem este campo) */
   cal?: boolean;
+  /** caiu na malha fina depois de declarar menos: renda que declarou (o imposto sobre ela já foi pago) */
+  declared?: number;
 }
 
 export interface Property {
@@ -439,7 +443,8 @@ export type Action =
   | { type: 'takeLoan'; amount: number; plan?: LoanPlanId }
   | { type: 'payLoan'; amount: number }
   | { type: 'declareIR' }
-  | { type: 'evadeIR' }
+  /** declarar menos que a renda real: `declared` de 0 até a renda − 1 (ausente = 0, sonega tudo) */
+  | { type: 'evadeIR'; declared?: number }
   | { type: 'deposit'; amount: number }
   | { type: 'withdraw'; amount: number }
   | { type: 'insure'; idx: number }

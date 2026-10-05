@@ -302,5 +302,89 @@ console.log('Placar:', JSON.stringify(pills.map(norm)));
 if (!pills.map(norm).includes('Score 520 · Regular')) fail('score da Ana no placar');
 await shot(beto, 'credito-3-placar.png');
 
+// 10. Declarar menos: fim do ano 2 com $ 12.000 de renda para o Beto (IR real de $ 1.500). Grava direto na sala:
+// rodada 12, vez do Beto; ele passa a vez, a Ana joga a primeira vez dela no ano 3 e o Beto declara na dele.
+await beto.getByRole('tab', { name: /Jogada/ }).click();
+await beto.evaluate((code) => {
+  const k = `bi-room:${code}`;
+  const snap = JSON.parse(localStorage.getItem(k));
+  const p = snap.state.players.find((x) => x.name === 'Beto');
+  p.income = 12000;
+  snap.state.round = 12;
+  snap.state.turn = snap.state.players.indexOf(p);
+  snap.state.turnInfo = { landed: null, resolved: false, news: null, feePaid: false };
+  snap.state.prev = null;
+  snap.version += 1;
+  localStorage.setItem(k, JSON.stringify(snap));
+  new BroadcastChannel('banco-imobiliario-rooms').postMessage({ code });
+}, code);
+await beto.getByTestId('calendar').filter({ hasText: 'rodada 6 de 6' }).waitFor();
+await beto.getByText('É a sua vez').waitFor();
+await noToasts(beto);
+await beto.locator('[data-space="20"]').click();
+await beto.getByRole('button', { name: 'Passar a vez' }).click();
+await front(ana);
+// a Ana fecha o ano 2 dela (isenta ou declarando tudo) e passa a vez
+const anaIr = ana.getByRole('dialog', { name: 'Declaração do IR' });
+await anaIr.waitFor();
+if (await anaIr.getByRole('button', { name: 'Entendi' }).count()) await anaIr.getByRole('button', { name: 'Entendi' }).click();
+else {
+  await anaIr.getByRole('button', { name: /Declarar e pagar/ }).click();
+  await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
+  await ana.getByRole('button', { name: 'Fechar' }).click();
+}
+await ana.getByText('É a sua vez').waitFor();
+await noToasts(ana);
+await ana.locator('[data-space="20"]').click();
+await ana.getByRole('button', { name: 'Passar a vez' }).click();
+await front(beto);
+const betoIr = beto.getByRole('dialog', { name: 'Declaração do IR' });
+await betoIr.waitFor();
+expectEq(await text(betoIr.getByTestId('ir-tax')), '$ 1.500', 'IR do Beto no ano 2');
+const lessNow = async () => ({
+  pct: await text(betoIr.getByTestId('ir-less-pct')),
+  declarada: await text(betoIr.getByTestId('ir-less-declared')),
+  imposto: await text(betoIr.getByTestId('ir-less-tax')),
+  escondida: await text(betoIr.getByTestId('ir-less-hidden')),
+  risco: await text(betoIr.getByTestId('ir-less-risk')),
+});
+// 0% = o antigo "sonegar tudo"
+let less = await lessNow();
+console.log('Declarar menos (0%):', JSON.stringify(less));
+expectEq(less.declarada, '$ 0', 'renda declarada em 0%');
+expectEq(less.imposto, '$ 0', 'imposto em 0%');
+if (!less.risco.startsWith('Chance de malha fina: 30%') || !less.risco.includes('Se cair: paga $ 3.000 (imposto que faltou + multa de 100%)')) fail(`risco em 0%: ${less.risco}`);
+check(await betoIr.getByRole('button', { name: /^Entregar declaração com \$\s0$/ }).isVisible(), 'botão de entregar com $ 0');
+// 50%: declara $ 6.000, paga $ 600 agora, esconde $ 6.000, 20% de chance, se cair paga ($ 1.500 − $ 600) × 2 = $ 1.800
+await betoIr.getByRole('slider', { name: 'Parte da renda a declarar' }).fill('5');
+less = await lessNow();
+console.log('Declarar menos (50%):', JSON.stringify(less));
+expectEq(less.pct, '50% da renda', 'porcentagem declarada');
+expectEq(less.declarada, '$ 6.000', 'renda declarada em 50%');
+expectEq(less.imposto, '$ 600', 'imposto agora em 50%');
+expectEq(less.escondida, '$ 6.000', 'renda escondida em 50%');
+if (!less.risco.startsWith('Chance de malha fina: 20%') || !less.risco.includes('Se cair: paga $ 1.800 (imposto que faltou + multa de 100%)')) fail(`risco em 50%: ${less.risco}`);
+await noToasts(beto);
+await betoIr.getByTestId('ir-less').scrollIntoViewIfNeeded();
+await shot(beto, 'ir-parcial-1-declarar-menos.png');
+const betoBefore = (await wallet(beto)).replace(/\D/g, '') * 1;
+await betoIr.getByRole('button', { name: /^Entregar declaração com \$\s6\.000$/ }).click();
+// o sorteio da malha fina vem da semente da sala: aceita os dois resultados, cada um com os valores certos
+const passed = beto.getByTestId('ir-passed-text');
+const caughtReceipt = beto.locator('.sheet').getByText(/^Malha fina: declarou \$\s6\.000 de \$\s12\.000$/);
+await passed.or(caughtReceipt).first().waitFor();
+if (await passed.count()) {
+  const t = await text(passed);
+  console.log('Declarar menos: passou ·', t);
+  expectEq(t, 'Você declarou $ 6.000 de $ 12.000 e pagou $ 600: deixou de pagar $ 900 de IR. A Receita não percebeu desta vez.', 'aviso de que passou');
+  await beto.getByRole('button', { name: 'Fechar' }).click();
+  expectEq((await wallet(beto)).replace(/\D/g, '') * 1, betoBefore - 600, 'carteira do Beto depois de declarar menos');
+} else {
+  console.log('Declarar menos: caiu na malha fina');
+  await beto.getByRole('button', { name: 'Fechar' }).click();
+  expectEq((await wallet(beto)).replace(/\D/g, '') * 1, betoBefore - 600 - 1800, 'carteira do Beto depois da malha fina');
+}
+expectEq(await beto.getByRole('dialog', { name: 'Declaração do IR' }).count(), 0, 'declaração entregue');
+
 await browser.close();
 console.log(process.exitCode ? 'Resultado: FALHOU' : 'Resultado: OK');

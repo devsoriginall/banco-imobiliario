@@ -3,8 +3,8 @@ import { useState, type ReactNode } from 'react';
 import { fmtTime, money } from '@/lib/game/format';
 import { CREDIT, IR } from '@/lib/game/data';
 import { houseListing } from '@/lib/game/listings';
-import { currentPlayer, findPlayer, loanLimit, pname, savingsOf, shortPayers, tierName, transfersFor, yearRounds } from '@/lib/game/rules';
-import type { Action, GameState, IrPending, Transfer, Tx } from '@/lib/game/types';
+import { currentPlayer, findPlayer, irCatchChance, irFineDue, irTax, loanLimit, pname, savingsOf, shortPayers, tierName, transfersFor, yearRounds } from '@/lib/game/rules';
+import type { Action, GameState, IrPending, IrResult, Transfer, Tx } from '@/lib/game/types';
 import { Icon } from './Icon';
 
 export function Sheet({ label, children }: { label: string; children: ReactNode }) {
@@ -195,9 +195,31 @@ export function ConfirmModal({ title, text, confirm, onConfirm, onCancel }: { ti
 
 const pctTxt = (r: number) => `${Math.round(r * 100)}%`;
 
-/** Declaração do IR do ano do calendário que fechou: declarar (paga) ou sonegar (arrisca a malha fina). */
-export function IrModal({ ir, short, onDeclare, onEvade, onRaise }: { ir: IrPending; short: boolean; onDeclare: () => void; onEvade: () => Promise<void>; onRaise: () => void }) {
+/** Renda declarada ao escolher `step` décimos da renda real (0 = sonega tudo; o máximo, 90%, fica abaixo da renda). */
+const irDeclaredAt = (income: number, step: number) => Math.min(income - 1, Math.floor((income * step) / 10));
+
+/**
+ * Declaração do IR do ano do calendário que fechou: declarar tudo (paga o imposto) ou declarar menos
+ * (paga o imposto sobre o declarado e arrisca a malha fina na proporção do que escondeu).
+ */
+export function IrModal({
+  ir,
+  short,
+  balance,
+  onDeclare,
+  onEvade,
+  onRaise,
+}: {
+  ir: IrPending;
+  short: boolean;
+  balance: number;
+  onDeclare: () => void;
+  onEvade: (declared: number) => Promise<void>;
+  onRaise: () => void;
+}) {
   const [busy, setBusy] = useState(false);
+  /** quanto declarar, em décimos da renda real (0 a 9) */
+  const [step, setStep] = useState(0);
   const base = Math.max(0, ir.income - IR.exempt);
   const raise = short ? (
     <>
@@ -211,10 +233,14 @@ export function IrModal({ ir, short, onDeclare, onEvade, onRaise }: { ir: IrPend
     return (
       <Sheet label="Malha fina">
         <h2>Malha fina!</h2>
-        <div className="banner bad">A Receita cruzou os dados: você sonegou o IR do ano {ir.year}. Pague o imposto com {pctTxt(IR.fine)} de multa.</div>
+        <div className="banner bad">
+          {ir.declared
+            ? `A Receita cruzou os dados: você declarou ${money(ir.declared)} de ${money(ir.income)} no ano ${ir.year}. Pague o imposto que faltou com ${pctTxt(IR.fine)} de multa.`
+            : `A Receita cruzou os dados: você sonegou o IR do ano ${ir.year}. Pague o imposto com ${pctTxt(IR.fine)} de multa.`}
+        </div>
         <div style={{ textAlign: 'center' }}>
           <div className="muted" style={{ fontSize: 13 }}>
-            Imposto + multa
+            {ir.declared ? 'Imposto que faltou + multa' : 'Imposto + multa'}
           </div>
           <div className="amt num" style={{ fontSize: 36 }}>
             {money(ir.due)}
@@ -226,6 +252,12 @@ export function IrModal({ ir, short, onDeclare, onEvade, onRaise }: { ir: IrPend
         {raise}
       </Sheet>
     );
+  const declared = irDeclaredAt(ir.income, step);
+  const taxNow = irTax(declared);
+  const hidden = ir.income - declared;
+  const chance = irCatchChance(ir.income, declared);
+  const fineDue = irFineDue(ir.income, declared);
+  const lessShort = balance < taxNow;
   return (
     <Sheet label="Declaração do IR">
       <div className="ir-head">
@@ -259,21 +291,71 @@ export function IrModal({ ir, short, onDeclare, onEvade, onRaise }: { ir: IrPend
         Declarar e pagar {money(ir.tax)}
       </button>
       {raise}
-      <button
-        className="btn danger block"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          await onEvade();
-          setBusy(false);
-        }}
-      >
-        Sonegar
-      </button>
       <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-        Declarar em dia dá +{CREDIT.irDeclared} no score de crédito. Sonegar não paga nada agora, mas tem {pctTxt(IR.catchChance)} de chance de cair na malha fina: aí paga o imposto com {pctTxt(IR.fine)} de
-        multa e perde {-CREDIT.malhaFina} pontos de score.
+        Declarar tudo em dia dá +{CREDIT.irDeclared} no score de crédito.
       </p>
+      <section className="ir-less" data-testid="ir-less" aria-label="Declarar menos">
+        <div className="ir-less-head">
+          <b>Declarar menos</b>
+          <span className="muted" data-testid="ir-less-pct">
+            {step * 10}% da renda
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={9}
+          step={1}
+          value={step}
+          disabled={busy}
+          aria-label="Parte da renda a declarar"
+          aria-valuetext={`${step * 10}% da renda: ${money(declared)}`}
+          onChange={(e) => setStep(Number(e.target.value))}
+        />
+        <div className="ir-less-scale muted" aria-hidden="true">
+          <span>0% (sonegar tudo)</span>
+          <span>90%</span>
+        </div>
+        <div className="lines" data-testid="ir-less-lines">
+          <div>
+            <span>Renda declarada</span>
+            <span className="num" data-testid="ir-less-declared">
+              {money(declared)}
+            </span>
+          </div>
+          <div>
+            <span>Imposto pago agora</span>
+            <span className="num" data-testid="ir-less-tax">
+              {money(taxNow)}
+            </span>
+          </div>
+          <div>
+            <span>Renda escondida</span>
+            <span className="num" data-testid="ir-less-hidden">
+              {money(hidden)}
+            </span>
+          </div>
+        </div>
+        <div className="banner bad ir-less-risk" data-testid="ir-less-risk">
+          <span>
+            <b>Chance de malha fina: {pctTxt(chance)}</b>
+            <br />
+            Se cair: paga {money(fineDue)} (imposto que faltou + multa de {pctTxt(IR.fine)}) e perde {-CREDIT.malhaFina} pontos de score.
+          </span>
+        </div>
+        {lessShort && <div className="banner warn">Seu saldo não cobre {money(taxNow)} de imposto agora. Declare menos ou levante dinheiro.</div>}
+        <button
+          className="btn danger block"
+          disabled={busy || lessShort}
+          onClick={async () => {
+            setBusy(true);
+            await onEvade(declared);
+            setBusy(false);
+          }}
+        >
+          Entregar declaração com {money(declared)}
+        </button>
+      </section>
     </Sheet>
   );
 }
@@ -313,12 +395,19 @@ export function IrExemptModal({ year, income, onClose }: { year: number; income:
   );
 }
 
-export function IrPassedModal({ tax, onClose }: { tax: number; onClose: () => void }) {
+/** Declarou menos (ou sonegou tudo) e a Receita não percebeu. */
+export function IrPassedModal({ result, onClose }: { result: IrResult; onClose: () => void }) {
+  const declared = result.declared ?? 0;
+  const saved = result.tax - result.paid;
   return (
     <Sheet label="Malha fina">
       <div className="receipt-top ir-passed">
         <b style={{ fontFamily: 'var(--display)', fontSize: 18 }}>Passou pela malha fina… por enquanto</b>
-        <span style={{ fontSize: 14 }}>Você deixou de pagar {money(tax)} de IR. A Receita não percebeu desta vez.</span>
+        <span style={{ fontSize: 14 }} data-testid="ir-passed-text">
+          {declared > 0
+            ? `Você declarou ${money(declared)} de ${money(result.income)} e pagou ${money(result.paid)}: deixou de pagar ${money(saved)} de IR. A Receita não percebeu desta vez.`
+            : `Você deixou de pagar ${money(saved)} de IR. A Receita não percebeu desta vez.`}
+        </span>
       </div>
       <button className="btn dark block" onClick={onClose}>
         Fechar
