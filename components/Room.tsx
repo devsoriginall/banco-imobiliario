@@ -224,7 +224,7 @@ export function Room({ code }: { code: string }) {
 
 /** Título do aviso de um evento importante da mesa. */
 function feedTitle(text: string): string {
-  if (text.includes('taxa do banco')) return 'Juros do banco';
+  if (text.includes('Taxa Selic')) return 'Taxa Selic';
   if (text.includes('financiamento')) return 'Financiamento';
   if (text.startsWith('Parcela ')) return 'Parcela do empréstimo';
   if (text.startsWith('Seguro: ')) return 'Seguro';

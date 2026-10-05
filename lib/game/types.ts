@@ -379,10 +379,14 @@ export interface GameState {
   lots?: Record<number, TierId>;
   /** estado do sorteio determinístico (mulberry32), igual em todos os celulares */
   seed?: number;
-  /** taxa de juros do banco nesta rodada (salas antigas: LOAN.interest) */
+  /** taxa de juros do banco nesta rodada: a Selic do semestre (± manchete de juros da rodada); salas antigas: LOAN.interest */
   bankRate?: number;
-  /** rodada em que a taxa foi sorteada */
+  /** rodada em que a taxa da rodada foi definida */
   bankRateRound?: number;
+  /** Taxa Selic do semestre: sorteada no início de cada semestre (salas antigas: ausente até a próxima rodada) */
+  selic?: number;
+  /** rodada do último sorteio da Selic */
+  selicRound?: number;
   /** declaração do IR esperando o jogador da vez */
   irPending?: IrPending | null;
   /** Jornal da Cidade: edições (mais nova primeiro) e o baralho de manchetes */

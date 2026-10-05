@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { BANK_RATES, CREDIT, CREDIT_BANDS, FINANCE, LOAN, LOAN_PLANS, SAVINGS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, planInfo, savingsOf, savingsRate, savingsYield, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
+import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, planInfo, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
 import type { Financing, Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
 import { PARCEL_RULE, planSummary, PlanTable } from './Finance';
@@ -69,7 +69,7 @@ function SavingsCard({ ui }: { ui: GameUi }) {
         </div>
       </div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Rende metade da taxa do banco da rodada no início de cada vez sua{saved > 0 ? `: ${money(nextYield)} com a taxa de agora` : ''}. O rendimento conta como renda no IR. Deposite na sua vez; resgate a qualquer momento, até para pagar um aluguel. Se o banco cobrar uma dívida, tira da poupança antes de penhorar.
+        Rende metade da Taxa Selic no início de cada vez sua{saved > 0 ? `: ${money(nextYield)} com a taxa de agora` : ''}. O rendimento conta como renda no IR. Deposite na sua vez; resgate a qualquer momento, até para pagar um aluguel. Se o banco cobrar uma dívida, tira da poupança antes de penhorar.
       </p>
       <div className="stack" style={{ gap: 8 }}>
         {myTurn ? (
@@ -207,16 +207,20 @@ function whenText(round: number, now: number): string {
 
 const pp = (r: number) => (r === 0 ? '0 pp' : `${r > 0 ? '+' : '−'}${Math.round(Math.abs(r) * 100)} pp`);
 
-/** Taxa de juros sorteada nesta rodada. */
+/** Taxa Selic do semestre (sorteada no início de cada semestre). */
 function RateCard({ ui }: { ui: GameUi }) {
   const { state } = ui;
+  const bump = state.selic !== undefined && bankRate(state) !== state.selic;
   return (
     <div className="rate-card" data-testid="bank-rate-card">
       <span className="lbl">Rodada {state.round}</span>
       <div className="rate-line" data-testid="bank-rate">
-        Taxa do banco nesta rodada: <b className="num">{pct(bankRate(state))}</b>
+        Taxa Selic do semestre: <b className="num">{pct(state.selic ?? bankRate(state))}</b> (até a rodada {selicUntil(state.round)})
       </div>
-      <span className="lbl">Sorteada no começo de cada rodada entre {BANK_RATES.options.map((r) => pct(r)).join(', ')}. O empréstimo trava a taxa do dia em que foi pego.</span>
+      <span className="lbl">
+        Sorteada no início de cada semestre (rodadas 1, 4, 7…) entre {BANK_RATES.options.map((r) => pct(r)).join(', ')} e fixa nas 3 rodadas
+        {bump ? `; só nesta rodada, a manchete do Jornal levou os juros a ${pct(bankRate(state))}` : ''}. O empréstimo e o financiamento travam a taxa do dia em que foram pegos.
+      </span>
     </div>
   );
 }
@@ -272,7 +276,7 @@ function CreditCard({ ui }: { ui: GameUi }) {
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
           Parcela paga com o saldo +{CREDIT.parcelPaid} · parcelado quitado +{CREDIT.parcelLoanPaid} (se nenhuma parcela precisou de penhora) · parcela com penhora {CREDIT.parcelPenhora} · pagamento único quitado em dia ou
           antes +{CREDIT.loanPaid} · pagamento parcial do único +{CREDIT.partialPay} (uma vez por rodada, a partir de {money(LOAN.step)}) · pagamento único vencido com penhora {CREDIT.penhora} · declarar o IR +
-          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. Planos: {LOAN_PLANS.map((x) => `${x.short} ${pp(x.addOn)}`).join(', ')} sobre a taxa da rodada. Faixas:{' '}
+          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. Planos: {LOAN_PLANS.map((x) => `${x.short} ${pp(x.addOn)}`).join(', ')} sobre a Taxa Selic. Faixas:{' '}
           {CREDIT_BANDS.map((b) => `${b.name} (${b.from}+: ${Math.round(b.limitRate * 100)}%, ${pp(b.rateOffset)})`).join(' · ')}. Abaixo de {CREDIT.noLoanBelow}, o banco não empresta.
         </p>
       </details>
@@ -379,7 +383,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
       </span>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
         Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Escolha o valor e depois o plano: parcelado em 2x a 5x
-        ({PARCEL_RULE}) ou pagamento único no {LOAN.unicoSemesters}º semestre. Cada plano tem a sua taxa (taxa da rodada {pct(bankRate(state))} + adicional do plano
+        ({PARCEL_RULE}) ou pagamento único no {LOAN.unicoSemesters}º semestre. Cada plano tem a sua taxa (Taxa Selic {pct(bankRate(state))} + adicional do plano
         {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''}), juros sobre o valor, travados ao pegar. Um empréstimo por vez.
       </p>
       <div className="kv">
@@ -394,7 +398,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
           </span>
         </div>
         <div>
-          <span>Taxa da rodada</span>
+          <span>Taxa Selic</span>
           <span className="num">{pct(bankRate(state))}</span>
         </div>
       </div>

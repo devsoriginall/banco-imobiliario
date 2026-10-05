@@ -425,7 +425,7 @@ function applyHeadlineEffect(st: GameState, h: Headline, e: HeadlineEffect, stoc
       const before = bankRate(st);
       const after = Math.max(BANK_RATES.minLoanRate, round4(before + e.pp / 100));
       st.bankRate = after;
-      return `Taxa do banco nesta rodada: ${pct(after)} (era ${pct(before)})`;
+      return `Taxa Selic nesta rodada: ${pct(after)} (era ${pct(before)})`;
     }
   }
 }
@@ -541,6 +541,8 @@ export const semesterStartFrom = (round: number) => {
 export const firstChargeRound = (takenRound: number) => semesterStartFrom(takenRound + LOAN.graceRounds);
 /** Primeira e última rodada de um ano do calendário. */
 export const yearRounds = (year: number) => ({ from: (year - 1) * CALENDAR.roundsPerYear + 1, to: year * CALENDAR.roundsPerYear });
+/** Última rodada do semestre de `round` (até quando vale a Taxa Selic sorteada). */
+export const selicUntil = (round: number) => semesterStartFrom(round + 1) - 1;
 /** Texto do calendário no cabeçalho, ex.: "Ano 2 · rodada 3 de 6". */
 export const calendarText = (round: number) => `Ano ${yearOf(round)} · rodada ${roundInYear(round)} de ${CALENDAR.roundsPerYear}`;
 /** Quando cai uma rodada de cobrança, ex.: "início do 2º semestre do ano 1". */
@@ -560,7 +562,7 @@ export const equity = (st: GameState, p: Player) => netWorth(st, p) - debtOf(st,
 // ---------- Poupança ----------
 
 export const savingsOf = (p: Player | undefined) => p?.savings ?? 0;
-/** Rendimento da poupança no início da vez: saldo × metade da taxa do banco na rodada, arredondado a $ 10. */
+/** Rendimento da poupança no início da vez: saldo × metade da Taxa Selic atual, arredondado a $ 10. */
 export const savingsYield = (st: GameState, p: Player) => round10(savingsOf(p) * bankRate(st) * SAVINGS.rateShare);
 /** Taxa da poupança por vez (fração). */
 export const savingsRate = (st: GameState) => round4(bankRate(st) * SAVINGS.rateShare);
@@ -623,7 +625,7 @@ export function finBadge(f: Financing): string {
 export const creditOf = (p: Player | undefined) => p?.credit ?? CREDIT.start;
 /** Faixa do score: Ruim (<300), Regular (300–599), Bom (600–799), Excelente (800+). */
 export const creditBand = (score: number) => [...CREDIT_BANDS].reverse().find((b) => score >= b.from) ?? CREDIT_BANDS[0];
-/** Taxa do banco nesta rodada (salas antigas, antes do primeiro sorteio: LOAN.interest). */
+/** Taxa do banco nesta rodada: a Selic do semestre, ± a manchete de juros da rodada (salas antigas, antes do primeiro sorteio: LOAN.interest). */
 export const bankRate = (st: GameState) => st.bankRate ?? LOAN.interest;
 /**
  * Taxa de um empréstimo novo agora: taxa da rodada + adicional do plano + ajuste do score, nunca abaixo do mínimo.
@@ -1050,16 +1052,30 @@ function shortfall(st: GameState, p: Player, what: string) {
   changeCredit(st, p, CREDIT.shortfall, `Sem saldo para ${what}`);
 }
 
-/** Sorteia a taxa de juros do banco para a rodada atual (sorteio da sala, igual em todos os celulares). */
+/**
+ * Taxa Selic no começo da rodada (sorteio da sala, igual em todos os celulares): sorteada só no início do semestre
+ * (rodadas 1, 4, 7…) e fixa nas 3 rodadas. No meio do semestre, a taxa da rodada volta à Selic (desfaz o ajuste de
+ * uma manchete de juros da rodada anterior). Salas antigas: a taxa atual vira a Selic até o próximo semestre.
+ */
 function drawBankRate(st: GameState, now: Date) {
-  const prev = st.bankRate;
+  const r0 = st.round;
+  const until = selicUntil(r0);
+  if (!isSemesterStart(r0) && (st.selic !== undefined || st.bankRate !== undefined)) {
+    st.selic = st.selic ?? st.bankRate;
+    st.bankRate = st.selic;
+    st.bankRateRound = r0;
+    return;
+  }
+  const prev = st.selic ?? st.bankRate;
   const opts = BANK_RATES.options;
   const r = opts[Math.min(opts.length - 1, Math.floor(nextRandom(st) * opts.length))];
+  st.selic = r;
+  st.selicRound = r0;
   st.bankRate = r;
-  st.bankRateRound = st.round;
-  if (prev === undefined) log(st, `Taxa do banco nesta rodada: ${pct(r)}`, now);
-  else if (prev === r) log(st, `Rodada ${st.round}: taxa do banco mantida em ${pct(r)}`, now);
-  else log(st, `Rodada ${st.round}: taxa do banco ${r > prev ? 'subiu' : 'caiu'} para ${pct(r)} (era ${pct(prev)})`, now, undefined, true);
+  st.bankRateRound = r0;
+  if (prev === undefined) log(st, `Taxa Selic do semestre: ${pct(r)} (até a rodada ${until})`, now);
+  else if (prev === r) log(st, `Rodada ${r0}: Taxa Selic mantida em ${pct(r)} até a rodada ${until}`, now);
+  else log(st, `Rodada ${r0}: Taxa Selic ${r > prev ? 'subiu' : 'caiu'} para ${pct(r)} até a rodada ${until} (era ${pct(prev)})`, now, undefined, true);
 }
 
 /** Fim do ano do calendário: fecha a renda do ano de todos os jogadores (cada um declara na primeira vez no ano novo). */
@@ -1140,7 +1156,7 @@ function nextTurn(st: GameState, now: Date) {
 function savingsTurn(st: GameState, p: Player, now: Date) {
   const y = savingsYield(st, p);
   if (y <= 0) return;
-  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct(savingsRate(st))} de ${money(savingsOf(p))} (metade da taxa do banco)`, kind: 'rendimento' }], now);
+  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct(savingsRate(st))} de ${money(savingsOf(p))} (metade da Taxa Selic)`, kind: 'rendimento' }], now);
   // o rendimento entra na poupança, não na carteira
   p.balance -= y;
   p.savings = savingsOf(p) + y;

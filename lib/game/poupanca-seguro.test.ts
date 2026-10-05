@@ -123,7 +123,7 @@ describe('poupança', () => {
     expect(() => act(st, 'ana', { type: 'withdraw', amount: 250 })).toThrow(/múltiplos/);
   });
 
-  it('rende metade da taxa da rodada no início de cada vez sua, a $ 10, e conta como renda', () => {
+  it('rende metade da Taxa Selic no início de cada vez sua, a $ 10, e conta como renda', () => {
     let st = game();
     st = act(st, 'ana', { type: 'deposit', amount: 1000 });
     st = pass(st); // vez do Beto: a Ana não rende

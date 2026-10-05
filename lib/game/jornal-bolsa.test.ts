@@ -211,7 +211,8 @@ describe('Jornal da Cidade', () => {
     expect(feeTotal(b, HORIZONTE, 7)).toBe(Math.round((7 * 500 * (price / 200) * 1.5) / 10) * 10);
     b = nextRound(b, QUIET);
     b = nextRound(b, QUIET);
-    expect(feeTotal(b, HORIZONTE, 7)).toBe(Math.round((7 * 500 * (sharePrice(b, HORIZONTE) / 200)) / 10) * 10);
+    // + 1e-9: 7 × 500 × 230 ÷ 200 = 4.025 em ponto flutuante dá 402,4999…; a regra arredonda a $ 10 para cima no meio
+    expect(feeTotal(b, HORIZONTE, 7)).toBe(Math.round((7 * 500 * (sharePrice(b, HORIZONTE) / 200)) / 10 + 1e-9) * 10);
   });
 
   it('juros sobem ou caem 2 pontos só naquela rodada', () => {
@@ -221,6 +222,16 @@ describe('Jornal da Cidade', () => {
     const drawn = nextRound(off).bankRate!;
     expect(nextRound(base, H('Juros sobem')).bankRate).toBeCloseTo(drawn + 0.02, 6);
     expect(nextRound(base, H('Juros caem')).bankRate).toBeCloseTo(Math.max(0.02, drawn - 0.02), 6);
+  });
+
+  it('a manchete de juros mexe só na rodada dela; a Taxa Selic do semestre continua até a rodada 3', () => {
+    const base = game();
+    const up = nextRound(base, H('Juros sobem'));
+    expect(up.selic).toBe(base.selic);
+    expect(up.bankRate).toBeCloseTo(base.selic! + 0.02, 6);
+    const after = nextRound(up, QUIET);
+    expect(after.round).toBe(3);
+    expect(after.bankRate).toBe(base.selic);
   });
 
   it('mercado em alta/baixa move todas as cotas e o boom valoriza todos os bairros para sempre', () => {

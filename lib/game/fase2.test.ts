@@ -474,7 +474,7 @@ describe('score de crédito', () => {
     expect(() => act(ruim, 'ana', { type: 'takeLoan', amount: 1000 })).toThrow(/score de crédito \(150\)/);
   });
 
-  it('taxa do empréstimo = taxa da rodada + ajuste do score (Ruim +5, Bom −2, Excelente −4), mínimo 2%', () => {
+  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), mínimo 2%', () => {
     const st = game();
     st.bankRate = 0.12;
     const rate = (score: number) => {
@@ -542,12 +542,13 @@ describe('score de crédito', () => {
   });
 });
 
-describe('juros sorteados por rodada', () => {
-  it('sorteia a taxa no começo da partida e em cada rodada nova, igual em todos os celulares', () => {
+describe('Taxa Selic sorteada por semestre', () => {
+  it('sorteia a Selic no começo da partida e em cada início de semestre (rodadas 1, 4, 7…), igual em todos os celulares', () => {
     const a = game();
     expect(BANK_RATES.options).toContain(a.bankRate);
+    expect(a.selic).toBe(a.bankRate);
     expect(a.bankRateRound).toBe(1);
-    expect(a.feed.some((f) => f.text.startsWith('Taxa do banco nesta rodada:'))).toBe(true);
+    expect(a.feed.some((f) => f.text.startsWith('Taxa Selic do semestre:') && f.text.endsWith('(até a rodada 3)'))).toBe(true);
     let x = a;
     let y = structuredClone(a);
     const seenX: number[] = [];
@@ -559,9 +560,27 @@ describe('juros sorteados por rodada', () => {
       seenY.push(y.bankRate!);
     }
     expect(seenX).toEqual(seenY);
-    // só muda quando a rodada muda (2 jogadores: a cada 2 passadas)
     expect(x.bankRateRound).toBe(x.round);
-    expect(new Set(seenX).size).toBeGreaterThan(1);
+    // fixa nas 3 rodadas do semestre: só pode mudar ao entrar nas rodadas 4 e 7 (2 jogadores: passadas 6 e 12)
+    const rounds = [...Array(12).keys()].map((k) => Math.floor((k + 1) / 2) + 1);
+    seenX.forEach((v, k) => {
+      if (k > 0 && rounds[k] === rounds[k - 1]) expect(v).toBe(seenX[k - 1]);
+      if (k > 0 && ![4, 7].includes(rounds[k])) expect(v).toBe(seenX[k - 1]);
+    });
+    expect(x.selicRound).toBe(7);
+  });
+
+  it('sala antiga sem Selic guarda a taxa atual até o próximo semestre', () => {
+    let st = game();
+    delete st.selic;
+    delete st.selicRound;
+    st.bankRate = 0.15;
+    while (st.round < 3) st = pass(st);
+    expect(st.bankRate).toBe(0.15);
+    expect(st.selic).toBe(0.15);
+    while (st.round < 4) st = pass(st);
+    expect(st.selicRound).toBe(4);
+    expect(st.feed.some((f) => f.text.startsWith('Rodada 4: Taxa Selic'))).toBe(true);
   });
 
   it('a taxa trava ao pegar; empréstimos existentes não mudam com a rodada', () => {
@@ -573,15 +592,16 @@ describe('juros sorteados por rodada', () => {
     expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
   });
 
-  it('a mudança de taxa vira aviso para todos', () => {
+  it('a mudança da Selic vira aviso para todos', () => {
     let st = game();
     let changed = false;
-    for (let k = 0; k < 20 && !changed; k++) {
+    for (let k = 0; k < 60 && !changed; k++) {
       const before = st.bankRate;
       st = pass(st);
       if (st.bankRate !== before) {
         changed = true;
-        expect(st.feed.find((f) => f.text.includes('taxa do banco'))).toMatchObject({ important: true });
+        expect((st.round - 1) % 3).toBe(0);
+        expect(st.feed.find((f) => f.text.includes('Taxa Selic'))).toMatchObject({ important: true });
       }
     }
     expect(changed).toBe(true);
@@ -624,6 +644,8 @@ describe('salas antigas', () => {
     delete st.seed;
     delete st.bankRate;
     delete st.bankRateRound;
+    delete st.selic;
+    delete st.selicRound;
     delete st.irPending;
     delete st.cal;
     for (const p of st.players) {

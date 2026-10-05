@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { calendarText, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf } from '@/lib/game/rules';
+import { calendarText, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf, yearOf } from '@/lib/game/rules';
 import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
@@ -146,7 +146,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
               )}
               {!mine.out && (
                 <div className="lbl" data-testid="wallet-income">
-                  Renda no ano {(mine.year || 0) + 1}: {money(incomeOf(mine))}
+                  Renda no ano {yearOf(state.round)}: {money(incomeOf(mine))}
                 </div>
               )}
               <DebtLine state={state} me={me} />

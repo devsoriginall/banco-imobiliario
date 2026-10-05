@@ -134,7 +134,7 @@ export const LOAN = {
 };
 
 /**
- * Planos de pagamento do empréstimo. Taxa = taxa da rodada + `addOn` + ajuste do score (mínimo BANK_RATES.minLoanRate),
+ * Planos de pagamento do empréstimo. Taxa = Taxa Selic + `addOn` + ajuste do score (mínimo BANK_RATES.minLoanRate),
  * juros simples sobre o principal, travada ao pegar. Parcelado: total ÷ parcelas, uma por semestre do calendário
  * (CALENDAR), no início da vez do jogador na rodada que abre o semestre; a 1ª no primeiro início de semestre pelo
  * menos LOAN.graceRounds rodadas depois de pegar. Pagamento único: tudo no LOAN.unicoSemesters-ésimo início de semestre.
@@ -217,7 +217,7 @@ export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name:
   { id: 'excelente', name: 'Excelente', from: 800, limitRate: 0.9, rateOffset: -0.04 },
 ];
 
-/** Juros sorteados no começo de cada rodada (sorteio uniforme) e a menor taxa possível de um empréstimo. */
+/** Taxa Selic sorteada no início de cada semestre do calendário (sorteio uniforme) e a menor taxa possível de um empréstimo. */
 export const BANK_RATES = { options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2], minLoanRate: 0.02 };
 
 // ---------- Jornal da Cidade e Bolsa ----------
@@ -532,7 +532,7 @@ export const HEADLINES: Headline[] = [
 export const SAVINGS = {
   /** depósitos e resgates em múltiplos de (o resgate de tudo vale qualquer valor) */
   step: 100,
-  /** rendimento por vez = esta fração da taxa do banco na rodada × saldo, arredondado a $ 10 */
+  /** rendimento por vez = esta fração da Taxa Selic atual × saldo, arredondado a $ 10 */
   rateShare: 0.5,
 };
 

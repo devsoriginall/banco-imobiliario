@@ -85,7 +85,7 @@ describe('calendário da partida', () => {
 });
 
 describe('taxas dos planos', () => {
-  it('taxa da rodada + adicional do plano (2x +0, 3x +2, 4x +4, 5x +6, único +8 pp)', () => {
+  it('Taxa Selic + adicional do plano (2x +0, 3x +2, 4x +4, 5x +6, único +8 pp)', () => {
     const st = game();
     expect(LOAN_PLANS.map((p) => loanRateFor(st, 'ana', p.id))).toEqual([0.1, 0.12, 0.14, 0.16, 0.18]);
     // sem plano: a "sua taxa" da aba Banco, igual ao 2x
