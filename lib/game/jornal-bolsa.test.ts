@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { COMPANY_IDX, DECISIONS, HEADLINES, HOOD, SHARE_PRICE, STOCK } from './data';
 import {
   applyAction,
+  dividendPerShare,
   dividendYield,
   editionsAbout,
+  nextDividendRound,
+  semesterYield,
   equity,
   feeTotal,
   hoodBase,
@@ -208,7 +211,8 @@ describe('Jornal da Cidade', () => {
     expect(feeTotal(b, HORIZONTE, 7)).toBe(Math.round((7 * 500 * (price / 200) * 1.5) / 10) * 10);
     b = nextRound(b, QUIET);
     b = nextRound(b, QUIET);
-    expect(feeTotal(b, HORIZONTE, 7)).toBe(Math.round((7 * 500 * (sharePrice(b, HORIZONTE) / 200)) / 10) * 10);
+    // + 1e-9: 7 × 500 × 230 ÷ 200 = 4.025 em ponto flutuante dá 402,4999…; a regra arredonda a $ 10 para cima no meio
+    expect(feeTotal(b, HORIZONTE, 7)).toBe(Math.round((7 * 500 * (sharePrice(b, HORIZONTE) / 200)) / 10 + 1e-9) * 10);
   });
 
   it('juros sobem ou caem 2 pontos só naquela rodada', () => {
@@ -218,6 +222,16 @@ describe('Jornal da Cidade', () => {
     const drawn = nextRound(off).bankRate!;
     expect(nextRound(base, H('Juros sobem')).bankRate).toBeCloseTo(drawn + 0.02, 6);
     expect(nextRound(base, H('Juros caem')).bankRate).toBeCloseTo(Math.max(0.02, drawn - 0.02), 6);
+  });
+
+  it('a manchete de juros mexe só na rodada dela; a Taxa Selic do semestre continua até a rodada 3', () => {
+    const base = game();
+    const up = nextRound(base, H('Juros sobem'));
+    expect(up.selic).toBe(base.selic);
+    expect(up.bankRate).toBeCloseTo(base.selic! + 0.02, 6);
+    const after = nextRound(up, QUIET);
+    expect(after.round).toBe(3);
+    expect(after.bankRate).toBe(base.selic);
   });
 
   it('mercado em alta/baixa move todas as cotas e o boom valoriza todos os bairros para sempre', () => {
@@ -287,19 +301,48 @@ describe('Bolsa', () => {
     expect(feeTotal(st, VOX, 7)).toBe(3500);
   });
 
-  it('paga dividendos a cada rodada a quem tem cotas, do banco, e conta como renda do IR', () => {
+  it('paga dividendos a cada semestre (rodadas 4, 7, 10…) a quem tem cotas, do banco, e conta como renda do IR', () => {
     let st = giveShares(game(), VOX, { ana: 3, beto: 1 });
+    expect(nextDividendRound(1)).toBe(4);
+    expect([2, 3, 4, 5, 6, 7].map(nextDividendRound)).toEqual([4, 4, 7, 7, 7, 10]);
+    // rodadas 2 e 3: sem dividendos
+    st = nextRound(st, QUIET);
+    st = nextRound(st, QUIET);
+    expect(st.round).toBe(3);
+    expect(st.tx.some((t) => t.kind === 'dividend')).toBe(false);
     const a0 = bal(st, 'ana');
     const inc0 = incomeOf(pl(st, 'ana'));
-    st = nextRound(st, QUIET);
-    const each = Math.round(sharePrice(st, VOX) * STOCK.yield);
+    st = nextRound(st, QUIET); // rodada 4: início do 2º semestre do ano 1
+    expect(semesterYield(st, VOX)).toBe(0.09);
+    const each = Math.round(sharePrice(st, VOX) * STOCK.yield * 3);
+    expect(dividendPerShare(st, VOX)).toBe(each);
     const tx = st.tx.find((t) => t.kind === 'dividend' && t.to === 'ana' && t.space === VOX)!;
     expect(tx).toMatchObject({ from: 'bank', amount: 3 * each });
-    expect(tx.reason).toContain('Dividendos da Vox Telecom: 3 cotas');
+    expect(tx.reason).toContain('Dividendos do semestre da Vox Telecom: 3 cotas');
     expect(st.tx.find((t) => t.kind === 'dividend' && t.to === 'beto')!.amount).toBe(each);
     expect(bal(st, 'ana')).toBe(a0 + 3 * each);
     expect(incomeOf(pl(st, 'ana'))).toBe(inc0 + 3 * each);
-    expect(st.feed.some((f) => f.text.startsWith('Dividendos da Vox Telecom:'))).toBe(true);
+    expect(st.feed.some((f) => f.text.startsWith('Dividendos do semestre da Vox Telecom:'))).toBe(true);
+    // rodadas 5 e 6: nada; rodada 7 paga de novo (renda do ano 2)
+    const n4 = st.tx.filter((t) => t.kind === 'dividend').length;
+    st = nextRound(nextRound(st, QUIET), QUIET);
+    expect(st.tx.filter((t) => t.kind === 'dividend').length).toBe(n4);
+  });
+
+  it('efeito no rendimento só vale no pagamento se a rodada do pagamento cai na janela', () => {
+    let st = giveShares(game(), VOX, { ana: 1 });
+    st = nextRound(nextRound(st, QUIET), QUIET); // rodada 3
+    const s = structuredClone(st);
+    s.stocks![VOX].yieldMods = [
+      { pp: 2, from: 3, until: 3, why: 'Fora da janela' },
+      { pp: 1, from: 4, until: 5, why: 'Dentro da janela' },
+    ];
+    expect(semesterYield(s, VOX, 4)).toBe(0.12); // (3% + 1 pp) × 3
+    const paid = nextRound(s, QUIET);
+    expect(paid.tx.find((t) => t.kind === 'dividend')!.amount).toBe(Math.round(sharePrice(paid, VOX) * 0.12));
+    const strike = structuredClone(st);
+    strike.stocks![VOX].yieldMods = [{ zero: true, from: 4, until: 4, why: 'Greve' }];
+    expect(nextRound(strike, QUIET).tx.some((t) => t.kind === 'dividend')).toBe(false);
   });
 
   it('vende cotas de volta à empresa pela cotação, na sua vez, sem contar como renda', () => {
@@ -451,6 +494,7 @@ describe('salas antigas e Jornal/Bolsa desligados', () => {
     st = nextRound(st);
     expect(st.jornal).toHaveLength(1);
     expect(Object.keys(st.stocks!)).toHaveLength(6);
+    while (st.round < 4) st = nextRound(st);
     expect(st.tx.some((t) => t.kind === 'dividend' && t.to === 'ana')).toBe(true);
   });
 
@@ -462,7 +506,7 @@ describe('salas antigas e Jornal/Bolsa desligados', () => {
     st = act(st, 'ana', { type: 'start' });
     st = giveShares(st, VOX, { ana: 6 });
     expect(st.jornal).toEqual([]);
-    for (let k = 0; k < 3; k++) st = nextRound(st);
+    for (let k = 0; k < 4; k++) st = nextRound(st);
     expect(st.jornal).toEqual([]);
     expect(sharePrice(st, VOX)).toBe(SHARE_PRICE);
     expect(st.tx.some((t) => t.kind === 'dividend')).toBe(false);

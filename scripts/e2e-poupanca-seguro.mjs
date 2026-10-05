@@ -94,6 +94,9 @@ await ana.getByTestId('finance-chooser').waitFor();
 check((await text(ana.getByTestId('finance-entrada'))) === brl(entrada), 'entrada no simulador');
 await ana.locator('[data-testid="finance-sim"] .loan-sim-row[data-plan="x4"]').click();
 await ana.getByTestId('finance-summary').waitFor();
+const finSummary = await text(ana.getByTestId('finance-summary'));
+console.log('Resumo:', finSummary);
+check(finSummary.includes('4 parcelas semestrais, nas rodadas 4, 7, 10 e 13'), 'parcelas semestrais do financiamento');
 await calm(ana);
 await ana.evaluate(() => document.querySelector('[data-testid="finance-chooser"]').scrollIntoView({ block: 'start' }));
 await shot(ana, 'financiamento-1-planos.png');
@@ -186,7 +189,7 @@ await ana.getByRole('button', { name: 'Fechar' }).click();
 check((await wallet(ana)) === beforeOut + 100, 'resgate de $ 100 na carteira');
 check((await text(ana.getByTestId('savings-balance'))) === '$ 900', 'poupança com $ 900');
 
-// 8. Beto passa a vez: rodada 2, a poupança da Ana rende e a 1ª parcela do financiamento é cobrada
+// 8. Beto passa a vez: rodada 2, a poupança da Ana rende; a 1ª parcela do financiamento só vem na rodada 4 (semestre)
 await front(beto);
 await beto.locator(`[data-space="${FERIADO}"]`).click();
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
@@ -199,14 +202,16 @@ await tab(ana, 'Banco');
 const saved = num(await ana.getByTestId('savings-balance').textContent());
 console.log('Poupança depois de render:', brl(saved));
 check(saved > 900 && saved % 10 === 0, 'poupança rendeu (múltiplo de $ 10)');
-check((await text(ana.getByTestId(`fin-${NOVE_JULHO}`))).includes('Faltam 3 parcelas'), 'parcela 1 do financiamento cobrada');
+const finCard = await text(ana.getByTestId(`fin-${NOVE_JULHO}`));
+check(finCard.includes('Faltam 4 parcelas'), 'nenhuma parcela cobrada na rodada 2');
+check(finCard.includes('Próxima parcela (1/4)') && finCard.includes('na rodada 4 (início do 2º semestre do ano 1)'), `próxima parcela no cartão: ${finCard}`);
 await calm(ana);
 await scrollTo(ana, 'savings-card');
 await shot(ana, 'poupanca-3-rendimento.png');
 await tab(ana, 'Extrato');
 await ana.getByRole('button', { name: 'Só os meus' }).click();
 await ana.getByText('Rendimento da poupança').first().waitFor();
-check((await ana.getByText('Parcela 1/4 do financiamento da Av. 9 de Julho').count()) > 0, 'parcela no extrato');
+check((await ana.getByText('Parcela 1/4 do financiamento da Av. 9 de Julho').count()) === 0, 'nenhuma parcela no extrato antes do semestre');
 await calm(ana);
 await shot(ana, 'poupanca-4-extrato.png');
 await tab(ana, 'Placar');

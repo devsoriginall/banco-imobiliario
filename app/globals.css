@@ -55,6 +55,7 @@ h3{font-size:15px;font-weight:600}
 /* Barra superior */
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .top .meta{font-size:13px;color:var(--muted)}
+.top .meta.cal{color:var(--accent);font-weight:600}
 .players{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .player{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;gap:10px;align-items:center;min-width:0}
 .player.current{border:2px solid var(--accent);padding:9px 11px}
@@ -138,6 +139,7 @@ h3{font-size:15px;font-weight:600}
 .banner{border-radius:14px;padding:12px 14px;font-size:14px;display:flex;gap:10px;align-items:flex-start}
 .banner.warn{background:var(--warn-soft);color:var(--warn)}
 .banner.info{background:var(--info-soft);color:var(--info)}
+.banner.ir-pending{align-items:center;justify-content:space-between;flex-wrap:wrap}
 .banner.bad{background:var(--bad-soft);color:var(--bad)}
 .group-head{display:flex;align-items:center;gap:8px;margin-top:4px}
 .dice{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}

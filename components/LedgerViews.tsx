@@ -2,14 +2,14 @@
 import { useState } from 'react';
 import { COMPANY_IDX, IR } from '@/lib/game/data';
 import { fmtTime, money } from '@/lib/game/format';
-import { creditOf, debtOf, equity, finDebtOf, findPlayer, incomeOf, irTax, pname, savingsOf, sharesOf } from '@/lib/game/rules';
+import { creditOf, debtOf, equity, finDebtOf, findPlayer, incomeOf, irTax, pname, savingsOf, sharesOf, yearOf, yearRounds } from '@/lib/game/rules';
 import type { GameState } from '@/lib/game/types';
 import { CreditPill } from './Credit';
 import { Avatar } from './ui';
 
 const IR_TXT: Record<string, string> = { isento: 'isento', declarou: 'declarado', pego: 'malha fina', passou: 'entregue' };
 
-/** Renda do ano (desde a última volta) e o IR que ela daria agora. */
+/** Renda do ano do calendário em curso e o IR que ela daria agora. */
 function IncomeBox({ state, me }: { state: GameState; me: string }) {
   const p = findPlayer(state, me);
   if (!p || p.out) return null;
@@ -18,7 +18,9 @@ function IncomeBox({ state, me }: { state: GameState; me: string }) {
   return (
     <div className="kv" data-testid="income-box">
       <div>
-        <span>Renda no ano {(p.year || 0) + 1}</span>
+        <span>
+          Renda no ano {yearOf(state.round)} (rodadas {yearRounds(yearOf(state.round)).from} a {yearRounds(yearOf(state.round)).to})
+        </span>
         <span className="num">{money(inc)}</span>
       </div>
       <div>

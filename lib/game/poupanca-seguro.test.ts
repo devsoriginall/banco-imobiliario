@@ -64,6 +64,11 @@ function toAna(st: GameState, round: number): GameState {
   while (!(st.round === round && st.turn === 0)) st = pass(st);
   return st;
 }
+/** Passa até a vez do Beto na rodada anterior a `round` (a próxima passada começa a vez da Ana em `round`). */
+function toEve(st: GameState, round: number): GameState {
+  while (!(st.round === round - 1 && st.turn === 1)) st = pass(st);
+  return st;
+}
 function forceHeadline(st: GameState, hi: number): GameState {
   const s = structuredClone(st);
   s.jornalDeck = [hi, ...HEADLINES.map((_, i) => i).filter((i) => i !== hi)];
@@ -118,7 +123,7 @@ describe('poupança', () => {
     expect(() => act(st, 'ana', { type: 'withdraw', amount: 250 })).toThrow(/múltiplos/);
   });
 
-  it('rende metade da taxa da rodada no início de cada vez sua, a $ 10, e conta como renda', () => {
+  it('rende metade da Taxa Selic no início de cada vez sua, a $ 10, e conta como renda', () => {
     let st = game();
     st = act(st, 'ana', { type: 'deposit', amount: 1000 });
     st = pass(st); // vez do Beto: a Ana não rende
@@ -150,7 +155,7 @@ describe('poupança', () => {
     const owed = st.loans!.ana.principal + st.loans!.ana.interest;
     pl(st, 'ana').balance = 300;
     pl(st, 'ana').savings = 5000;
-    st = toAna(st, 6);
+    st = toAna(st, 7);
     expect(st.loans?.ana).toBeUndefined();
     expect(st.props[NOVE_JULHO]?.owner).toBe('ana'); // nada penhorado
     const y = st.tx.filter((t) => t.kind === 'rendimento' && t.to === 'ana').reduce((a, t) => a + t.amount, 0);
@@ -304,14 +309,20 @@ describe('financiamento na compra', () => {
     // a dívida sai do patrimônio líquido; o empréstimo continua disponível ao mesmo tempo
     expect(finDebtOf(st, 'ana')).toBe(912);
     expect(equity(st, pl(st, 'ana'))).toBe(24800 + 1000 - 912);
+    expect(f).toMatchObject({ takenRound: 1, firstRound: 4, dueRound: 13 });
+    expect(n(pix[0].reason)).toContain('4 parcelas semestrais (3 de $ 230 e 1 de $ 222), rodadas 4 a 13');
     st = act(st, 'ana', { type: 'endTurn', again: false });
-    st = pass(st); // rodada 2: parcela 1
+    st = toAna(st, 3); // nada nas rodadas 2 e 3: a 1ª parcela é no semestre seguinte
+    expect(bal(st, 'ana')).toBe(24800);
+    st = toAna(st, 4); // rodada 4: parcela 1
     expect(bal(st, 'ana')).toBe(24800 - 230);
     expect(finOf(st, NOVE_JULHO)!.parcelsPaid).toBe(1);
     expect(st.tx.some((t) => t.reason === 'Parcela 1/4 do financiamento da Av. 9 de Julho' && t.amount === 230)).toBe(true);
     expect(creditOf(pl(st, 'ana'))).toBe(CREDIT.start + CREDIT.parcelPaid);
     // até a última: quitado e o imóvel deixa de estar alienado
-    st = toAna(st, 5);
+    st = toAna(st, 10);
+    expect(finOf(st, NOVE_JULHO)!.parcelsPaid).toBe(3);
+    st = toAna(st, 13);
     expect(finOf(st, NOVE_JULHO)).toBeNull();
     expect(bal(st, 'ana')).toBe(24800 - 912);
     expect(st.props[NOVE_JULHO].owner).toBe('ana');
@@ -352,7 +363,7 @@ describe('financiamento na compra', () => {
     st = act(st, 'ana', { type: 'build', idx: NOVE_JULHO, tier: 'basica', finance: 'unico' });
     expect(st.props[NOVE_JULHO]).toMatchObject({ houses: 1, tier: 'basica' });
     const f = finOf(st, NOVE_JULHO)!;
-    expect(f).toMatchObject({ what: 'casa', price: 400, entrada: 80, principal: 320, plan: 'unico', dueRound: 6 });
+    expect(f).toMatchObject({ what: 'casa', price: 400, entrada: 80, principal: 320, plan: 'unico', firstRound: 4, dueRound: 7 });
     expect(f.parcels).toBeUndefined();
     expect(finBadge(f)).toBe('Financiado · falta 1 parcela');
     expect(bal(st, 'ana')).toBe(24920);
@@ -381,9 +392,10 @@ describe('financiamento na compra', () => {
     st = act(st, 'ana', { type: 'land', idx: NOVE_JULHO });
     st = act(st, 'ana', { type: 'buy', finance: 'x2' });
     st = act(st, 'ana', { type: 'endTurn', again: false });
+    st = structuredClone(toEve(st, 4));
     pl(st, 'ana').balance = 100;
     pl(st, 'ana').savings = 200;
-    st = pass(st); // rodada 2: parcela de $ 440 (800 + 10% = 880 em 2x)
+    st = pass(st); // rodada 4: parcela de $ 440 (800 + 10% = 880 em 2x)
     expect(st.props[NOVE_JULHO]).toBeUndefined(); // voltou ao banco
     expect(finOf(st, NOVE_JULHO)).toBeNull();
     expect(st.props[BRASIL].owner).toBe('ana'); // o outro imóvel fica
@@ -400,6 +412,7 @@ describe('financiamento na compra', () => {
     st = act(st, 'ana', { type: 'land', idx: PAULISTA });
     st = act(st, 'ana', { type: 'build', idx: PAULISTA, tier: 'intermediaria', finance: 'x2' }); // $ 1.000, entrada $ 200
     st = act(st, 'ana', { type: 'endTurn', again: false });
+    st = structuredClone(toEve(st, 4));
     pl(st, 'ana').balance = 0;
     st = pass(st);
     expect(st.props[PAULISTA]).toBeUndefined();

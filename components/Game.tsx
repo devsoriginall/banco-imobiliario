@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextParcel, savingsOf } from '@/lib/game/rules';
+import { calendarText, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf, yearOf } from '@/lib/game/rules';
 import type { Action, GameState, Tx } from '@/lib/game/types';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
@@ -49,8 +49,14 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   const [confirmReset, setConfirmReset] = useState(false);
   /** resultado de sonegar sem cair na malha fina (imposto que deixou de pagar) */
   const [irPassed, setIrPassed] = useState<number | null>(null);
-  const irMine = state.irPending?.pid === me && !state.winner ? state.irPending : null;
+  const irPending = state.irPending?.pid === me && !state.winner ? state.irPending : null;
   const mine = findPlayer(state, me);
+  /** declaração deixada de lado para levantar dinheiro (volta sozinha se mudar o ano ou cair na malha fina) */
+  const irKey = irPending ? `${state.code}:${me}:${irPending.year}:${irPending.caught ? 'malha' : 'ir'}` : null;
+  const [irDeferred, setIrDeferred] = useState<string | null>(null);
+  const irHidden = !!irKey && irDeferred === irKey;
+  const irMine = irPending && !irHidden ? irPending : null;
+  const irShort = !!irPending && (mine?.balance ?? 0) < irPending.due;
   const cur = currentPlayer(state);
   /** ano isento que acabou de fechar: mostra a declaração uma vez neste celular */
   const lastIr = mine?.irLast;
@@ -111,6 +117,11 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
             <div className="meta">
               Sala {state.code} · Rodada {state.round}
             </div>
+            {state.phase === 'playing' && (
+              <div className="meta cal" data-testid="calendar">
+                {calendarText(state.round)}
+              </div>
+            )}
           </div>
           <div className="row" style={{ gap: 8 }}>
             {state.prev && state.prevBy === me && (
@@ -141,7 +152,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
               )}
               {!mine.out && (
                 <div className="lbl" data-testid="wallet-income">
-                  Renda no ano {(mine.year || 0) + 1}: {money(incomeOf(mine))}
+                  Renda no ano {yearOf(state.round)}: {money(incomeOf(mine))}
                 </div>
               )}
               <DebtLine state={state} me={me} />
@@ -175,6 +186,14 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
 
         <TradeInbox ui={ui} />
 
+        {tab === 'jogada' && irHidden && irPending && (
+          <div className="banner warn ir-pending" data-testid="ir-pending-banner">
+            <span>Declaração do IR pendente: entregue antes de passar a vez.</span>
+            <button className="btn small" onClick={() => setIrDeferred(null)}>
+              Abrir a declaração
+            </button>
+          </div>
+        )}
         {tab === 'jogada' && <PlayView ui={ui} />}
         {tab === 'imoveis' && <PropsView ui={ui} />}
         {tab === 'mercado' && <MercadoView ui={ui} seg={seg} setSeg={setSeg} stock={stock} setStock={setStock} />}
@@ -220,6 +239,8 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       {irMine && !pixReq && !tradeWith && !receipt && !pushed && (
         <IrModal
           ir={irMine}
+          short={irShort}
+          onRaise={() => setIrDeferred(irKey)}
           onDeclare={() => setPixReq({ action: { type: 'declareIR' }, title: irMine.caught ? 'Malha fina: imposto + multa' : 'Imposto de renda' })}
           onEvade={async () => {
             const r = await run({ type: 'evadeIR' });
@@ -270,12 +291,14 @@ function DebtLine({ state, me }: { state: GameState; me: string }) {
   );
 }
 
-/** Parcelas de financiamento cobradas no início da próxima vez. */
+/** Rodada da próxima vez do jogador: ainda nesta rodada se a vez vem depois da atual, senão na próxima. */
+const nextTurnRound = (state: GameState, me: string) => (state.players.findIndex((p) => p.id === me) > state.turn ? state.round : state.round + 1);
+
+/** Parcelas de financiamento cobradas no início da próxima vez (só no início de semestre). */
 function FinLine({ state, me }: { state: GameState; me: string }) {
   const fins = finsOf(state, me);
   if (!fins.length) return null;
-  // rodada da próxima vez: ainda nesta rodada se a vez vem depois da atual, senão na próxima
-  const next = state.players.findIndex((p) => p.id === me) > state.turn ? state.round : state.round + 1;
+  const next = nextTurnRound(state, me);
   const due = fins.reduce((a, f) => {
     const np = nextParcel(f);
     if (np) return a + (np.round <= next ? np.amount : 0);
@@ -295,10 +318,11 @@ function LoanLine({ state, me }: { state: GameState; me: string }) {
   if (!loan) return null;
   const next = nextParcel(loan);
   if (next) {
-    const short = (findPlayer(state, me)?.balance ?? 0) < next.amount;
+    const soon = next.round <= nextTurnRound(state, me);
+    const short = soon && (findPlayer(state, me)?.balance ?? 0) < next.amount;
     return (
       <div className={`debt${short ? ' urgent' : ''}`} data-testid="wallet-debt">
-        Parcela {money(next.amount)} na próxima vez
+        Parcela {money(next.amount)} {soon ? 'na próxima vez' : `na rodada ${nextChargeRound(loan)}`}
       </div>
     );
   }

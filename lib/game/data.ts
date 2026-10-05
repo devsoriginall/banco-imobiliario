@@ -125,16 +125,19 @@ export const LOAN = {
   step: 500,
   /** juros simples sobre o principal, cobrados uma vez */
   interest: 0.1,
-  /** pagamento único: vence no início da vez do jogador, esta quantidade de rodadas depois de pegar */
-  rounds: 5,
+  /** pagamento único: vence no início do semestre de número `unicoSemesters` contado pela regra da 1ª parcela */
+  unicoSemesters: 2,
+  /** a 1ª cobrança é no primeiro início de semestre pelo menos esta quantidade de rodadas depois de pegar */
+  graceRounds: 2,
   /** parcelas arredondadas para múltiplos de (a última absorve a diferença) */
   parcelRound: 10,
 };
 
 /**
- * Planos de pagamento do empréstimo. Taxa = taxa da rodada + `addOn` + ajuste do score (mínimo BANK_RATES.minLoanRate),
- * juros simples sobre o principal, travada ao pegar. Parcelado: total ÷ parcelas, uma no início de cada vez do jogador
- * a partir da rodada seguinte. Pagamento único: tudo no início da vez, LOAN.rounds rodadas depois.
+ * Planos de pagamento do empréstimo. Taxa = Taxa Selic + `addOn` + ajuste do score (mínimo BANK_RATES.minLoanRate),
+ * juros simples sobre o principal, travada ao pegar. Parcelado: total ÷ parcelas, uma por semestre do calendário
+ * (CALENDAR), no início da vez do jogador na rodada que abre o semestre; a 1ª no primeiro início de semestre pelo
+ * menos LOAN.graceRounds rodadas depois de pegar. Pagamento único: tudo no LOAN.unicoSemesters-ésimo início de semestre.
  */
 export const LOAN_PLANS: { id: LoanPlanId; name: string; short: string; parcels: number; addOn: number }[] = [
   { id: 'x2', name: 'Parcelado em 2x', short: '2x', parcels: 2, addOn: 0 },
@@ -163,7 +166,13 @@ export const DEFAULT_TIER: TierId = 'intermediaria';
 /** Valorização do bairro (grupo de cor): multiplicador do preço e dos aluguéis, começa em 1,0. */
 export const HOOD = { start: 1, min: 0.5, max: 2 };
 
-/** Imposto de renda a cada volta (1 volta = 1 ano). */
+/**
+ * Calendário da partida, igual para todos: 1 ano = 6 rodadas (ano 1 = rodadas 1 a 6), 2 semestres de 3 rodadas.
+ * O IR fecha para todos quando o ano acaba; as parcelas são cobradas no início de cada semestre.
+ */
+export const CALENDAR = { roundsPerYear: 6, roundsPerSemester: 3 };
+
+/** Imposto de renda a cada ano do calendário (CALENDAR). */
 export const IR = {
   /** alíquota sobre a renda do ano acima da isenção */
   rate: 0.15,
@@ -208,7 +217,7 @@ export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name:
   { id: 'excelente', name: 'Excelente', from: 800, limitRate: 0.9, rateOffset: -0.04 },
 ];
 
-/** Juros sorteados no começo de cada rodada (sorteio uniforme) e a menor taxa possível de um empréstimo. */
+/** Taxa Selic sorteada no início de cada semestre do calendário (sorteio uniforme) e a menor taxa possível de um empréstimo. */
 export const BANK_RATES = { options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2], minLoanRate: 0.02 };
 
 // ---------- Jornal da Cidade e Bolsa ----------
@@ -224,7 +233,7 @@ export const STOCK = {
   drift: 0.05,
   /** rodadas guardadas no histórico (gráfico) */
   history: 12,
-  /** dividendo por cota a cada rodada = cotação × rendimento */
+  /** rendimento por rodada; o dividendo é pago a cada semestre (CALENDAR) = cotação × rendimento × 3 rodadas (9%) */
   yield: 0.03,
 };
 
@@ -523,7 +532,7 @@ export const HEADLINES: Headline[] = [
 export const SAVINGS = {
   /** depósitos e resgates em múltiplos de (o resgate de tudo vale qualquer valor) */
   step: 100,
-  /** rendimento por vez = esta fração da taxa do banco na rodada × saldo, arredondado a $ 10 */
+  /** rendimento por vez = esta fração da Taxa Selic atual × saldo, arredondado a $ 10 */
   rateShare: 0.5,
 };
 

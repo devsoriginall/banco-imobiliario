@@ -1,4 +1,4 @@
-// Teste de ponta a ponta da fase 2 (terreno na compra e três padrões de casa na construção, IR a cada volta, score de crédito e juros por rodada),
+// Teste de ponta a ponta da fase 2 (terreno na compra e três padrões de casa na construção, IR a cada ano do calendário, score de crédito e juros por rodada),
 // no modo local (sem Supabase), com dois "celulares" (duas abas do mesmo contexto do navegador).
 //
 //   npm run build && npm start   # em outro terminal (sem as variáveis do Supabase)
@@ -30,6 +30,10 @@ const noToasts = (page) => page.waitForFunction(() => document.querySelectorAll(
 const fail = (msg) => {
   console.error('FALHOU:', msg);
   process.exitCode = 1;
+};
+const brl = (n) => `$ ${n.toLocaleString('pt-BR')}`;
+const check = (cond, what) => {
+  if (!cond) fail(what);
 };
 const expectEq = (got, want, what) => {
   if (got !== want) fail(`${what}: esperado "${want}", veio "${got}"`);
@@ -105,35 +109,79 @@ await ana.getByRole('tab', { name: /Imóveis/ }).click();
 expectEq(await text(ana.getByTestId('tier-1')), 'Terreno', 'terreno em Imóveis');
 await ana.getByRole('tab', { name: /Jogada/ }).click();
 
-// 5. IR: cenário de um ano com mais renda (como se a Ana tivesse recebido mais $ 6.000 de aluguéis no ano).
-// Grava direto na sala do modo local e avisa as abas, como faria outro celular.
+// 5. IR do calendário: cenário de fim do ano 1 com mais renda (como se a Ana tivesse recebido mais $ 6.000 de aluguéis
+// no ano). Grava direto na sala do modo local e avisa as abas, como faria outro celular: rodada 6, vez do Beto.
 await ana.evaluate((code) => {
   const k = `bi-room:${code}`;
   const snap = JSON.parse(localStorage.getItem(k));
   const p = snap.state.players.find((x) => x.name === 'Ana');
   p.income = (p.income || 0) + 6000;
+  // quase todo o dinheiro está na poupança: a carteira não cobre o IR e ela precisa levantar dinheiro
+  p.savings = p.balance - 300;
+  p.balance = 300;
+  snap.state.round = 6;
+  snap.state.turn = 1;
+  snap.state.prev = null;
   snap.version += 1;
   localStorage.setItem(k, JSON.stringify(snap));
   new BroadcastChannel('banco-imobiliario-rooms').postMessage({ code });
 }, code);
 await ana.getByTestId('wallet-income').filter({ hasText: '6.060' }).waitFor();
-// Ana completa a volta parando no Início: renda de $ 6.060, isenção de $ 2.000, IR de 15% = $ 609
-await ana.locator('[data-space="0"]').click();
+expectEq(await text(ana.getByTestId('calendar')), 'Ano 1 · rodada 6 de 6', 'calendário na rodada 6');
+// Beto passa a vez: começa a rodada 7 (ano 2) e o ano 1 fecha para todos; a Ana declara na primeira vez dela no ano 2
+await front(beto);
+await beto.getByText('É a sua vez').waitFor();
+await noToasts(beto);
+await beto.locator('[data-space="20"]').click();
+await beto.getByRole('button', { name: 'Passar a vez' }).click();
+await front(ana);
+// renda de $ 6.060, isenção de $ 2.000, IR de 15% = $ 609
 await ana.getByRole('dialog', { name: 'Declaração do IR' }).waitFor();
 const tax = await text(ana.getByTestId('ir-tax'));
-console.log('IR do ano 1:', tax);
+const irHead = await text(ana.locator('.ir-head'));
+console.log('IR do ano 1:', tax, '·', irHead);
 expectEq(tax, '$ 609', 'imposto do ano');
+if (!irHead.includes('Declaração do ano 1') || !irHead.includes('rodadas 1 a 6')) fail(`cabeçalho da declaração: ${irHead}`);
+expectEq(await text(ana.getByTestId('calendar')), 'Ano 2 · rodada 1 de 6', 'calendário no ano novo');
+// sem saldo: "Levantar dinheiro" fecha a declaração, que fica pendente com um aviso na Jogada
+check(await ana.getByRole('button', { name: /Declarar e pagar/ }).isDisabled(), 'declarar desativado sem saldo');
+await noToasts(ana);
+await shot(ana, 'ir-sem-saldo-1-levantar.png');
+await ana.getByRole('button', { name: 'Levantar dinheiro' }).click();
+await ana.getByTestId('ir-pending-banner').waitFor();
+await ana.evaluate(() => window.scrollTo(0, 0));
+await shot(ana, 'ir-sem-saldo-2-pendente.png');
+expectEq(await text(ana.getByTestId('ir-pending-banner')), 'Declaração do IR pendente: entregue antes de passar a vez.Abrir a declaração', 'aviso da declaração pendente');
+await ana.getByRole('tab', { name: /Banco/ }).click();
+await ana.getByTestId('savings-card').getByRole('button', { name: 'Resgatar tudo' }).click();
+await ana.locator('.sheet').getByText('Resgate da poupança').first().waitFor();
+await ana.getByRole('button', { name: 'Fechar' }).click();
+// o rendimento da poupança no início da vez (ano 2) muda os valores seguintes: guarda a diferença
+const extra = (await wallet(ana)).replace(/\D/g, '') - 24060;
+console.log('Rendimento da poupança no início da vez:', extra);
+await ana.getByRole('tab', { name: /Jogada/ }).click();
+await ana.getByTestId('ir-pending-banner').getByRole('button', { name: 'Abrir a declaração' }).click();
+await ana.getByRole('dialog', { name: 'Declaração do IR' }).waitFor();
+expectEq(await ana.getByRole('button', { name: 'Levantar dinheiro' }).count(), 0, 'sem "Levantar dinheiro" com saldo');
 await noToasts(ana);
 await shot(ana, 'ir-1-declaracao.png');
+await shot(ana, 'ir-ano-calendario.png');
 await ana.getByRole('button', { name: /Declarar e pagar/ }).click();
 await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
 await ana.locator('.sheet').getByText('Imposto de renda pago').waitFor();
 await shot(ana, 'ir-2-comprovante.png');
 await ana.getByRole('button', { name: 'Fechar' }).click();
+await noToasts(ana);
+await ana.evaluate(() => window.scrollTo(0, 0));
+await shot(ana, 'calendario-1-cabecalho.png');
+// a declaração não volta a aparecer; o Início só paga o pró-labore
+await ana.locator('[data-space="0"]').click();
+await ana.getByText('O pró-labore já entrou.').waitFor();
+expectEq(await ana.getByRole('dialog', { name: 'Declaração do IR' }).count(), 0, 'sem segunda declaração no Início');
 const ir = { anaCarteira: await wallet(ana), renda: await text(ana.getByTestId('wallet-income')) };
 console.log('Depois do IR:', JSON.stringify(ir));
-expectEq(ir.anaCarteira, '$ 25.451', 'carteira depois do pró-labore e do IR'); // 24.060 + 2.000 − 609
-expectEq(ir.renda, 'Renda no ano 2: $ 0', 'renda do novo ano');
+expectEq(ir.anaCarteira, brl(25451 + extra), 'carteira depois do IR e do pró-labore'); // 24.060 − 609 + 2.000
+expectEq(ir.renda, `Renda no ano 2: ${brl(extra)}`, 'renda do novo ano (o rendimento da poupança já conta no ano 2)');
 
 // 6. Ana tira dupla e cai no próprio terreno: o site da imobiliária oferece a primeira casa em 3 padrões
 await ana.getByRole('button', { name: 'Tirei dupla: jogar de novo' }).click();
@@ -184,7 +232,7 @@ await ana.getByRole('button', { name: 'Fechar' }).click();
 const built = { why: await text(ana.getByTestId('build-why')), carteira: await wallet(ana) };
 console.log('Depois de construir:', JSON.stringify(built));
 expectEq(built.why, 'Sem construir agora: você já construiu nesta rodada.', 'motivo depois de construir');
-expectEq(built.carteira, '$ 24.801', 'carteira depois de construir');
+expectEq(built.carteira, brl(24801 + extra), 'carteira depois de construir');
 if (!(await ana.getByTestId('rent-table').textContent()).includes('1 casa · atual')) fail('aluguel atual com 1 casa');
 await ana.getByRole('tab', { name: /Imóveis/ }).click();
 expectEq(await ana.getByRole('button', { name: /^(Casa|Hotel) \$/ }).count(), 0, 'botão de construir em Imóveis');
@@ -196,7 +244,7 @@ await ana.getByRole('tab', { name: /Extrato/ }).click();
 await ana.getByTestId('income-box').waitFor();
 await shot(ana, 'ir-3-extrato.png');
 
-// 7. Banco: taxa da rodada e score (500 + 20 por declarar o IR)
+// 7. Banco: Taxa Selic e score (500 + 20 por declarar o IR)
 await ana.getByRole('tab', { name: /Banco/ }).click();
 const bank = {
   taxa: await text(ana.getByTestId('bank-rate')),
@@ -205,10 +253,11 @@ const bank = {
   sua: await text(ana.getByTestId('my-rate')),
 };
 console.log('Banco:', JSON.stringify(bank));
-if (!/^Taxa do banco nesta rodada: (5|8|10|12|15|20)%$/.test(bank.taxa)) fail(`taxa da rodada: ${bank.taxa}`);
+// Taxa Selic sorteada no início do semestre: na rodada 7 (ano 2, 1º semestre) vale até a rodada 9
+if (!/^Taxa Selic do semestre: (5|8|10|12|15|20)% \(até a rodada 9\)$/.test(bank.taxa)) fail(`Taxa Selic: ${bank.taxa}`);
 expectEq(bank.score, '520', 'score depois de declarar');
 expectEq(bank.faixa, 'Regular', 'faixa do score');
-expectEq(bank.sua, bank.taxa.split(': ')[1], 'taxa do empréstimo com score Regular');
+expectEq(bank.sua, bank.taxa.split(': ')[1].split(' ')[0], 'taxa do empréstimo com score Regular');
 await noToasts(ana);
 await ana.getByTestId('bank-rate-card').scrollIntoViewIfNeeded();
 await ana.evaluate(() => document.querySelector('[data-testid="bank-rate-card"]').scrollIntoView({ block: 'start' }));
@@ -221,6 +270,9 @@ await shot(ana, 'credito-2-emprestimo.png');
 await ana.getByRole('tab', { name: /Jogada/ }).click();
 await ana.getByRole('button', { name: 'Passar a vez' }).click();
 await front(beto);
+// ano 1 do Beto sem renda: isento, só o aviso da declaração
+await beto.getByRole('dialog', { name: 'Declaração do IR' }).waitFor();
+await beto.getByRole('button', { name: 'Entendi' }).click();
 await beto.getByText('É a sua vez').waitFor();
 await noToasts(beto);
 await beto.locator('[data-space="1"]').click();
@@ -239,7 +291,7 @@ await beto.getByRole('button', { name: 'Pagar com Pix' }).click();
 await beto.getByRole('button', { name: 'Confirmar Pix' }).click();
 await beto.getByText('Transação efetuada').waitFor();
 await beto.getByRole('button', { name: 'Fechar' }).click();
-expectEq(await playerBal(beto, 'Ana'), '$ 25.221', 'Ana depois do aluguel da casa');
+expectEq(await playerBal(beto, 'Ana'), brl(25221 + extra), 'Ana depois do aluguel da casa');
 
 // 9. Placar no celular do Beto mostra o score de cada um
 await front(beto);

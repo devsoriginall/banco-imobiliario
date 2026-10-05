@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { money } from '@/lib/game/format';
-import { currentPlayer, debtOf, describeSide, findPlayer, isParcelado, loanOf, loanRoundsLeft, pname, RuleError, tradesOf } from '@/lib/game/rules';
+import { currentPlayer, debtOf, describeSide, findPlayer, isParcelado, loanOf, loanRoundsLeft, migrateState, pname, RuleError, tradesOf } from '@/lib/game/rules';
 import type { Action, GameState, Trade, Tx } from '@/lib/game/types';
 import { getStore, isLocalMode, type RoomSnapshot } from '@/lib/room';
 import { getIdentity, saveName, type Identity } from '@/lib/room/identity';
@@ -41,8 +41,10 @@ export function Room({ code }: { code: string }) {
   const [pushed, setPushed] = useState<PushedReceipt | null>(null);
 
   // Aceita só versões mais novas (o Realtime e a resposta da gravação podem chegar fora de ordem)
-  const accept = useCallback((s: RoomSnapshot) => {
-    if (snapRef.current && s.version <= snapRef.current.version) return;
+  const accept = useCallback((raw: RoomSnapshot) => {
+    if (snapRef.current && raw.version <= snapRef.current.version) return;
+    // salas antigas aparecem já no calendário (a próxima ação grava a migração; a regra é a mesma)
+    const s = { ...raw, state: migrateState(raw.state) };
     snapRef.current = s;
     setSnap(s);
     setStatus('ready');
@@ -222,7 +224,7 @@ export function Room({ code }: { code: string }) {
 
 /** Título do aviso de um evento importante da mesa. */
 function feedTitle(text: string): string {
-  if (text.includes('taxa do banco')) return 'Juros do banco';
+  if (text.includes('Taxa Selic')) return 'Taxa Selic';
   if (text.includes('financiamento')) return 'Financiamento';
   if (text.startsWith('Parcela ')) return 'Parcela do empréstimo';
   if (text.startsWith('Seguro: ')) return 'Seguro';

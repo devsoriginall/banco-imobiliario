@@ -179,6 +179,17 @@ await ana.locator('.loan-sim-row[data-plan="x4"]').click();
 await ana.evaluate(() => document.querySelector('[data-testid="loan-sim"]').scrollIntoView({ block: 'center' }));
 await ana.waitForTimeout(200);
 await shot(ana, 'parcelas-1-simulacao.png');
+// calendário: 1 parcela por semestre (rodadas 1, 4, 7…), a 1ª no primeiro início de semestre ≥ 2 rodadas depois de pegar
+const roundNow = async (page) => Number(norm(await page.locator('.top .meta').first().textContent()).match(/Rodada (\d+)/)[1]);
+const semStart = (r) => Math.ceil((r - 1) / 3) * 3 + 1;
+const takenRound = await roundNow(ana);
+const first = semStart(takenRound + 2);
+console.log('Empréstimo na rodada', takenRound, '· 1ª parcela na rodada', first);
+const summary = norm(await ana.getByTestId('loan-plan-summary').textContent());
+expect(summary.includes(`4 parcelas semestrais, nas rodadas ${first}, ${first + 3}, ${first + 6} e ${first + 9}`), `resumo do plano 4x: ${summary}`);
+await ana.evaluate(() => window.scrollBy(0, document.querySelector('[data-testid="loan-sim"]').getBoundingClientRect().top - 70));
+await ana.waitForTimeout(200);
+await shot(ana, 'parcelas-semestre-1-planos.png');
 await ana.getByRole('button', { name: 'Pegar $ 2.000 em 4x' }).click();
 await ana.getByText('Empréstimo liberado').waitFor();
 await ana.waitForTimeout(400);
@@ -192,23 +203,32 @@ const l = {
 };
 console.log('Com o empréstimo:', JSON.stringify(l));
 expectEq(l.anaCarteira, '$ 25.500', 'carteira com o empréstimo');
-expectEq(l.parcela, `Parcela ${brl(parcels[0])} na próxima vez`, 'parcela no cabeçalho');
+expectEq(l.parcela, first === takenRound + 1 ? `Parcela ${brl(parcels[0])} na próxima vez` : `Parcela ${brl(parcels[0])} na rodada ${first}`, 'parcela no cabeçalho');
 expectEq(l.deve, brl(total), 'saldo devedor');
 expectEq(l.progresso, '0 de 4 pagas', 'parcelas pagas');
 await noToasts(ana);
 await ana.evaluate(() => document.querySelector('[data-testid="loan-card"]').scrollIntoView({ block: 'start' }));
 await shot(ana, 'parcelas-3-cartao.png');
 
-// 8. Passa a vez (Ana e Beto param no Feriado) até a parcela 1/4 ser cobrada no início da vez da Ana
+// 8. Passa a vez (Ana e Beto param no Feriado) até a parcela 1/4 ser cobrada no início da vez da Ana, na rodada `first`
 const passTurn = async (page) => {
   await page.getByRole('tab', { name: /Jogada/ }).click();
   await page.locator('[data-space="20"]').click();
   await page.getByRole('button', { name: 'Passar a vez' }).click();
 };
-await passTurn(ana);
-await front(beto);
-await beto.getByText('É a sua vez').waitFor();
-await noToasts(beto);
+for (let r = takenRound; r < first; r++) {
+  await front(ana);
+  await ana.getByRole('tab', { name: /Jogada/ }).click();
+  await ana.getByText('É a sua vez').waitFor();
+  await noToasts(ana);
+  if (r > takenRound) expectEq(await wallet(ana), '$ 25.500', `nada cobrado na rodada ${r}`);
+  await passTurn(ana);
+  await front(beto);
+  await beto.getByText('É a sua vez').waitFor();
+  await noToasts(beto);
+  if (r < first - 1) await passTurn(beto);
+}
+expectEq(norm(await beto.getByTestId('turn').textContent()).includes('É a sua vez'), true, 'vez do Beto antes da cobrança');
 await passTurn(beto);
 const parcelToast = `Parcela 1/4 do empréstimo de Ana: ${brl(parcels[0])}`;
 await beto.locator('.toast', { hasText: 'Parcela 1/4' }).waitFor({ timeout: 5000 });
@@ -229,7 +249,7 @@ const c = {
 console.log('Depois da parcela 1:', JSON.stringify(c));
 expectEq(c.anaCarteira, brl(25500 - parcels[0]), 'carteira depois da parcela');
 expectEq(c.betoVeAna, brl(25500 - parcels[0]), 'Ana no celular do Beto depois da parcela');
-expectEq(c.parcela, `Parcela ${brl(parcels[1])} na próxima vez`, 'próxima parcela no cabeçalho');
+expectEq(c.parcela, `Parcela ${brl(parcels[1])} na rodada ${first + 3}`, 'próxima parcela no cabeçalho');
 if (!c.feed) fail('parcela no histórico da mesa');
 await noToasts(ana);
 await ana.getByRole('tab', { name: /Extrato/ }).click();

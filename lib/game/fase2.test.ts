@@ -1,4 +1,4 @@
-// Fase 2: três casas por imóvel, valorização do bairro, IR a cada volta, score de crédito e juros por rodada.
+// Fase 2: três casas por imóvel, valorização do bairro, IR a cada ano do calendário, score de crédito e juros por rodada.
 import { describe, expect, it } from 'vitest';
 import { BANK_RATES, CREDIT, IR, SPACES, TIERS } from './data';
 import { houseListing, listingFacts, priceLevel } from './listings';
@@ -63,12 +63,15 @@ function pass(st: GameState): GameState {
 function seedWhere(pred: (r: number) => boolean): number {
   for (let s = 1; ; s++) if (pred(nextRandom({ seed: s } as GameState))) return s;
 }
-/** Ana completa a volta com `income` de renda no ano e para na Av. 9 de Julho. */
-function lap(income: number, st = game()): GameState {
+/**
+ * O ano 1 do calendário (rodadas 1 a 6) termina com `income` de renda da Ana: começa a rodada 7 e é a primeira
+ * vez da Ana no ano 2 (ainda sem escolher a casa), com a declaração do ano 1 aberta.
+ */
+function yearEnd(income: number, st = game()): GameState {
+  while (!(st.round === 6 && st.turn === 1)) st = pass(st);
   st = structuredClone(st);
-  pl(st, 'ana').pos = 35;
   pl(st, 'ana').income = income;
-  return act(st, 'ana', { type: 'land', idx: NOVE_JULHO });
+  return pass(st);
 }
 
 /** Ana parou no próprio imóvel numa rodada depois da compra (pode construir). */
@@ -194,7 +197,7 @@ describe('terreno na compra e três padrões de casa na construção', () => {
     let st = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
     st.bankRate = 0.02; // pagamento único: +8 pp = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 1000 });
-    while (!(st.round === 5 && st.turn === 1)) st = pass(st);
+    while (!(st.round === 6 && st.turn === 1)) st = pass(st); // vence na rodada 7
     st.players[0].balance = 500; // 500 + 325 da casa + 500 do terreno cobre os 1.100
     st = pass(st);
     expect(st.tx.filter((t) => t.kind === 'penhora').map((t) => t.amount).reverse()).toEqual([325, 500]);
@@ -281,7 +284,7 @@ describe('valorização do bairro', () => {
   });
 });
 
-describe('imposto de renda a cada volta', () => {
+describe('imposto de renda a cada ano do calendário', () => {
   it('conta aluguel, taxa de empresa e notícias como renda; pró-labore e negociação não', () => {
     let st = give(game(), 'ana', [NOVE_JULHO]);
     st.turn = 1;
@@ -302,10 +305,12 @@ describe('imposto de renda a cada volta', () => {
     st.deck = [getCard];
     st.deckPtr = 0;
     pl(st, 'ana').pos = 30;
-    st = act(st, 'ana', { type: 'land', idx: NEWS_IDX }); // passa pelo Início: fecha o ano antes da notícia
-    expect(pl(st, 'ana').year).toBe(1);
+    st = act(st, 'ana', { type: 'land', idx: NEWS_IDX }); // passa pelo Início: só o pró-labore, o ano não fecha
+    expect(st.tx[0]).toMatchObject({ kind: 'salary', amount: 2000 });
+    expect(incomeOf(pl(st, 'ana'))).toBe(2060);
+    expect(st.irPending).toBeNull();
     st = act(act(st, 'ana', { type: 'drawNews' }), 'ana', { type: 'applyNews' });
-    expect(incomeOf(pl(st, 'ana'))).toBe(1500);
+    expect(incomeOf(pl(st, 'ana'))).toBe(3560);
   });
 
   it('isenção: imposto de 15% só sobre o que passa de $ 2.000', () => {
@@ -316,23 +321,76 @@ describe('imposto de renda a cada volta', () => {
     expect(IR.salaryIsIncome).toBe(false);
   });
 
-  it('volta com renda até a isenção: isento, sem declaração, ano fechado', () => {
-    const st = lap(1800);
+  it('ano com renda até a isenção: isento, sem declaração, ano fechado', () => {
+    const st = yearEnd(1800);
+    expect(st.round).toBe(7);
     expect(st.irPending).toBeNull();
-    expect(pl(st, 'ana')).toMatchObject({ year: 1, income: 0, irLast: { outcome: 'isento', income: 1800, tax: 0 } });
-    expect(bal(st, 'ana')).toBe(27000); // pró-labore
+    expect(pl(st, 'ana')).toMatchObject({ irYear: 1, income: 0, irLast: { outcome: 'isento', income: 1800, tax: 0, year: 1 } });
+    expect(pl(st, 'ana').irOpen).toBeUndefined();
+    expect(bal(st, 'ana')).toBe(25000);
     expect(st.feed.some((f) => n(f.text) === 'Ana fechou o ano 1: isento de IR (renda de $ 1.800)')).toBe(true);
   });
 
+  it('o ano não fecha antes da rodada 7, nem ao passar pelo Início', () => {
+    let st = game();
+    while (!(st.round === 6 && st.turn === 1)) st = pass(st);
+    expect(st.players.every((p) => (p.irYear ?? 0) === 0 && !p.irOpen)).toBe(true);
+    pl(st, 'ana').pos = 35;
+    st.turn = 0;
+    st = act(st, 'ana', { type: 'land', idx: NOVE_JULHO });
+    expect(st.irPending).toBeNull();
+  });
+
+  it('o IR fecha para todos na rodada 7 e cada um declara uma vez, na primeira vez no ano novo', () => {
+    let st = game();
+    while (!(st.round === 6 && st.turn === 1)) st = pass(st);
+    st = structuredClone(st);
+    pl(st, 'ana').income = 6000;
+    pl(st, 'beto').income = 4000;
+    st = pass(st); // rodada 7: fecha o ano 1 de todos
+    expect(st.feed.some((f) => f.text.startsWith('Fim do ano 1 (rodadas 1 a 6)'))).toBe(true);
+    expect(pl(st, 'beto').irOpen).toEqual({ year: 1, income: 4000 });
+    expect(pl(st, 'beto').income).toBe(0);
+    expect(st.irPending).toMatchObject({ pid: 'ana', year: 1, tax: 600, cal: true });
+    // renda de Beto na vez da Ana já é do ano 2
+    st = act(act(st, 'ana', { type: 'declareIR' }), 'ana', { type: 'land', idx: FERIADO });
+    expect(pl(st, 'ana').irYear).toBe(1);
+    st = act(st, 'ana', { type: 'endTurn', again: false });
+    expect(st.irPending).toMatchObject({ pid: 'beto', year: 1, income: 4000, tax: 300, cal: true });
+    st = act(st, 'beto', { type: 'declareIR' });
+    expect(pl(st, 'beto')).toMatchObject({ irYear: 1, irLast: { outcome: 'declarou', paid: 300 } });
+    // nas próximas vezes do ano 2, ninguém declara de novo
+    for (let k = 0; k < 6; k++) {
+      st = pass(st);
+      expect(st.irPending).toBeNull();
+    }
+    expect(st.tx.filter((t) => t.kind === 'ir')).toHaveLength(2);
+    // ano já resolvido não abre de novo, mesmo com um registro aberto perdido
+    let again = st;
+    while (!(again.round === 12 && again.turn === 1)) again = pass(again);
+    again = structuredClone(again);
+    pl(again, 'ana').irYear = 2;
+    const y3 = pass(again);
+    expect(y3.round).toBe(13);
+    expect(y3.irPending).toBeNull();
+    expect(pl(y3, 'ana').irOpen).toBeUndefined();
+  });
+
+  it('na detenção também não passa a vez sem declarar', () => {
+    const st = yearEnd(6000);
+    st.players[0].jailed = true;
+    expect(() => act(st, 'ana', { type: 'jailFail' })).toThrow(/declaração do IR/);
+  });
+
   it('declarar: paga o IR ao banco, +20 no score; não passa a vez sem declarar', () => {
-    let st = act(lap(6000), 'ana', { type: 'skipBuy' });
-    expect(st.irPending).toEqual({ pid: 'ana', year: 1, income: 6000, tax: 600, due: 600 });
+    let st = act(yearEnd(6000), 'ana', { type: 'land', idx: FERIADO });
+    expect(st.irPending).toEqual({ pid: 'ana', year: 1, income: 6000, tax: 600, due: 600, cal: true });
     expect(pl(st, 'ana').income).toBe(0);
     expect(() => act(st, 'ana', { type: 'endTurn', again: false })).toThrow(/declaração do IR/);
     expect(() => act(st, 'beto', { type: 'declareIR' })).toThrow(/vez de Ana/);
     st = act(st, 'ana', { type: 'declareIR' });
     expect(st.irPending).toBeNull();
-    expect(bal(st, 'ana')).toBe(27000 - 600);
+    expect(bal(st, 'ana')).toBe(25000 - 600);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 600, kind: 'ir' });
     expect(n(st.tx[0].reason)).toBe('Imposto de renda do ano 1: 15% de $ 4.000');
     expect(creditOf(pl(st, 'ana'))).toBe(520);
@@ -341,22 +399,23 @@ describe('imposto de renda a cada volta', () => {
   });
 
   it('sonegar sem cair na malha fina: não paga nada agora', () => {
-    const st = lap(6000);
+    const st = yearEnd(6000);
     st.seed = seedWhere((r) => r >= IR.catchChance);
     const next = act(st, 'ana', { type: 'evadeIR' });
     expect(next.irPending).toBeNull();
-    expect(bal(next, 'ana')).toBe(27000);
+    expect(bal(next, 'ana')).toBe(25000);
+    expect(pl(next, 'ana').irYear).toBe(1);
     expect(creditOf(pl(next, 'ana'))).toBe(500);
     expect(pl(next, 'ana').irLast).toMatchObject({ outcome: 'passou', paid: 0, tax: 600 });
     expect(next.feed[0].text).toBe('Ana entregou a declaração do ano 1');
   });
 
   it('sonegar e cair na malha fina: paga imposto + 100% de multa na hora, −150 no score', () => {
-    const st = lap(6000);
+    const st = yearEnd(6000);
     st.seed = seedWhere((r) => r < IR.catchChance);
     const next = act(st, 'ana', { type: 'evadeIR' });
     expect(next.irPending).toBeNull();
-    expect(bal(next, 'ana')).toBe(27000 - 1200);
+    expect(bal(next, 'ana')).toBe(25000 - 1200);
     expect(next.tx[0]).toMatchObject({ amount: 1200, kind: 'ir', reason: 'Malha fina: IR do ano 1 + multa de 100%' });
     expect(creditOf(pl(next, 'ana'))).toBe(350);
     expect(pl(next, 'ana').irLast).toMatchObject({ outcome: 'pego', paid: 1200 });
@@ -364,7 +423,7 @@ describe('imposto de renda a cada volta', () => {
   });
 
   it('malha fina sem saldo: fica devendo imposto + multa e paga pelo Pix; −30 pela falta de saldo', () => {
-    const st = lap(6000);
+    const st = yearEnd(6000);
     st.seed = seedWhere((r) => r < IR.catchChance);
     st.players[0].balance = 500;
     let next = act(st, 'ana', { type: 'evadeIR' });
@@ -380,7 +439,7 @@ describe('imposto de renda a cada volta', () => {
   });
 
   it('o sorteio da malha fina é o mesmo em todos os celulares (e no desfazer)', () => {
-    const st = lap(6000);
+    const st = yearEnd(6000);
     const a = act(st, 'ana', { type: 'evadeIR' });
     const b = applyAction(st, { type: 'evadeIR' }, { actor: 'ana', now, rng: Math.random });
     expect(a.players[0].irLast!.outcome).toBe(b.players[0].irLast!.outcome);
@@ -390,7 +449,7 @@ describe('imposto de renda a cada volta', () => {
   });
 
   it('falência apaga a declaração pendente', () => {
-    const st = act(lap(6000), 'ana', { type: 'bankrupt', debtor: 'ana', creditor: 'bank' });
+    const st = act(yearEnd(6000), 'ana', { type: 'bankrupt', debtor: 'ana', creditor: 'bank' });
     expect(st.irPending).toBeNull();
   });
 });
@@ -415,7 +474,7 @@ describe('score de crédito', () => {
     expect(() => act(ruim, 'ana', { type: 'takeLoan', amount: 1000 })).toThrow(/score de crédito \(150\)/);
   });
 
-  it('taxa do empréstimo = taxa da rodada + ajuste do score (Ruim +5, Bom −2, Excelente −4), mínimo 2%', () => {
+  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), mínimo 2%', () => {
     const st = game();
     st.bankRate = 0.12;
     const rate = (score: number) => {
@@ -445,14 +504,14 @@ describe('score de crédito', () => {
 
   it('pago no vencimento com o saldo +80; vencido com penhora −200', () => {
     let ok = act(game(), 'ana', { type: 'takeLoan', amount: 1000 });
-    while (ok.round < 6) ok = pass(ok);
+    while (ok.round < 7) ok = pass(ok);
     expect(ok.loans!.ana).toBeUndefined();
     expect(creditOf(pl(ok, 'ana'))).toBe(580);
 
     let bad = give(game(), 'ana', [PAULISTA]);
     bad.bankRate = 0.02;
     bad = act(bad, 'ana', { type: 'takeLoan', amount: 1000 });
-    while (!(bad.round === 5 && bad.turn === 1)) bad = pass(bad);
+    while (!(bad.round === 6 && bad.turn === 1)) bad = pass(bad);
     bad.players[0].balance = 500;
     bad = pass(bad);
     expect(bad.props[PAULISTA]).toBeUndefined();
@@ -476,19 +535,20 @@ describe('score de crédito', () => {
     st = act(st, 'ana', { type: 'takeLoan', amount: 1000 });
     st = act(st, 'ana', { type: 'payLoan', amount: st.loans!.ana.principal + st.loans!.ana.interest });
     expect(creditOf(pl(st, 'ana'))).toBe(1000);
-    const low = lap(6000);
+    const low = yearEnd(6000);
     low.players[0].credit = 100;
     low.seed = seedWhere((r) => r < IR.catchChance);
     expect(creditOf(pl(act(low, 'ana', { type: 'evadeIR' }), 'ana'))).toBe(0);
   });
 });
 
-describe('juros sorteados por rodada', () => {
-  it('sorteia a taxa no começo da partida e em cada rodada nova, igual em todos os celulares', () => {
+describe('Taxa Selic sorteada por semestre', () => {
+  it('sorteia a Selic no começo da partida e em cada início de semestre (rodadas 1, 4, 7…), igual em todos os celulares', () => {
     const a = game();
     expect(BANK_RATES.options).toContain(a.bankRate);
+    expect(a.selic).toBe(a.bankRate);
     expect(a.bankRateRound).toBe(1);
-    expect(a.feed.some((f) => f.text.startsWith('Taxa do banco nesta rodada:'))).toBe(true);
+    expect(a.feed.some((f) => f.text.startsWith('Taxa Selic do semestre:') && f.text.endsWith('(até a rodada 3)'))).toBe(true);
     let x = a;
     let y = structuredClone(a);
     const seenX: number[] = [];
@@ -500,9 +560,27 @@ describe('juros sorteados por rodada', () => {
       seenY.push(y.bankRate!);
     }
     expect(seenX).toEqual(seenY);
-    // só muda quando a rodada muda (2 jogadores: a cada 2 passadas)
     expect(x.bankRateRound).toBe(x.round);
-    expect(new Set(seenX).size).toBeGreaterThan(1);
+    // fixa nas 3 rodadas do semestre: só pode mudar ao entrar nas rodadas 4 e 7 (2 jogadores: passadas 6 e 12)
+    const rounds = [...Array(12).keys()].map((k) => Math.floor((k + 1) / 2) + 1);
+    seenX.forEach((v, k) => {
+      if (k > 0 && rounds[k] === rounds[k - 1]) expect(v).toBe(seenX[k - 1]);
+      if (k > 0 && ![4, 7].includes(rounds[k])) expect(v).toBe(seenX[k - 1]);
+    });
+    expect(x.selicRound).toBe(7);
+  });
+
+  it('sala antiga sem Selic guarda a taxa atual até o próximo semestre', () => {
+    let st = game();
+    delete st.selic;
+    delete st.selicRound;
+    st.bankRate = 0.15;
+    while (st.round < 3) st = pass(st);
+    expect(st.bankRate).toBe(0.15);
+    expect(st.selic).toBe(0.15);
+    while (st.round < 4) st = pass(st);
+    expect(st.selicRound).toBe(4);
+    expect(st.feed.some((f) => f.text.startsWith('Rodada 4: Taxa Selic'))).toBe(true);
   });
 
   it('a taxa trava ao pegar; empréstimos existentes não mudam com a rodada', () => {
@@ -514,15 +592,16 @@ describe('juros sorteados por rodada', () => {
     expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
   });
 
-  it('a mudança de taxa vira aviso para todos', () => {
+  it('a mudança da Selic vira aviso para todos', () => {
     let st = game();
     let changed = false;
-    for (let k = 0; k < 20 && !changed; k++) {
+    for (let k = 0; k < 60 && !changed; k++) {
       const before = st.bankRate;
       st = pass(st);
       if (st.bankRate !== before) {
         changed = true;
-        expect(st.feed.find((f) => f.text.includes('taxa do banco'))).toMatchObject({ important: true });
+        expect((st.round - 1) % 3).toBe(0);
+        expect(st.feed.find((f) => f.text.includes('Taxa Selic'))).toMatchObject({ important: true });
       }
     }
     expect(changed).toBe(true);
@@ -565,11 +644,14 @@ describe('salas antigas', () => {
     delete st.seed;
     delete st.bankRate;
     delete st.bankRateRound;
+    delete st.selic;
+    delete st.selicRound;
     delete st.irPending;
+    delete st.cal;
     for (const p of st.players) {
       delete p.credit;
       delete p.income;
-      delete p.year;
+      delete p.irYear;
       delete p.creditLog;
     }
     expect(tierOf(st, NOVE_JULHO)).toBeNull();
@@ -582,10 +664,10 @@ describe('salas antigas', () => {
     const next = pass(pass(st));
     expect(BANK_RATES.options).toContain(next.bankRate);
     expect(next.seed).toBeTypeOf('number');
-    // volta sem renda registrada: isento
-    const l = lap(0, st);
+    // ano sem renda registrada: isento
+    const l = yearEnd(0, st);
     expect(l.irPending ?? null).toBeNull();
-    expect(pl(l, 'ana').year).toBe(1);
+    expect(pl(l, 'ana').irYear).toBe(1);
     // empréstimo antigo sem taxa travada
     st.loans = { ana: { principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 6 } };
     const paid = act(st, 'ana', { type: 'payLoan', amount: 2200 });

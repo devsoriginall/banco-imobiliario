@@ -54,10 +54,14 @@ export interface Player {
   builtRound?: number;
   /** rodada em que comprou cota da empresa pela última vez (uma cota por rodada) */
   shareRound?: number;
-  /** renda tributável desde a última volta (aluguéis, taxas de empresa, notícias) */
+  /** renda tributável do ano do calendário em curso (aluguéis, taxas de empresa, notícias, dividendos, poupança) */
   income?: number;
-  /** voltas completas (anos de IR já fechados) */
+  /** obsoleto (salas antigas): voltas completas, quando o IR fechava a cada volta; não é mais usado */
   year?: number;
+  /** último ano do calendário com o IR resolvido (declarado, isento ou sonegado); nunca se declara o mesmo ano duas vezes */
+  irYear?: number;
+  /** ano do calendário que fechou e espera a declaração na primeira vez do jogador no ano novo */
+  irOpen?: { year: number; income: number };
   /** score de crédito, 0 a 1000 (salas antigas: 500) */
   credit?: number;
   /** últimas mudanças do score (mais nova primeiro) */
@@ -85,7 +89,7 @@ export interface IrResult {
   round: number;
 }
 
-/** Declaração do IR pendente do jogador da vez (aparece ao completar a volta). */
+/** Declaração do IR pendente do jogador da vez (aparece na primeira vez dele depois que o ano do calendário fecha). */
 export interface IrPending {
   pid: string;
   year: number;
@@ -95,6 +99,8 @@ export interface IrPending {
   caught?: boolean;
   /** valor a pagar agora (imposto, ou imposto + multa se caught) */
   due: number;
+  /** declaração do calendário (salas antigas: declaração da volta, sem este campo) */
+  cal?: boolean;
 }
 
 export interface Property {
@@ -181,20 +187,24 @@ export interface Trade {
   round: number;
 }
 
-/** Planos de pagamento do empréstimo: parcelado em 2x a 5x ou pagamento único em 5 rodadas. */
+/** Planos de pagamento do empréstimo: parcelado em 2x a 5x (parcelas semestrais) ou pagamento único no 2º semestre. */
 export type LoanPlanId = 'x2' | 'x3' | 'x4' | 'x5' | 'unico';
 
 /**
  * Empréstimo do banco: deve principal + juros − pago.
- * Pagamento único (e salas antigas, sem `plan`): tudo até o início da vez do jogador na rodada `dueRound`.
- * Parcelado: a parcela `parcels[parcelsPaid]` é cobrada no início da vez do jogador na rodada `takenRound + parcelsPaid + 1`.
+ * Cobranças no calendário: uma por semestre, no início da vez do jogador na rodada que abre o semestre.
+ * Parcelado: a parcela `parcels[k]` é cobrada na rodada `firstRound + k × CALENDAR.roundsPerSemester`.
+ * Pagamento único (e salas antigas, sem `plan`): tudo na rodada `dueRound` (= firstRound + 1 semestre).
  */
 export interface Loan {
   principal: number;
   interest: number;
   paid: number;
   takenRound: number;
+  /** rodada da última cobrança (última parcela ou pagamento único) */
   dueRound: number;
+  /** rodada da 1ª cobrança semestral (salas antigas, com cobrança por rodada: ausente até a migração) */
+  firstRound?: number;
   /** taxa travada ao pegar (taxa da rodada + ajuste do score); salas antigas: LOAN.interest */
   rate?: number;
   /** rodada do último pagamento parcial que contou para o score */
@@ -369,10 +379,14 @@ export interface GameState {
   lots?: Record<number, TierId>;
   /** estado do sorteio determinístico (mulberry32), igual em todos os celulares */
   seed?: number;
-  /** taxa de juros do banco nesta rodada (salas antigas: LOAN.interest) */
+  /** taxa de juros do banco nesta rodada: a Selic do semestre (± manchete de juros da rodada); salas antigas: LOAN.interest */
   bankRate?: number;
-  /** rodada em que a taxa foi sorteada */
+  /** rodada em que a taxa da rodada foi definida */
   bankRateRound?: number;
+  /** Taxa Selic do semestre: sorteada no início de cada semestre (salas antigas: ausente até a próxima rodada) */
+  selic?: number;
+  /** rodada do último sorteio da Selic */
+  selicRound?: number;
   /** declaração do IR esperando o jogador da vez */
   irPending?: IrPending | null;
   /** Jornal da Cidade: edições (mais nova primeiro) e o baralho de manchetes */
@@ -385,6 +399,8 @@ export interface GameState {
   stocks?: Record<number, Stock>;
   /** financiamentos ativos, pelo índice do imóvel (salas antigas: nenhum) */
   fin?: Record<number, Financing>;
+  /** versão do calendário da partida (salas antigas: ausente até a migração; ver migrateState) */
+  cal?: 1;
 }
 
 export type Action =
