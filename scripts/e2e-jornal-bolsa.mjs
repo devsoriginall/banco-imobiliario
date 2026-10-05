@@ -1,6 +1,7 @@
 // Teste de ponta a ponta do Jornal da Cidade e da Bolsa no modo local (sem Supabase), com dois "celulares"
 // (duas abas do mesmo contexto). Ana compra uma cota da Vox Telecom ao cair na casa, a rodada passa, sai a
-// edição 2 do Jornal, Ana recebe os dividendos e vende a cota de volta à empresa na Bolsa.
+// edição 2 do Jornal (sem dividendos: eles são semestrais), a sala pula para o início do 2º semestre (rodada 4),
+// Ana recebe os dividendos do semestre e vende a cota de volta à empresa na Bolsa.
 //
 //   npm run build && npx next start -p 3100   # em outro terminal (sem as variáveis do Supabase)
 //   PLAYWRIGHT=$(npm root -g)/playwright/index.mjs BASE_URL=http://localhost:3100 npm run e2e:mercado
@@ -88,7 +89,7 @@ await ana.getByRole('button', { name: 'Fechar' }).click();
 check((await wallet(ana)) === start - price1, `cota comprada por ${price1}`);
 await ana.getByRole('button', { name: 'Passar a vez' }).click();
 
-// 4. Beto passa a vez: começa a rodada 2, sai a edição 2 e Ana recebe dividendos
+// 4. Beto passa a vez: começa a rodada 2 e sai a edição 2, sem dividendos (pagos só no início do semestre)
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
 await beto.locator(`[data-space="${FERIADO}"]`).click();
@@ -97,6 +98,41 @@ await beto.getByText('Edição nº 2').waitFor();
 await closePaper(beto);
 await front(ana);
 await ana.getByText('Edição nº 2').waitFor();
+await calm(ana);
+await shot(ana, 'jornal-2-nova-rodada.png');
+await closePaper(ana);
+check((await wallet(ana)) === start - price1, 'sem dividendos na rodada 2');
+await ana.getByRole('tab', { name: /Mercado/ }).click();
+await ana.getByRole('radio', { name: 'Bolsa' }).click();
+const bolsaTxt = norm(await ana.getByTestId('stock-list').locator('xpath=..').textContent());
+check(bolsaTxt.includes('Dividendos pagos a cada semestre (rodadas 4, 7, 10…)') && bolsaTxt.includes('o próximo é na rodada 4'), 'texto dos dividendos semestrais');
+check(norm(await ana.locator(`[data-stock="${VOX}"]`).textContent()).includes('/cota na rodada 4'), 'próximo dividendo na lista');
+await ana.getByRole('tab', { name: /Jogada/ }).click();
+// Ana cai de novo na própria empresa (sem passar pelo Início) e passa a vez
+await ana.locator(`[data-space="${VOX}"]`).click();
+await ana.getByRole('button', { name: 'Passar a vez' }).click();
+// a sala pula para o fim da rodada 3 (como se as rodadas 2 e 3 tivessem passado sem novidade): grava direto na sala do
+// modo local e avisa as abas, como faria outro celular
+await front(beto);
+await beto.getByText('É a sua vez').waitFor();
+await beto.evaluate((code) => {
+  const k = `bi-room:${code}`;
+  const snap = JSON.parse(localStorage.getItem(k));
+  snap.state.round = 3;
+  snap.state.prev = null;
+  snap.version += 1;
+  localStorage.setItem(k, JSON.stringify(snap));
+  new BroadcastChannel('banco-imobiliario-rooms').postMessage({ code });
+}, code);
+await beto.getByText('Rodada 3', { exact: false }).first().waitFor();
+await beto.locator(`[data-space="${FERIADO}"]`).click();
+await beto.getByRole('button', { name: 'Passar a vez' }).click();
+await beto.getByText('Edição nº 4').waitFor();
+await closePaper(beto);
+// 5. Rodada 4 (início do 2º semestre): Ana recebe os dividendos do semestre (9% da cotação por cota)
+await front(ana);
+await ana.getByText('Edição nº 4').waitFor();
+const effect4 = norm(await ana.locator('.paper-effect').first().textContent());
 const divToast = ana.locator('.toast', { hasText: 'Dividendos' });
 await divToast.waitFor();
 const divText = norm(await divToast.textContent());
@@ -104,20 +140,20 @@ console.log('Toast:', divText);
 await ana.waitForTimeout(300);
 await shot(ana, 'bolsa-0-aviso-dividendos.png');
 await calm(ana);
-await shot(ana, 'jornal-2-nova-rodada.png');
 await closePaper(ana);
 const afterDiv = await wallet(ana);
 const div = afterDiv - (start - price1);
 check(div > 0 && divText.includes(`$ ${div}`) && divText.includes('Vox Telecom'), `dividendo de ${div} na carteira e no aviso`);
 
-// 5. Aba Mercado: histórico do Jornal e a Bolsa
+// 6. Aba Mercado: histórico do Jornal e a Bolsa
 await ana.getByRole('tab', { name: /Mercado/ }).click();
+await ana.getByRole('radio', { name: 'Jornal' }).click();
 await ana.getByTestId('jornal-edition').waitFor();
 await ana.waitForTimeout(200);
 await calm(ana);
 await ana.getByTestId('jornal-edition').scrollIntoViewIfNeeded();
 await shot(ana, 'jornal-3-edicoes.png');
-check((await ana.getByTestId('jornal-history').locator('.li').count()) === 1, 'uma edição anterior no histórico');
+check((await ana.getByTestId('jornal-history').locator('.li').count()) === 2, 'duas edições anteriores no histórico');
 await ana.getByRole('radio', { name: 'Bolsa' }).click();
 await ana.getByTestId('stock-list').waitFor();
 await ana.waitForTimeout(200);
@@ -132,7 +168,7 @@ await shot(ana, 'bolsa-3-empresa.png');
 await ana.getByTestId('sell-card').scrollIntoViewIfNeeded();
 await shot(ana, 'bolsa-4-vender.png');
 
-// 6. Ana vende a cota de volta à empresa pela cotação de agora
+// 7. Ana vende a cota de volta à empresa pela cotação de agora
 const sellBtn = ana.getByRole('button', { name: /Vender 1 cota por/ });
 const price2 = num((await sellBtn.textContent()).split('por')[1]);
 await sellBtn.click();
@@ -143,10 +179,13 @@ await ana.getByRole('button', { name: 'Fechar' }).click();
 check((await wallet(ana)) === afterDiv + price2, `cota vendida por ${price2}`);
 check((await ana.getByTestId('sell-card').count()) === 0, 'sem cotas para vender depois da venda');
 
-// 7. Extrato: dividendo e venda
+// 8. Extrato: dividendo e venda
 await ana.getByRole('tab', { name: /Extrato/ }).click();
 const txt = norm(await ana.getByTestId('tx-list').textContent());
-check(txt.includes('Dividendos da Vox Telecom: 1 cota'), 'dividendo no extrato');
+check(txt.includes('Dividendos do semestre da Vox Telecom: 1 cota'), 'dividendo no extrato');
+// o dividendo do semestre = cotação da rodada 4 × 9%: a venda foi na mesma rodada, pela mesma cotação
+if (!/[Dd]ividendo/.test(effect4)) check(div === Math.round(price2 * 0.09), `dividendo de 9% da cotação (${div} de ${price2})`);
+else console.log('Manchete da rodada 4 mexe nos dividendos:', effect4);
 check(txt.includes('Venda de 1 cota da Vox Telecom à empresa'), 'venda no extrato');
 await shot(ana, 'bolsa-6-extrato.png');
 
