@@ -139,6 +139,7 @@ h3{font-size:15px;font-weight:600}
 .banner{border-radius:14px;padding:12px 14px;font-size:14px;display:flex;gap:10px;align-items:flex-start}
 .banner.warn{background:var(--warn-soft);color:var(--warn)}
 .banner.info{background:var(--info-soft);color:var(--info)}
+.banner.ir-pending{align-items:center;justify-content:space-between;flex-wrap:wrap}
 .banner.bad{background:var(--bad-soft);color:var(--bad)}
 .group-head{display:flex;align-items:center;gap:8px;margin-top:4px}
 .dice{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}

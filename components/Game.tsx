@@ -49,8 +49,14 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   const [confirmReset, setConfirmReset] = useState(false);
   /** resultado de sonegar sem cair na malha fina (imposto que deixou de pagar) */
   const [irPassed, setIrPassed] = useState<number | null>(null);
-  const irMine = state.irPending?.pid === me && !state.winner ? state.irPending : null;
+  const irPending = state.irPending?.pid === me && !state.winner ? state.irPending : null;
   const mine = findPlayer(state, me);
+  /** declaração deixada de lado para levantar dinheiro (volta sozinha se mudar o ano ou cair na malha fina) */
+  const irKey = irPending ? `${state.code}:${me}:${irPending.year}:${irPending.caught ? 'malha' : 'ir'}` : null;
+  const [irDeferred, setIrDeferred] = useState<string | null>(null);
+  const irHidden = !!irKey && irDeferred === irKey;
+  const irMine = irPending && !irHidden ? irPending : null;
+  const irShort = !!irPending && (mine?.balance ?? 0) < irPending.due;
   const cur = currentPlayer(state);
   /** ano isento que acabou de fechar: mostra a declaração uma vez neste celular */
   const lastIr = mine?.irLast;
@@ -180,6 +186,14 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
 
         <TradeInbox ui={ui} />
 
+        {tab === 'jogada' && irHidden && irPending && (
+          <div className="banner warn ir-pending" data-testid="ir-pending-banner">
+            <span>Declaração do IR pendente: entregue antes de passar a vez.</span>
+            <button className="btn small" onClick={() => setIrDeferred(null)}>
+              Abrir a declaração
+            </button>
+          </div>
+        )}
         {tab === 'jogada' && <PlayView ui={ui} />}
         {tab === 'imoveis' && <PropsView ui={ui} />}
         {tab === 'mercado' && <MercadoView ui={ui} seg={seg} setSeg={setSeg} stock={stock} setStock={setStock} />}
@@ -225,6 +239,8 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       {irMine && !pixReq && !tradeWith && !receipt && !pushed && (
         <IrModal
           ir={irMine}
+          short={irShort}
+          onRaise={() => setIrDeferred(irKey)}
           onDeclare={() => setPixReq({ action: { type: 'declareIR' }, title: irMine.caught ? 'Malha fina: imposto + multa' : 'Imposto de renda' })}
           onEvade={async () => {
             const r = await run({ type: 'evadeIR' });

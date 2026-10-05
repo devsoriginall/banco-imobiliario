@@ -196,9 +196,17 @@ export function ConfirmModal({ title, text, confirm, onConfirm, onCancel }: { ti
 const pctTxt = (r: number) => `${Math.round(r * 100)}%`;
 
 /** Declaração do IR do ano do calendário que fechou: declarar (paga) ou sonegar (arrisca a malha fina). */
-export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: () => void; onEvade: () => Promise<void> }) {
+export function IrModal({ ir, short, onDeclare, onEvade, onRaise }: { ir: IrPending; short: boolean; onDeclare: () => void; onEvade: () => Promise<void>; onRaise: () => void }) {
   const [busy, setBusy] = useState(false);
   const base = Math.max(0, ir.income - IR.exempt);
+  const raise = short ? (
+    <>
+      <div className="banner warn">Seu saldo não cobre {money(ir.due)}. Resgate da poupança, hipoteque ou venda e volte para entregar.</div>
+      <button className="btn block" onClick={onRaise}>
+        Levantar dinheiro
+      </button>
+    </>
+  ) : null;
   if (ir.caught)
     return (
       <Sheet label="Malha fina">
@@ -212,9 +220,10 @@ export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: 
             {money(ir.due)}
           </div>
         </div>
-        <button className="btn primary block" onClick={onDeclare}>
+        <button className="btn primary block" disabled={short} onClick={onDeclare}>
           Pagar {money(ir.due)}
         </button>
+        {raise}
       </Sheet>
     );
   return (
@@ -246,9 +255,10 @@ export function IrModal({ ir, onDeclare, onEvade }: { ir: IrPending; onDeclare: 
           </span>
         </div>
       </div>
-      <button className="btn primary block" disabled={busy} onClick={onDeclare}>
+      <button className="btn primary block" disabled={busy || short} onClick={onDeclare}>
         Declarar e pagar {money(ir.tax)}
       </button>
+      {raise}
       <button
         className="btn danger block"
         disabled={busy}
