@@ -600,9 +600,12 @@ function pass(st: GameState): GameState {
   const id = st.players[st.turn].id;
   return act(act(st, id, { type: 'land', idx: 20 }), id, { type: 'endTurn', again: false });
 }
-/** Avança até a vez do Beto na rodada anterior ao vencimento (rodada 5), com o empréstimo da Ana pego na rodada 1. */
+/**
+ * Avança até a vez do Beto na rodada anterior ao vencimento (rodada 6), com o empréstimo da Ana pego na rodada 1:
+ * o pagamento único vence no 2º início de semestre contado da 1ª cobrança (rodada 4), ou seja, na rodada 7.
+ */
 function toEve(st: GameState): GameState {
-  while (!(st.round === 5 && st.turn === 1)) st = pass(st);
+  while (!(st.round === 6 && st.turn === 1)) st = pass(st);
   return st;
 }
 
@@ -618,13 +621,13 @@ describe('empréstimo do banco', () => {
     expect(loanLimit(poor, 'ana')).toBe(0);
   });
 
-  it('pega o empréstimo na própria vez, com 10% de juros e vencimento em 5 rodadas', () => {
+  it('pega o empréstimo na própria vez, com 10% de juros e vencimento no 2º semestre (rodada 7)', () => {
     const st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
     expect(bal(st, 'ana')).toBe(27000);
-    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 6, rate: 0.1, plan: 'unico' });
+    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 7, firstRound: 4, rate: 0.1, plan: 'unico' });
     expect(debtOf(st, 'ana')).toBe(2200);
     expect(equity(st, pl(st, 'ana'))).toBe(24800);
-    expect(loanRoundsLeft(st, 'ana')).toBe(5);
+    expect(loanRoundsLeft(st, 'ana')).toBe(6);
     expect(st.tx[0]).toMatchObject({ from: 'bank', to: 'ana', amount: 2000, kind: 'loan' });
     expect(loanLimit(st, 'ana')).toBe(0);
     expect(() => act(st, 'ana', { type: 'takeLoan', amount: 1000 })).toThrow(/já tem/);
@@ -659,8 +662,8 @@ describe('empréstimo do banco', () => {
     st = toEve(st);
     expect(loanRoundsLeft(st, 'ana')).toBe(1);
     expect(st.loans!.ana).toBeDefined();
-    st = pass(st); // começa a vez da Ana na rodada 6
-    expect(st.round).toBe(6);
+    st = pass(st); // começa a vez da Ana na rodada 7 (início do 1º semestre do ano 2)
+    expect(st.round).toBe(7);
     expect(st.loans!.ana).toBeUndefined();
     expect(bal(st, 'ana')).toBe(27000 - 2200);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 2200, kind: 'loanpay' });
@@ -729,12 +732,12 @@ describe('empréstimo do banco', () => {
     st = act(st, 'ana', { type: 'setMercado', on: false });
     st = act(st, 'ana', { type: 'start' });
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
-    while (!(st.round === 5 && st.turn === 2)) st = pass(st);
+    while (!(st.round === 6 && st.turn === 2)) st = pass(st);
     st.players[0].balance = 0;
     st = pass(st);
     expect(pl(st, 'ana').out).toBe(true);
     expect(st.winner).toBeNull();
-    expect(st.round).toBe(6);
+    expect(st.round).toBe(7);
     expect(st.players[st.turn].id).toBe('beto');
   });
 

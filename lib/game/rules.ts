@@ -1,7 +1,7 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { BANK_RATES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
+import { BANK_RATES, CALENDAR, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
 import type { Action, ActionContext, CompanySpace, DecisionId, Edition, Financing, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
@@ -60,11 +60,12 @@ export function newRoom(code: string, host: { id: string; name: string }, now = 
     hood: {},
     lots: {},
     irPending: null,
+    cal: 1,
   };
 }
 
 function makePlayer(id: string, name: string, i: number, balance: number): Player {
-  return { id, name, color: PLAYER_COLORS[i % PLAYER_COLORS.length], balance, pos: 0, jailed: false, jailTries: 0, freeCards: 0, out: false, income: 0, year: 0, credit: CREDIT.start };
+  return { id, name, color: PLAYER_COLORS[i % PLAYER_COLORS.length], balance, pos: 0, jailed: false, jailTries: 0, freeCards: 0, out: false, income: 0, irYear: 0, credit: CREDIT.start };
 }
 
 // ---------- Sorteio determinístico ----------
@@ -280,8 +281,17 @@ export function dividendYield(st: GameState, i: number, round = st.round): numbe
   if (mods.some((m) => m.zero)) return 0;
   return Math.max(0, round4(STOCK.yield + mods.reduce((a, m) => a + (m.pp || 0), 0) / 100));
 }
-/** Dividendo por cota nesta rodada (cotação × rendimento, arredondado a $ 1). */
-export const dividendPerShare = (st: GameState, i: number) => Math.round(sharePrice(st, i) * dividendYield(st, i));
+/**
+ * Rendimento do dividendo do semestre (fração): o rendimento por rodada da rodada do pagamento × rodadas do semestre
+ * (base 3% × 3 = 9%). Efeitos com janela de rodadas valem se a rodada do pagamento cai dentro dela.
+ */
+export const semesterYield = (st: GameState, i: number, round = st.round) => round4(dividendYield(st, i, round) * CALENDAR.roundsPerSemester);
+/** Dividendo por cota de um pagamento semestral na rodada `round` (cotação atual × rendimento do semestre, a $ 1). */
+export const dividendPerShare = (st: GameState, i: number, round = st.round) => Math.round(sharePrice(st, i) * semesterYield(st, i, round));
+/** Rodada do próximo pagamento de dividendos: próximo início de semestre depois desta rodada (o primeiro é na rodada 4). */
+export const nextDividendRound = (round: number) => semesterStartFrom(round + 1);
+/** Esta rodada paga dividendos (início de semestre, a partir da rodada 4)? */
+export const paysDividends = (round: number) => round > 1 && isSemesterStart(round);
 /** Greve ativa (dividendo zero) nesta rodada. */
 export const onStrike = (st: GameState, i: number) => (stockOf(st, i).yieldMods ?? []).some((m) => m.zero && activeIn(m, st.round));
 /** Soma dos aumentos da taxa da casa ativos nesta rodada (em %). */
@@ -424,7 +434,7 @@ function applyHeadlineEffect(st: GameState, h: Headline, e: HeadlineEffect, stoc
  * Começo de rodada do Jornal e da Bolsa (logo depois do sorteio dos juros):
  * 1. tira os efeitos vencidos; 2. sorteia a manchete e aplica os efeitos; 3. atualiza as cotações
  * (variação sorteada de ±5% + manchete + decisões da gerência, entre $ 50 e $ 1.000, a $ 10);
- * 4. paga os dividendos. Tudo pelo sorteio da sala. Na primeira rodada (começo da partida) não há variação sorteada.
+ * 4. no início do semestre (rodadas 4, 7, 10…), paga os dividendos. Tudo pelo sorteio da sala. Na primeira rodada (começo da partida) não há variação sorteada.
  */
 function marketRound(st: GameState, now: Date, first = false) {
   if (!marketOn(st)) return;
@@ -482,17 +492,17 @@ function marketRound(st: GameState, now: Date, first = false) {
     sk.price = clampPrice(sk.price * (1 + change));
     sk.hist = [...sk.hist, sk.price].slice(-STOCK.history);
   }
-  // 4. dividendos
-  for (const i of COMPANY_IDX) {
+  // 4. dividendos: só no início do semestre (rodadas 4, 7, 10…)
+  for (const i of paysDividends(r) ? COMPANY_IDX : []) {
     const each = dividendPerShare(st, i);
     if (!each) continue;
     const name = company(i).name;
     const list: Transfer[] = Object.entries(sharesOf(st, i))
       .filter(([pid, q]) => q > 0 && findPlayer(st, pid) && !findPlayer(st, pid)!.out)
-      .map(([pid, q]) => ({ from: BANK, to: pid, amount: q * each, reason: `Dividendos da ${name}: ${q} cota${q > 1 ? 's' : ''} × ${money(each)}`, kind: 'dividend' as const, space: i }));
+      .map(([pid, q]) => ({ from: BANK, to: pid, amount: q * each, reason: `Dividendos do semestre da ${name}: ${q} cota${q > 1 ? 's' : ''} × ${money(each)}`, kind: 'dividend' as const, space: i }));
     if (!list.length) continue;
     applyTransfers(st, list, now);
-    log(st, `Dividendos da ${name}: ${money(each)} por cota`, now);
+    log(st, `Dividendos do semestre da ${name}: ${money(each)} por cota`, now);
   }
 }
 
@@ -509,6 +519,32 @@ export function decisionText(d: DecisionId): string {
       return `Paga ${money(DECISIONS.marketing.cost)}: a taxa da casa sobe ${DECISIONS.marketing.pct}% nesta rodada e na próxima.`;
   }
 }
+
+// ---------- Calendário da partida ----------
+
+/** Ano do calendário da rodada (ano 1 = rodadas 1 a 6). */
+export const yearOf = (round: number) => Math.floor((Math.max(1, round) - 1) / CALENDAR.roundsPerYear) + 1;
+/** Rodada dentro do ano (1 a 6). */
+export const roundInYear = (round: number) => ((Math.max(1, round) - 1) % CALENDAR.roundsPerYear) + 1;
+/** Semestre do ano (1 ou 2). */
+export const semesterOf = (round: number) => Math.floor((roundInYear(round) - 1) / CALENDAR.roundsPerSemester) + 1;
+/** A rodada abre um semestre (rodadas 1 e 4 de cada ano)? */
+export const isSemesterStart = (round: number) => (round - 1) % CALENDAR.roundsPerSemester === 0;
+/** A rodada abre um ano (rodada 1 de cada ano)? */
+export const isYearStart = (round: number) => (round - 1) % CALENDAR.roundsPerYear === 0;
+/** Primeira rodada que abre um semestre a partir de `round` (inclusive). */
+export const semesterStartFrom = (round: number) => {
+  const n = CALENDAR.roundsPerSemester;
+  return Math.ceil((Math.max(1, round) - 1) / n) * n + 1;
+};
+/** Rodada da 1ª cobrança de algo pego em `takenRound`: primeiro início de semestre pelo menos LOAN.graceRounds rodadas depois. */
+export const firstChargeRound = (takenRound: number) => semesterStartFrom(takenRound + LOAN.graceRounds);
+/** Primeira e última rodada de um ano do calendário. */
+export const yearRounds = (year: number) => ({ from: (year - 1) * CALENDAR.roundsPerYear + 1, to: year * CALENDAR.roundsPerYear });
+/** Texto do calendário no cabeçalho, ex.: "Ano 2 · rodada 3 de 6". */
+export const calendarText = (round: number) => `Ano ${yearOf(round)} · rodada ${roundInYear(round)} de ${CALENDAR.roundsPerYear}`;
+/** Quando cai uma rodada de cobrança, ex.: "início do 2º semestre do ano 1". */
+export const semesterText = (round: number) => `início do ${semesterOf(round)}º semestre do ano ${yearOf(round)}`;
 
 // ---------- Empréstimo ----------
 
@@ -623,6 +659,10 @@ export interface LoanOption {
   interest: number;
   total: number;
   parcels: number[];
+  /** rodada de cada cobrança (uma por semestre; no pagamento único, só o vencimento) */
+  rounds: number[];
+  /** rodada da 1ª cobrança semestral (o pagamento único vence um semestre depois) */
+  firstRound: number;
   /** rodada do último pagamento (última parcela ou vencimento do pagamento único) */
   dueRound: number;
 }
@@ -633,9 +673,18 @@ export function loanOptions(st: GameState, pid: string, amount: number): LoanOpt
     const interest = loanInterest(amount, rate);
     const total = amount + interest;
     const unico = p.id === 'unico';
-    return { plan: p.id, name: p.name, short: p.short, rate, interest, total, parcels: parcelSchedule(total, unico ? 1 : p.parcels), dueRound: st.round + (unico ? LOAN.rounds : p.parcels) };
+    const s = loanSchedule(st.round, p.id);
+    return { plan: p.id, name: p.name, short: p.short, rate, interest, total, parcels: parcelSchedule(total, unico ? 1 : p.parcels), rounds: s.rounds, firstRound: s.firstRound, dueRound: s.dueRound };
   });
 }
+/** Rodadas de cobrança de um plano pego na rodada `takenRound`: uma por semestre a partir da 1ª (ver firstChargeRound). */
+export function loanSchedule(takenRound: number, plan: LoanPlanId): { firstRound: number; rounds: number[]; dueRound: number } {
+  const firstRound = firstChargeRound(takenRound);
+  const rounds = plan === 'unico' ? [firstRound + (LOAN.unicoSemesters - 1) * CALENDAR.roundsPerSemester] : [...Array(planInfo(plan).parcels).keys()].map((k) => firstRound + k * CALENDAR.roundsPerSemester);
+  return { firstRound, rounds, dueRound: rounds[rounds.length - 1] };
+}
+/** Rodada da cobrança da parcela `k` (0 = a 1ª): uma por semestre a partir de `firstRound`. */
+export const parcelRound = (l: Loan, k: number) => (l.firstRound !== undefined ? l.firstRound + k * CALENDAR.roundsPerSemester : l.takenRound + k + 1);
 /** Próxima parcela do parcelado: número (1..n), total de parcelas, valor e rodada da cobrança; null no pagamento único. */
 export function nextParcel(l: Loan): { n: number; of: number; amount: number; round: number } | null {
   if (!isParcelado(l)) return null;
@@ -643,8 +692,10 @@ export function nextParcel(l: Loan): { n: number; of: number; amount: number; ro
   const of = l.parcels!.length;
   if (k >= of) return null;
   const amount = k === of - 1 ? loanOwed(l) : Math.min(l.parcels![k], loanOwed(l));
-  return { n: k + 1, of, amount, round: l.takenRound + k + 1 };
+  return { n: k + 1, of, amount, round: parcelRound(l, k) };
 }
+/** Rodada da próxima cobrança (parcela ou pagamento único). */
+export const nextChargeRound = (l: Loan) => nextParcel(l)?.round ?? l.dueRound;
 /** Taxa travada no empréstimo (salas antigas: juros ÷ principal). */
 export const loanRate = (l: Loan) => l.rate ?? (l.principal ? round4(l.interest / l.principal) : LOAN.interest);
 export const loanInterest = (principal: number, rate: number = LOAN.interest) => Math.round(principal * rate);
@@ -721,7 +772,7 @@ export function describeSide(side: TradeSide): string {
 
 /** IR do ano: alíquota sobre a renda acima da isenção. */
 export const irTax = (income: number) => Math.max(0, Math.round((income - IR.exempt) * IR.rate));
-/** Renda tributável desde a última volta. */
+/** Renda tributável do ano do calendário em curso. */
 export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
 /** Tipos de transação que contam como renda para o IR. */
 const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend', 'rendimento']);
@@ -934,11 +985,12 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
 /** Rodada final do seguro contratado agora: INSURANCE.rounds rodadas a partir desta (renovação no último dia emenda). */
 const insureUntilNew = (st: GameState, i: number) => Math.max(st.round - 1, insuredUntil(st, i) ?? 0) + INSURANCE.rounds;
 
-/** Texto curto das parcelas de um plano, ex.: "4 parcelas de $ 220" ou "pagamento único de $ 900 na rodada 7". */
-function parcelText(o: LoanOption): string {
+/** Texto curto das parcelas de um plano, ex.: "4 parcelas semestrais de $ 220 (rodadas 4 a 13)" ou "pagamento único de $ 900 na rodada 7". */
+export function parcelText(o: Pick<LoanOption, 'plan' | 'total' | 'parcels' | 'firstRound' | 'dueRound'>): string {
   if (o.plan === 'unico') return `pagamento único de ${money(o.total)} na rodada ${o.dueRound}`;
   const ps = o.parcels;
-  return ps.every((x) => x === ps[0]) ? `${ps.length} parcelas de ${money(ps[0])}` : `${ps.length - 1} parcelas de ${money(ps[0])} e 1 de ${money(ps[ps.length - 1])}`;
+  const each = ps.every((x) => x === ps[0]) ? `${ps.length} parcelas semestrais de ${money(ps[0])}` : `${ps.length} parcelas semestrais (${ps.length - 1} de ${money(ps[0])} e 1 de ${money(ps[ps.length - 1])})`;
+  return `${each}, rodadas ${o.firstRound} a ${o.dueRound}`;
 }
 
 function finEntradaTransfer(st: GameState, pid: string, price: number, plan: LoanPlanId, what: string, space: number): Transfer {
@@ -1010,20 +1062,38 @@ function drawBankRate(st: GameState, now: Date) {
   else log(st, `Rodada ${st.round}: taxa do banco ${r > prev ? 'subiu' : 'caiu'} para ${pct(r)} (era ${pct(prev)})`, now, undefined, true);
 }
 
-/** Volta completa no Início: fecha o ano do IR. Abaixo da isenção, nada a declarar. */
-function completeYear(st: GameState, p: Player, now: Date) {
-  const income = incomeOf(p);
-  const year = (p.year || 0) + 1;
-  p.year = year;
-  p.income = 0;
+/** Fim do ano do calendário: fecha a renda do ano de todos os jogadores (cada um declara na primeira vez no ano novo). */
+function closeYear(st: GameState, year: number, now: Date) {
+  for (const p of st.players) {
+    if (p.out || (p.irYear ?? 0) >= year) continue;
+    p.irOpen = { year, income: incomeOf(p) };
+    p.income = 0;
+  }
+  const { from, to } = yearRounds(year);
+  log(st, `Fim do ano ${year} (rodadas ${from} a ${to}): cada jogador declara o IR na primeira vez dele no ano ${year + 1}`, now, undefined, true);
+}
+
+/** Primeira vez do jogador no ano novo: abre a declaração do ano fechado. Abaixo da isenção, nada a declarar. */
+function openIR(st: GameState, p: Player, now: Date) {
+  const open = p.irOpen;
+  if (!open) return;
+  delete p.irOpen;
+  if ((p.irYear ?? 0) >= open.year) return;
+  const { year, income } = open;
   const tax = irTax(income);
   if (!tax) {
+    p.irYear = year;
     p.irLast = { year, income, tax: 0, outcome: 'isento', paid: 0, round: st.round };
     log(st, `${p.name} fechou o ano ${year}: isento de IR (renda de ${money(income)})`, now, p.id);
     return;
   }
-  st.irPending = { pid: p.id, year, income, tax, due: tax };
-  log(st, `${p.name} completou a volta: hora da declaração do IR do ano ${year}`, now, p.id);
+  st.irPending = { pid: p.id, year, income, tax, due: tax, cal: true };
+  log(st, `${p.name}: hora da declaração do IR do ano ${year}`, now, p.id);
+}
+
+/** IR resolvido (declarado, sonegado ou pago com multa): marca o ano para não declarar de novo. */
+function settleIR(p: Player, ir: { year: number; cal?: boolean }) {
+  if (ir.cal) p.irYear = Math.max(p.irYear ?? 0, ir.year);
 }
 
 function nextTurn(st: GameState, now: Date) {
@@ -1038,12 +1108,15 @@ function nextTurn(st: GameState, now: Date) {
   st.turn = i;
   st.turnInfo = emptyTurn();
   if (st.round !== roundBefore) {
+    if (isYearStart(st.round) && st.round > 1) closeYear(st, yearOf(st.round) - 1, now);
     drawBankRate(st, now);
     marketRound(st, now);
   }
-  // Início da vez: a poupança rende; empréstimo e financiamentos vencidos são cobrados antes de qualquer jogada
+  // Início da vez: a poupança rende, o IR do ano fechado espera a declaração e, no início do semestre,
+  // as parcelas do empréstimo e dos financiamentos são cobradas antes de qualquer jogada
   const p = st.players[i];
   savingsTurn(st, p, now);
+  openIR(st, p, now);
   collectFins(st, p, now);
   if (p.out) {
     if (!st.winner) nextTurn(st, now);
@@ -1052,7 +1125,7 @@ function nextTurn(st: GameState, now: Date) {
   const l = loanOf(st, p.id);
   if (!l) return;
   if (isParcelado(l)) {
-    // parcela do mês: uma por vez, a partir da rodada seguinte ao empréstimo (se ficou para trás, cobra as atrasadas)
+    // parcela do semestre (se ficou para trás, cobra as atrasadas)
     for (let k = 0; k < 5 && !p.out; k++) {
       const cur = loanOf(st, p.id);
       const np = cur && nextParcel(cur);
@@ -1297,10 +1370,12 @@ function need(cond: unknown, msg: string): asserts cond {
 /** Ações que não guardam ponto de desfazer. */
 const NO_UNDO = new Set<Action['type']>(['join', 'setStart', 'start', 'reset', 'undo']);
 
-export function applyAction(state: GameState, action: Action, ctx: ActionContext): GameState {
+export function applyAction(state0: GameState, action: Action, ctx: ActionContext): GameState {
   const now = ctx.now ?? new Date();
   const rng = ctx.rng ?? Math.random;
   const actor = ctx.actor;
+  // salas antigas passam para o calendário antes de qualquer regra (o "antes" do desfazer já fica migrado)
+  const state = migrateState(state0);
   const st = clone(state);
   st.prev = null;
 
@@ -1403,10 +1478,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       p.pos = idx;
       ti.landed = idx;
       log(st, `${p.name} parou em ${s.name}`, now, actor);
-      if (passed) {
-        applyTransfers(st, [{ from: BANK, to: p.id, amount: st.settings.salary, reason: 'Pró-labore do Início', kind: 'salary' }], now);
-        completeYear(st, p, now);
-      }
+      if (passed) applyTransfers(st, [{ from: BANK, to: p.id, amount: st.settings.salary, reason: 'Pró-labore do Início', kind: 'salary' }], now);
       if (s.type === 'gotojail') {
         sendToJail(p);
         ti.resolved = true;
@@ -1615,6 +1687,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       turnOnly();
       need(p.jailed && ti.landed === null, 'Você não está na detenção.');
       need(p.jailTries < 2, 'Na 3ª tentativa sem dupla, pague a fiança.');
+      need(st.irPending?.pid !== p.id, 'Entregue a declaração do IR antes de passar a vez.');
       p.jailTries += 1;
       log(st, `${p.name} não tirou dupla (tentativa ${p.jailTries} de 3)`, now, actor);
       nextTurn(st, now);
@@ -1791,16 +1864,16 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const rate = loanRateFor(st, actor, plan);
       const interest = loanInterest(amt, rate);
       const total = amt + interest;
+      const sched = loanSchedule(st.round, plan);
       if (plan === 'unico') {
-        const due = st.round + LOAN.rounds;
-        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, rate, plan } };
-        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(total)} até a rodada ${due}`, kind: 'loan' }], now);
+        const due = sched.dueRound;
+        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, firstRound: sched.firstRound, rate, plan } };
+        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(total)} na rodada ${due} (${semesterText(due)})`, kind: 'loan' }], now);
         log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)} (pagamento único)`, now, actor);
       } else {
         const parcels = parcelSchedule(total, info.parcels);
-        const due = st.round + parcels.length;
-        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, rate, plan, parcels, parcelsPaid: 0 } };
-        const each = parcels.every((x) => x === parcels[0]) ? `${parcels.length} parcelas de ${money(parcels[0])}` : `${parcels.length - 1} parcelas de ${money(parcels[0])} e 1 de ${money(parcels[parcels.length - 1])}`;
+        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: sched.dueRound, firstRound: sched.firstRound, rate, plan, parcels, parcelsPaid: 0 } };
+        const each = parcelText({ plan, total, parcels, firstRound: sched.firstRound, dueRound: sched.dueRound });
         applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco em ${info.short} a ${pct(rate)}: ${each} (total ${money(total)})`, kind: 'loan' }], now);
         log(st, `${me.name} pegou ${money(amt)} emprestado no banco em ${info.short} a ${pct(rate)}`, now, actor);
       }
@@ -1822,7 +1895,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
         delete st.loans![actor];
         if (parcelado) {
           if (!l.penhora) changeCredit(st, me, CREDIT.parcelLoanPaid, 'Empréstimo parcelado quitado antes do fim');
-        } else changeCredit(st, me, CREDIT.loanPaid, st.round < l.dueRound ? 'Empréstimo quitado antes do vencimento' : 'Empréstimo quitado em dia');
+        } else changeCredit(st, me, CREDIT.loanPaid, 'Empréstimo quitado antes do vencimento');
       } else {
         l.paid += amt;
         // pagamento parcial conta para o score uma vez por rodada, a partir de LOAN.step
@@ -1840,6 +1913,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       need(ir && ir.pid === actor, 'Não há declaração de IR pendente.');
       pay(st, transfersFor(state, action, actor), now);
       st.irPending = null;
+      settleIR(p, ir);
       if (ir.caught) {
         p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: ir.due, round: st.round };
         log(st, `${p.name} pagou o IR do ano ${ir.year} com a multa da malha fina`, now, actor);
@@ -1858,6 +1932,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       const caught = nextRandom(st) < IR.catchChance;
       if (!caught) {
         st.irPending = null;
+        settleIR(p, ir);
         p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'passou', paid: 0, round: st.round };
         // ninguém mais fica sabendo da sonegação
         log(st, `${p.name} entregou a declaração do ano ${ir.year}`, now, actor);
@@ -1869,6 +1944,7 @@ export function applyAction(state: GameState, action: Action, ctx: ActionContext
       if (p.balance >= due) {
         applyTransfers(st, [{ from: p.id, to: BANK, amount: due, reason: `Malha fina: IR do ano ${ir.year} + multa de ${Math.round(IR.fine * 100)}%`, kind: 'ir' }], now);
         st.irPending = null;
+        settleIR(p, ir);
         p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: due, round: st.round };
       } else {
         // sem saldo: fica devendo e paga pelo Pix (vendendo, hipotecando ou declarando falência)
@@ -1953,12 +2029,47 @@ function startFinance(before: GameState, st: GameState, pid: string, idx: number
     paid: 0,
     takenRound: st.round,
     dueRound: o.dueRound,
+    firstRound: o.firstRound,
     rate: o.rate,
     plan,
     ...(plan === 'unico' ? {} : { parcels: o.parcels, parcelsPaid: 0 }),
   };
   st.fin = { ...(st.fin || {}), [idx]: f };
   return f;
+}
+
+/**
+ * Salas antigas → calendário da partida. Idempotente: devolve o próprio estado se não há nada a migrar.
+ * - IR: os anos do calendário já passados contam como resolvidos; a renda acumulada entra no ano em curso.
+ *   Uma declaração pendente da volta (sem `cal`) continua valendo e é entregue como antes.
+ * - Empréstimo e financiamentos cobrados por rodada (sem `firstRound`): o que falta passa a ser cobrado nos próximos
+ *   inícios de semestre depois da rodada atual, uma parcela por semestre; o pagamento único vence no próximo.
+ */
+export function migrateState(state: GameState): GameState {
+  const oldLoan = (l: Loan) => l.firstRound === undefined;
+  const needs = state.cal !== 1 || Object.values(state.loans ?? {}).some(oldLoan) || Object.values(state.fin ?? {}).some(oldLoan);
+  if (!needs) return state;
+  const st = clone(state);
+  if (st.cal !== 1) {
+    const done = st.phase === 'playing' ? yearOf(st.round) - 1 : 0;
+    for (const p of st.players) if (p.irYear === undefined) p.irYear = done;
+    st.cal = 1;
+  }
+  const next = semesterStartFrom(st.round + 1);
+  const fix = (l: Loan) => {
+    if (!oldLoan(l)) return;
+    if (isParcelado(l)) {
+      const k = l.parcelsPaid ?? 0;
+      l.firstRound = next - k * CALENDAR.roundsPerSemester;
+      l.dueRound = parcelRound(l, l.parcels!.length - 1);
+    } else {
+      l.firstRound = next - (LOAN.unicoSemesters - 1) * CALENDAR.roundsPerSemester;
+      l.dueRound = next;
+    }
+  };
+  Object.values(st.loans ?? {}).forEach(fix);
+  Object.values(st.fin ?? {}).forEach(fix);
+  return st;
 }
 
 /** Mantém o ponto de desfazer existente (ações de sala não mexem nele). */
