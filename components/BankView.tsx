@@ -546,7 +546,6 @@ function TradeCardList({ ui, onTrade }: { ui: GameUi; onTrade: (pid: string) => 
                 <Avatar name={x.name} color={x.color} />
                 <div className="main">
                   <b>{x.name}</b>
-                  <span className="num">{money(x.balance)}</span>
                 </div>
               </div>
               <button className="btn small" disabled={busy || !!state.winner} onClick={() => onTrade(x.id)}>
