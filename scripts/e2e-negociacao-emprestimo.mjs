@@ -85,7 +85,7 @@ await noToasts(ana);
 await ana.getByRole('tab', { name: /Banco/ }).click();
 await ana.getByRole('button', { name: 'Negociar com Beto' }).click();
 await ana.locator('.pick[data-pick="1"]').click();
-await ana.getByLabel(/^Dinheiro \(saldo de você/).fill('500');
+await ana.getByLabel(/^Dinheiro \(seu saldo/).fill('500');
 await ana.locator('.pick[data-pick="2"]').click();
 await ana.getByTestId('trade-summary').waitFor();
 console.log('Resumo da proposta:', norm(await ana.getByTestId('trade-summary').textContent()));

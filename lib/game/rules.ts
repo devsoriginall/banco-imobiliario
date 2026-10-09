@@ -734,10 +734,10 @@ export function tradeBlock(st: GameState, i: number, owner: string): string | nu
   return null;
 }
 
-function sideProblem(st: GameState, side: TradeSide, owner: string): string | null {
+function sideProblem(st: GameState, side: TradeSide, owner: string, checkMoney = true): string | null {
   const who = pname(st, owner);
   if (!Number.isInteger(side.money) || side.money < 0) return 'Valor em dinheiro inválido.';
-  if ((findPlayer(st, owner)?.balance ?? 0) < side.money) return `${who} não tem ${money(side.money)} em dinheiro.`;
+  if (checkMoney && (findPlayer(st, owner)?.balance ?? 0) < side.money) return `${who} não tem ${money(side.money)} em dinheiro.`;
   if (new Set(side.props).size !== side.props.length) return 'Imóvel repetido na proposta.';
   for (const i of side.props) {
     const b = tradeBlock(st, i, owner);
@@ -753,12 +753,16 @@ function sideProblem(st: GameState, side: TradeSide, owner: string): string | nu
 }
 
 /** Valida uma proposta contra o estado atual (null = válida). Usada ao propor, ao mostrar e ao aceitar. */
-export function tradeProblem(st: GameState, from: string, to: string, give: TradeSide, get: TradeSide): string | null {
+/**
+ * `hideMoneyOf`: jogador cujo saldo não é checado (o saldo dos outros é privado; a falta de dinheiro
+ * só aparece para quem aceita, na hora de aceitar).
+ */
+export function tradeProblem(st: GameState, from: string, to: string, give: TradeSide, get: TradeSide, hideMoneyOf?: string): string | null {
   const a = findPlayer(st, from);
   const b = findPlayer(st, to);
   if (!a || a.out || !b || b.out || from === to) return 'Escolha outro jogador que ainda está no jogo.';
   if (sideEmpty(give) && sideEmpty(get)) return 'Monte a proposta: o que você dá e o que pede.';
-  return sideProblem(st, give, from) || sideProblem(st, get, to);
+  return sideProblem(st, give, from, hideMoneyOf !== from) || sideProblem(st, get, to, hideMoneyOf !== to);
 }
 
 /** Resumo de um lado, ex.: "$ 1.000 + Av. Paulista + 2 cotas da Banco Aurora" (imóvel negociado é sempre terreno, sem casas). */
@@ -1825,7 +1829,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
     }
     case 'proposeTrade': {
       const to = action.to;
-      const problem = tradeProblem(st, actor, to, action.give, action.get);
+      const problem = tradeProblem(st, actor, to, action.give, action.get, to);
       need(!problem, problem!);
       need(!tradesOf(st).some((t) => (t.from === actor && t.to === to) || (t.from === to && t.to === actor)), `Já existe uma proposta entre você e ${pname(st, to)}. Responda ou cancele antes.`);
       st.tradeCount = (st.tradeCount || 0) + 1;

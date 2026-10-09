@@ -57,7 +57,7 @@ function TradeCard({ ui, t }: { ui: GameUi; t: Trade }) {
   const [busy, setBusy] = useState(false);
   const incoming = t.to === me;
   const other = pname(state, incoming ? t.from : t.to);
-  const problem = tradeProblem(state, t.from, t.to, t.give, t.get);
+  const problem = tradeProblem(state, t.from, t.to, t.give, t.get, incoming ? undefined : t.to);
   const youGet = incoming ? t.give : t.get;
   const youGive = incoming ? t.get : t.give;
   const act = async (fn: () => Promise<unknown>) => {
@@ -122,7 +122,7 @@ function TradeCard({ ui, t }: { ui: GameUi; t: Trade }) {
 }
 
 /** Imóveis e cotas de um jogador para escolher numa proposta. */
-function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; owner: string; side: TradeSide; onChange: (s: TradeSide) => void; who: string }) {
+function AssetPicker({ state, owner, me, side, onChange }: { state: GameState; owner: string; me: string; side: TradeSide; onChange: (s: TradeSide) => void }) {
   const p = findPlayer(state, owner)!;
   const props = Object.keys(state.props)
     .map(Number)
@@ -135,7 +135,7 @@ function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; 
     <div className="stack" style={{ gap: 8 }}>
       <div className="field">
         <label htmlFor={`m-${owner}`}>
-          Dinheiro <span className="muted">(saldo de {who}: {money(p.balance)})</span>
+          Dinheiro{owner === me && <span className="muted"> (seu saldo: {money(p.balance)})</span>}
         </label>
         <input
           id={`m-${owner}`}
@@ -146,7 +146,7 @@ function AssetPicker({ state, owner, side, onChange, who }: { state: GameState; 
           onChange={(e) => onChange({ ...side, money: Math.max(0, parseInt(e.target.value.replace(/\D/g, ''), 10) || 0) })}
         />
       </div>
-      {props.length === 0 && comps.length === 0 && <p className="muted" style={{ margin: 0, fontSize: 13 }}>{who === 'você' ? 'Você' : who} não tem imóveis nem cotas.</p>}
+      {props.length === 0 && comps.length === 0 && <p className="muted" style={{ margin: 0, fontSize: 13 }}>{owner === me ? 'Você' : pname(state, owner)} não tem imóveis nem cotas.</p>}
       {props.map((i) => {
         const s = street(i);
         const block = tradeBlock(state, i, owner);
@@ -203,7 +203,7 @@ export function TradeBuilder({ ui, partner, onClose }: { ui: GameUi; partner: st
   const [busy, setBusy] = useState(false);
   const other = findPlayer(state, partner);
   if (!other) return null;
-  const problem = tradeProblem(state, me, partner, give, get);
+  const problem = tradeProblem(state, me, partner, give, get, partner);
   return (
     <Sheet label={`Negociar com ${other.name}`}>
       <div className="row" style={{ gap: 10 }}>
@@ -217,11 +217,11 @@ export function TradeBuilder({ ui, partner, onClose }: { ui: GameUi; partner: st
       </div>
       <div className="trade-block">
         <span className="label">Você dá</span>
-        <AssetPicker state={state} owner={me} side={give} onChange={setGive} who="você" />
+        <AssetPicker state={state} owner={me} me={me} side={give} onChange={setGive} />
       </div>
       <div className="trade-block">
         <span className="label">Você pede a {other.name}</span>
-        <AssetPicker state={state} owner={partner} side={get} onChange={setGet} who={other.name} />
+        <AssetPicker state={state} owner={partner} me={me} side={get} onChange={setGet} />
       </div>
       {!problem && (
         <div className="banner info" data-testid="trade-summary">
