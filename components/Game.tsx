@@ -112,25 +112,24 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
     <>
       <main className="app">
         <div className="top">
-          <div>
-            <h1>Banco Imobiliário</h1>
-            <div className="meta">
-              Sala {state.code} · Rodada {state.round}
-            </div>
+          <div className="top-meta">
+            <span className="meta">
+              Sala <b>{state.code}</b> · Rodada {state.round}
+            </span>
             {state.phase === 'playing' && (
-              <div className="meta cal" data-testid="calendar">
+              <span className="meta cal" data-testid="calendar">
                 {calendarText(state.round)}
-              </div>
+              </span>
             )}
           </div>
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 6 }}>
             {state.prev && state.prevBy === me && (
               <button className="btn small" onClick={() => run({ type: 'undo' })}>
                 Desfazer
               </button>
             )}
             {state.hostId === me && (
-              <button className="btn small" onClick={() => setConfirmReset(true)}>
+              <button className="btn small ghost" onClick={() => setConfirmReset(true)}>
                 Nova partida
               </button>
             )}
@@ -139,50 +138,22 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
 
         {mine ? (
           <div className={`wallet${mine.out ? ' out' : ''}`} data-testid="wallet">
-            <div>
-              <div className="lbl">{mine.out ? 'Você faliu' : `Sua carteira · ${mine.name}`}</div>
+            <Avatar name={mine.name} color={mine.color} style={{ width: 40, height: 40, borderRadius: 20 }} />
+            <div className="wallet-main">
+              <div className="lbl">{mine.out ? 'Você faliu' : 'Sua carteira'}</div>
               <div className="big num" data-testid="wallet-balance">
                 {money(mine.balance)}
               </div>
-              <div className="lbl">Patrimônio {money(equity(state, mine))}</div>
-              {savingsOf(mine) > 0 && (
-                <div className="lbl" data-testid="wallet-savings">
-                  Poupança {money(savingsOf(mine))}
-                </div>
-              )}
-              {!mine.out && (
-                <div className="lbl" data-testid="wallet-income">
-                  Renda no ano {yearOf(state.round)}: {money(incomeOf(mine))}
-                </div>
-              )}
-              <DebtLine state={state} me={me} />
             </div>
-            <Avatar name={mine.name} color={mine.color} style={{ width: 44, height: 44, borderRadius: 22 }} />
+            <div className="wallet-side">
+              <span>Patrimônio {money(equity(state, mine))}</span>
+              {!mine.out && <span data-testid="wallet-income">Renda no ano {yearOf(state.round)}: {money(incomeOf(mine))}</span>}
+            </div>
+            <WalletChips state={state} me={me} />
           </div>
         ) : (
           <div className="banner info">Você está assistindo esta partida. Ela começou antes de você entrar.</div>
         )}
-
-        <div className="players" data-testid="players">
-          {state.players.map((x, i) => (
-            <div key={x.id} className={`player${i === state.turn && !state.winner ? ' current' : ''}${x.out ? ' out' : ''}`} data-player={x.name}>
-              <Avatar name={x.name} color={x.color} />
-              <div style={{ minWidth: 0 }}>
-                <div className="name">
-                  {x.name}
-                  {x.jailed ? ' · detido' : ''}
-                  {x.out ? ' · faliu' : ''}
-                </div>
-                {x.id === me && (
-                  <>
-                    <div className="bal num">{money(x.balance)}</div>
-                    <div className="you">você</div>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
 
         <TradeInbox ui={ui} />
 
@@ -205,10 +176,12 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       <nav className="tabs">
         <div className="inner" role="tablist">
           {TABS.map(([k, l]) => (
-            <button key={k} className="tab" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
-              <Icon name={k} />
+            <button key={k} className={`tab t-${k}`} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
+              <span className="tab-ic">
+                <Icon name={k} />
+                {k === 'jogada' && cur?.id === me && !state.winner && tab !== 'jogada' && <i className="tab-badge" aria-label="sua vez" />}
+              </span>
               {l}
-              {k === 'jogada' && cur?.id === me && !state.winner && tab !== 'jogada' ? ' •' : ''}
             </button>
           ))}
         </div>
@@ -283,13 +256,23 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   );
 }
 
-/** Dívida com o banco no cabeçalho da carteira: empréstimo e financiamentos. */
-function DebtLine({ state, me }: { state: GameState; me: string }) {
+/** Linha extra da carteira, só quando há o que mostrar: poupança e dívida com o banco (empréstimo e financiamentos). */
+function WalletChips({ state, me }: { state: GameState; me: string }) {
+  const p = findPlayer(state, me);
+  const savings = p ? savingsOf(p) : 0;
+  const loan = <LoanLine state={state} me={me} />;
+  const fin = <FinLine state={state} me={me} />;
+  if (!savings && !loanOf(state, me) && !finsOf(state, me).length) return null;
   return (
-    <>
-      <LoanLine state={state} me={me} />
-      <FinLine state={state} me={me} />
-    </>
+    <div className="wallet-chips">
+      {savings > 0 && (
+        <span className="chip" data-testid="wallet-savings">
+          Poupança {money(savings)}
+        </span>
+      )}
+      {loan}
+      {fin}
+    </div>
   );
 }
 

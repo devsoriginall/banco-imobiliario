@@ -39,7 +39,7 @@ import { FinanceChooser } from './Finance';
 import { HouseSheet, HouseThumb, type SheetAction } from './HouseSheet';
 import { ConfirmModal } from './Modals';
 import { fmtChange } from './MercadoView';
-import { HoodPills } from './ui';
+import { Avatar, HoodPills } from './ui';
 
 const groupColor = (g: keyof typeof GROUPS) => `var(${GROUPS[g].c})`;
 const spaceColor = (s: Space) => (s.type === 'street' ? groupColor(s.group) : s.type === 'company' ? 'var(--g-empresa)' : 'var(--g-especial)');
@@ -48,7 +48,7 @@ export function PlayView({ ui }: { ui: GameUi }) {
   const { state, me } = ui;
   if (state.winner)
     return (
-      <div className="turn">
+      <div className="turn mine">
         <span className="sub">Fim de jogo</span>
         <span className="who">{pname(state, state.winner)} venceu!</span>
         <span className="sub">Foi o último jogador que não faliu.</span>
@@ -58,44 +58,40 @@ export function PlayView({ ui }: { ui: GameUi }) {
   const p = currentPlayer(state);
   const mine = p.id === me;
   const ti = state.turnInfo;
+  const doubles = ti.doubles ?? 0;
 
   let body: React.ReactNode;
   if (p.jailed && ti.landed === null) body = <JailCard ui={ui} />;
   else if (ti.landed === null)
     body = mine ? (
-      <div className="card">
-        <h2>Em que casa você parou?</h2>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Jogue os dados na mesa, ande com o peão e toque na casa. Se passar pelo Início, o pró-labore entra sozinho.
-        </p>
-        <Board state={state} onPick={(i) => ui.run({ type: 'land', idx: i })} />
-      </div>
+      <DicePad key={`${state.round}-${state.turn}-${doubles}`} ui={ui} />
     ) : (
       <div className="card">
         <div className="waiting">
           <span className="dot" />
-          {p.name} está jogando os dados e escolhendo a casa…
+          {p.name} está jogando os dados…
         </div>
-        <Board state={state} />
+        <details className="more">
+          <summary>Ver o tabuleiro</summary>
+          <Board state={state} />
+        </details>
       </div>
     );
-  else body = <LandedView key={`${state.round}-${state.turn}-${ti.landed}`} ui={ui} />;
+  else body = <LandedView key={`${state.round}-${state.turn}-${doubles}-${ti.landed}`} ui={ui} />;
 
   return (
     <>
-      <div className={`turn${mine ? ' mine' : ''}`} data-testid="turn">
-        <span className="sub">{mine ? 'É a sua vez' : 'Vez de'}</span>
-        <span className="who">{p.name}</span>
-        {mine && (
-          <>
-            <span className="sub">Saldo</span>
-            <span className="big num">{money(p.balance)}</span>
-          </>
-        )}
+      <div className={`turn${mine ? ' mine' : ''}`} data-testid="turn" data-pos={p.pos}>
+        <div className="turn-row">
+          <span className="sub">{mine ? 'É a sua vez' : 'Vez de'}</span>
+          <span className="who">{mine ? `Bora, ${p.name}!` : p.name}</span>
+        </div>
         <span className="sub">
-          Está em: {SPACES[p.pos].name}
+          Peão em: <b>{SPACES[p.pos].name}</b>
+          {doubles > 0 && !p.jailed ? ` · ${doubles}ª dupla seguida` : ''}
           {p.freeCards ? ` · ${p.freeCards} carta de saída livre` : ''}
         </span>
+        <Players state={state} me={me} />
       </div>
       {body}
       <Feed state={state} />
@@ -103,19 +99,150 @@ export function PlayView({ ui }: { ui: GameUi }) {
   );
 }
 
-function Feed({ state }: { state: GameState }) {
-  const items = state.feed.slice(0, 6);
-  if (!items.length) return null;
+/** Quem está na mesa: nome e situação (o saldo dos outros só aparece no Placar). */
+function Players({ state, me }: { state: GameState; me: string }) {
   return (
-    <div className="card">
+    <div className="players" data-testid="players">
+      {state.players.map((x, i) => (
+        <div key={x.id} className={`player${i === state.turn && !state.winner ? ' current' : ''}${x.out ? ' out' : ''}`} data-player={x.name}>
+          <Avatar name={x.name} color={x.color} />
+          <div className="name">
+            {x.name}
+            {x.jailed ? ' · detido' : ''}
+            {x.out ? ' · faliu' : ''}
+          </div>
+          {x.id === me && <div className="you">você</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const SUMS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+/** Antes de andar: o jogador digita a soma dos dados e o app anda com o peão (o tabuleiro é igual ao da mesa). */
+function DicePad({ ui }: { ui: GameUi }) {
+  const { state } = ui;
+  const p = currentPlayer(state);
+  const ti = state.turnInfo;
+  const [sum, setSum] = useState<number | null>(null);
+  const [double, setDouble] = useState(false);
+  const [manual, setManual] = useState(false);
+  const doubles = ti.doubles ?? 0;
+  const canDouble = !ti.jailExit;
+  const dest = sum ? (p.pos + sum) % SPACES.length : null;
+  const passes = sum ? p.pos + sum >= SPACES.length : false;
+  const jail3 = double && doubles + 1 >= MAX_DOUBLES;
+  const pick = (v: number) => {
+    setSum(v);
+    if (v % 2) setDouble(false);
+  };
+  return (
+    <div className="card dice-card" data-testid="dice-pad">
+      <div className="row between">
+        <h2>{ti.jailExit ? 'Ande com a dupla que tirou' : 'Quanto deu nos dados?'}</h2>
+        {doubles > 0 && <span className="pill sun">Jogando de novo</span>}
+      </div>
+      <div className="sums" role="radiogroup" aria-label="Soma dos dados">
+        {SUMS.map((v) => (
+          <button key={v} role="radio" aria-checked={sum === v} className="sum" onClick={() => pick(v)} disabled={ti.jailExit && v % 2 === 1} data-sum={v}>
+            {v}
+          </button>
+        ))}
+      </div>
+      {canDouble && (
+        <button className="toggle" role="switch" aria-checked={double} disabled={sum !== null && sum % 2 === 1} onClick={() => setDouble((d) => !d)} data-testid="double-toggle">
+          <span className="knob" aria-hidden="true" />
+          <span>
+            <b>Foi dupla?</b>
+            <span className="muted">{sum !== null && sum % 2 === 1 ? 'Soma ímpar nunca é dupla' : doubles + 1 >= MAX_DOUBLES ? `A ${MAX_DOUBLES}ª dupla seguida leva à detenção` : 'Dois dados iguais: joga de novo depois'}</span>
+          </span>
+        </button>
+      )}
+      <div className={`preview${jail3 ? ' bad' : ''}${dest === null ? ' empty' : ''}`} data-testid="dice-preview">
+        <Track state={state} from={p.pos} sum={jail3 ? null : sum} />
+        {dest === null ? (
+          <span className="label">As 12 casas à frente do seu peão</span>
+        ) : jail3 ? (
+            <>
+              <span className="label">{MAX_DOUBLES}ª dupla seguida</span>
+              <b>Direto para a detenção</b>
+            </>
+          ) : (
+            <>
+              <span className="label">Você vai parar em</span>
+              <b className="row" style={{ gap: 8 }}>
+                <span className="swatch" style={{ background: spaceColor(SPACES[dest]) }} />
+                {SPACES[dest].name}
+              </b>
+              {passes && SPACES[dest].type !== 'gotojail' && <span className="pill money">Passa pelo Início: +{money(state.settings.salary)}</span>}
+            </>
+          )}
+      </div>
+      <button className="btn primary block big-cta" disabled={!sum} onClick={() => sum && ui.run({ type: 'roll', sum, double })} data-testid="roll-btn">
+        {sum ? (jail3 ? 'Ir para a detenção' : `Andar ${sum} casas`) : 'Escolha a soma'}
+      </button>
+      <button className="link-btn" onClick={() => setManual((m) => !m)} aria-expanded={manual} data-testid="manual-move">
+        {manual ? 'Fechar o tabuleiro' : 'Corrigir casa / mover manualmente'}
+      </button>
+      {manual && (
+        <div className="stack" style={{ gap: 8 }}>
+          <span className="muted" style={{ fontSize: 13 }}>
+            Para quando uma carta move o peão ou a soma saiu errada: toque na casa onde o peão está. Passando pelo Início, o pró-labore entra sozinho.
+          </span>
+          <Board state={state} onPick={(i) => ui.run({ type: 'land', idx: i })} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** As 12 casas à frente do peão; a casa da soma escolhida acende. */
+function Track({ state, from, sum }: { state: GameState; from: number; sum: number | null }) {
+  return (
+    <div className="track" aria-hidden="true">
+      {Array.from({ length: 12 }, (_, k) => {
+        const i = (from + k + 1) % SPACES.length;
+        const s = SPACES[i];
+        const on = sum === k + 1;
+        const passed = sum !== null && k + 1 < sum;
+        return (
+          <span key={k} className={`step${on ? ' on' : ''}${passed ? ' passed' : ''}${i === 0 ? ' start' : ''}`} style={{ ['--c' as string]: spaceColor(s) }}>
+            {on && <i className="pawn" style={{ background: currentPlayer(state).color }} />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function Feed({ state }: { state: GameState }) {
+  const items = state.feed.slice(0, 8);
+  if (!items.length) return null;
+  const [first, ...rest] = items;
+  return (
+    <div className="card feed-card">
       <span className="label">Acontecendo na mesa</span>
       <ul className="feed" aria-live="polite">
-        {items.map((f) => (
+        <li className={first.important ? 'imp' : ''}>{first.text}</li>
+        {rest.slice(0, 2).map((f) => (
           <li key={f.seq} className={f.important ? 'imp' : ''}>
             {f.text}
           </li>
         ))}
       </ul>
+      {rest.length > 2 && (
+        <details className="more">
+          <summary>Ver mais</summary>
+          <ul className="feed">
+            {rest.slice(2).map((f) => (
+              <li key={f.seq} className={f.important ? 'imp' : ''}>
+                {f.text}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }
@@ -131,7 +258,7 @@ function JailCard({ ui }: { ui: GameUi }) {
         <span className="pill warn">Tentativa {p.jailTries + 1} de 3</span>
       </div>
       <p className="muted" style={{ margin: 0 }}>
-        Jogue os dados. Com dupla, sai e anda. Depois da 3ª tentativa sem dupla, paga {money(state.settings.bail)} de fiança.
+        Jogue os dados: com dupla, sai e anda a soma.
       </p>
       {mine ? (
         <div className="row">
@@ -236,23 +363,15 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
           <rect x="38" y="14" width="22" height="74" />
           <rect x="64" y="30" width="18" height="58" />
         </svg>
-        <span className="h-title">{s.name}</span>
-      </div>
-      <div className="row between">
-        <span className="row" style={{ gap: 6 }}>
-          <span className="swatch" style={{ background: groupColor(s.group) }} />
-          <span className="muted">
+        <span className="h-text">
+          <span className="h-sub">
             {s.city} · grupo {GROUPS[s.group].name.toLowerCase()}
           </span>
+          <span className="h-title">{s.name}</span>
         </span>
-        {pr && (
-          <span className="amt num" style={{ fontSize: 20 }}>
-            {money(lotPrice(state, i))}
-          </span>
-        )}
+        {pr && <span className="h-owner">{pname(state, pr.owner)}</span>}
       </div>
       <HoodPills state={state} group={s.group} testId="hood" />
-      <p style={{ margin: 0 }}>{s.desc}</p>
       {children}
       {pr && house && tier && (
         <button className="house-owned" data-testid="house-owned" onClick={() => setOpen(true)} aria-label={`Ver anúncio: casa ${tierName(tier)}, ${house.title}`}>
@@ -286,12 +405,30 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
           }
         />
       )}
+      {pr?.mortgaged && (
+        <span className="pill warn" style={{ alignSelf: 'flex-start' }}>
+          Hipotecado: não cobra aluguel
+        </span>
+      )}
+      {pr && (insuredUntil(state, i) !== null || finOf(state, i)) && (
+        <div className="row" style={{ gap: 6 }}>
+          <PropBadges state={state} i={i} />
+        </div>
+      )}
+      <details className="more">
+        <summary>Ver detalhes do imóvel</summary>
+        <div className="stack">
+      <p style={{ margin: 0 }}>{s.desc}</p>
       {pr && !tier && (
         <div className="banner info" data-testid="lot-only">
           Só o terreno, ainda sem casa. Quem é dono escolhe o padrão da primeira casa ao cair aqui.
         </div>
       )}
       <div className="kv">
+        <div>
+          <span>Terreno</span>
+          <span className="num">{money(lotPrice(state, i))}</span>
+        </div>
         <div>
           <span>{tier ? `Casa ${tierName(tier)}` : 'Casa'}</span>
           <span className="num">{tier ? money(buildPrice(state, i, tier)) : `${money(buildPrice(state, i, 'basica'))}–${money(buildPrice(state, i, 'alto'))}`}</span>
@@ -332,16 +469,8 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
           <RentCompare state={state} i={i} />
         </>
       )}
-      {pr?.mortgaged && (
-        <span className="pill warn" style={{ alignSelf: 'flex-start' }}>
-          Hipotecado: não cobra aluguel
-        </span>
-      )}
-      {pr && (insuredUntil(state, i) !== null || finOf(state, i)) && (
-        <div className="row" style={{ gap: 6 }}>
-          <PropBadges state={state} i={i} />
         </div>
-      )}
+      </details>
     </div>
   );
 }
@@ -390,7 +519,9 @@ function LandedView({ ui }: { ui: GameUi }) {
   const ti = state.turnInfo;
   const i = ti.landed!;
   const s = SPACES[i];
-  const [dice, setDice] = useState<number | null>(null);
+  const [dice, setDice] = useState<number | null>(ti.dice ?? null);
+  /** a soma veio dos dados: só mostra os números para corrigir */
+  const [fixDice, setFixDice] = useState(false);
   const [financing, setFinancing] = useState(false);
   const [confirmJail, setConfirmJail] = useState(false);
   const who = mine ? 'Você' : p.name;
@@ -421,7 +552,7 @@ function LandedView({ ui }: { ui: GameUi }) {
               </div>
             </div>
             <span className="muted" style={{ fontSize: 13 }}>
-              Compre só o terreno. Numa próxima vez que cair aqui, escolha a primeira casa entre 3 padrões no site da imobiliária.
+              A primeira casa você escolhe numa próxima vez que cair aqui.
             </span>
             {mine ? (
               financing ? (
@@ -496,8 +627,8 @@ function LandedView({ ui }: { ui: GameUi }) {
       <>
         <Listing state={state} i={i} action={buildAction}>
           {offer}
+          {action}
         </Listing>
-        {action}
       </>
     );
   } else if (s.type === 'company') {
@@ -526,8 +657,9 @@ function LandedView({ ui }: { ui: GameUi }) {
             </span>
           </div>
         </div>
-        <div className="stack" style={{ gap: 6 }}>
-          <span className="label">Quem tem as 10 cotas</span>
+        <details className="more">
+          <summary>Quem tem as 10 cotas</summary>
+          <div className="stack" style={{ gap: 6 }}>
           {holders.map(([pid, n]) => (
             <div className="row between" key={pid}>
               <span>
@@ -541,18 +673,27 @@ function LandedView({ ui }: { ui: GameUi }) {
             <span className="muted">Empresa (à venda)</span>
             <span className="num">{bankQ}</span>
           </div>
-        </div>
+          </div>
+        </details>
         {needsFee &&
           (mine ? (
             <div className="stack" style={{ gap: 8 }}>
-              <span className="label">Taxa: soma dos dados × {money(feeRate(state, i))}</span>
-              <div className="dice">
-                {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((v) => (
-                  <button key={v} aria-pressed={dice === v} onClick={() => setDice(v)}>
-                    {v}
-                  </button>
-                ))}
-              </div>
+              <span className="label">
+                Taxa: soma dos dados{ti.dice && !fixDice ? ` (${dice})` : ''} × {money(feeRate(state, i))}
+              </span>
+              {ti.dice && !fixDice ? (
+                <button className="link-btn" style={{ alignSelf: 'flex-start' }} onClick={() => setFixDice(true)}>
+                  Corrigir a soma dos dados
+                </button>
+              ) : (
+                <div className="dice">
+                  {SUMS.map((v) => (
+                    <button key={v} aria-pressed={dice === v} onClick={() => setDice(v)}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 className="btn primary"
                 disabled={!dice}
@@ -695,6 +836,15 @@ function LandedView({ ui }: { ui: GameUi }) {
         </p>
       </>
     );
+  else if (s.type === 'jail' && p.jailed)
+    inner = (
+      <>
+        <h2>{MAX_DOUBLES}ª dupla seguida</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          {who} foi direto para a detenção, sem andar e sem jogar de novo.
+        </p>
+      </>
+    );
   else if (s.type === 'jail')
     inner = (
       <>
@@ -714,26 +864,39 @@ function LandedView({ ui }: { ui: GameUi }) {
       </>
     );
 
+  /** andou pelos dados (salas antigas e "corrigir casa": sem a soma) */
+  const rolled = ti.dice !== undefined;
+  const rolledDouble = rolled && !!ti.double && !p.jailed;
+  const doubleBtn = (
+    <button
+      className={`btn${rolledDouble ? ' primary' : ''}`}
+      disabled={!ti.resolved || p.jailed || !!ti.jailExit}
+      data-testid="double-btn"
+      onClick={() => (nextDouble >= MAX_DOUBLES ? setConfirmJail(true) : ui.run({ type: 'endTurn', again: true }))}
+    >
+      {rolledDouble ? 'Foi dupla: jogar de novo' : nextDouble === 1 ? 'Tirei dupla: jogar de novo' : `Tirei dupla (${nextDouble}ª seguida)`}
+    </button>
+  );
   return (
-    <div className="card" data-testid="landed">
-      {!mine && <span className="label">{p.name} parou em</span>}
-      {inner}
+    <div className="card landed" data-testid="landed">
+      <span className="label landed-head">
+        <i className="pawn hop" style={{ background: p.color }} aria-hidden="true" />
+        {rolled ? `${mine ? 'Você tirou' : `${p.name} tirou`} ${ti.dice}${ti.double ? ' (dupla)' : ''} · parou em` : `${mine ? 'Você parou' : `${p.name} parou`} em`}
+      </span>
+      <div className="reveal stack">{inner}</div>
       {mine && (
-        <div className="row">
-          <button className="btn primary" disabled={!ti.resolved} onClick={() => ui.run({ type: 'endTurn', again: false })}>
-            Passar a vez
-          </button>
-          <button
-            className="btn"
-            disabled={!ti.resolved || p.jailed}
-            data-testid="double-btn"
-            onClick={() => (nextDouble >= MAX_DOUBLES ? setConfirmJail(true) : ui.run({ type: 'endTurn', again: true }))}
-          >
-            {nextDouble === 1 ? 'Tirei dupla: jogar de novo' : `Tirei dupla (${nextDouble}ª seguida)`}
-          </button>
+        <div className="row turn-actions">
+          {rolledDouble ? (
+            doubleBtn
+          ) : (
+            <button className="btn primary" disabled={!ti.resolved} onClick={() => ui.run({ type: 'endTurn', again: false })}>
+              Passar a vez
+            </button>
+          )}
+          {!rolled && !ti.jailExit && doubleBtn}
           {state.prev && state.prevBy === me && state.prev.turnInfo.landed === null && (
-            <button className="btn small" onClick={() => ui.run({ type: 'undo' })}>
-              Escolhi a casa errada
+            <button className="btn small ghost" onClick={() => ui.run({ type: 'undo' })}>
+              {rolled ? 'Errei a soma' : 'Escolhi a casa errada'}
             </button>
           )}
         </div>

@@ -22,6 +22,23 @@ const num = (t) => Number(norm(t).replace(/[^\d-]/g, ''));
 const text = async (loc) => norm(await loc.textContent());
 const wallet = async (page) => num(await page.getByTestId('wallet-balance').textContent());
 const front = (page) => page.bringToFront();
+/**
+ * Anda com o peão do jogador da vez até a casa `idx`: digita a soma dos dados quando a casa está de 2 a 12 casas
+ * à frente (com `dupla`, só soma par); senão usa o "Corrigir casa / mover manualmente".
+ */
+async function irPara(page, idx, { dupla = false } = {}) {
+  const pos = Number(await page.getByTestId('turn').getAttribute('data-pos'));
+  const d = (idx - pos + 40) % 40;
+  if (d >= 2 && d <= 12 && (!dupla || d % 2 === 0)) {
+    await page.locator(`.sum[data-sum="${d}"]`).click();
+    if (dupla) await page.getByTestId('double-toggle').click();
+    await page.getByTestId('roll-btn').click();
+  } else {
+    await page.getByTestId('manual-move').click();
+    await page.locator(`[data-space="${idx}"]`).click();
+  }
+  await page.getByTestId('landed').waitFor();
+}
 const brl = (n) => `$ ${n.toLocaleString('pt-BR')}`;
 let failed = false;
 const check = (cond, msg) => {
@@ -83,7 +100,7 @@ await shot(ana, 'poupanca-1-deposito.png');
 
 // 3. Financiamento: Ana cai na Av. 9 de Julho e financia o terreno em 4x (entrada de 20% pelo Pix)
 await tab(ana, 'Jogada');
-await ana.locator(`[data-space="${NOVE_JULHO}"]`).click();
+await irPara(ana, NOVE_JULHO);
 const lotPrice = num(await ana.getByTestId('lot-price').textContent());
 const finBtn = ana.getByRole('button', { name: /^Financiar · entrada/ });
 const entrada = num((await finBtn.textContent()).split('entrada')[1]);
@@ -150,23 +167,26 @@ await calm(ana);
 await shot(ana, 'financiamento-4-negociacao.png');
 await ana.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
-// 6. 3 duplas seguidas: Ana tira dupla duas vezes; na terceira, confirmação e detenção
+// 6. 3 duplas seguidas: Ana tira dupla (botão depois de cair), depois marca "Foi dupla?" nos dados; a 3ª vai para a detenção
+const BANCO_AURORA = 3;
 await tab(ana, 'Jogada');
 await ana.getByRole('button', { name: 'Tirei dupla: jogar de novo' }).click();
-await ana.locator(`[data-space="${FERIADO}"]`).click();
+await irPara(ana, BANCO_AURORA, { dupla: true });
 const second = ana.getByTestId('double-btn');
-check((await text(second)) === 'Tirei dupla (2ª seguida)', 'botão da 2ª dupla');
+check((await text(second)) === 'Foi dupla: jogar de novo', 'botão da 2ª dupla');
+check((await ana.getByRole('button', { name: 'Passar a vez' }).count()) === 0, 'com dupla, só joga de novo');
 await calm(ana);
 await ana.evaluate(() => document.querySelector('[data-testid="double-btn"]').scrollIntoView({ block: 'center' }));
 await shot(ana, 'duplas-1-segunda.png');
 await second.click();
-await ana.locator(`[data-space="${FERIADO}"]`).click();
-check((await text(ana.getByTestId('double-btn'))) === 'Tirei dupla (3ª seguida)', 'botão da 3ª dupla');
-await ana.getByTestId('double-btn').click();
-await ana.getByRole('heading', { name: '3ª dupla seguida' }).waitFor();
+await ana.locator('.sum[data-sum="4"]').click();
+await ana.getByTestId('double-toggle').click();
+await ana.getByTestId('dice-preview').getByText('Direto para a detenção').waitFor();
 await calm(ana);
 await shot(ana, 'duplas-2-confirmacao.png');
-await ana.getByRole('button', { name: 'Tirei a 3ª dupla: ir para a detenção' }).click();
+await ana.getByRole('button', { name: 'Ir para a detenção' }).click();
+await ana.getByRole('heading', { name: '3ª dupla seguida' }).waitFor();
+await ana.getByRole('button', { name: 'Passar a vez' }).click();
 await ana.locator('.feed li', { hasText: 'Ana tirou 3 duplas seguidas e foi para a detenção' }).waitFor();
 check((await text(ana.locator('.player[data-player="Ana"] .name'))) === 'Ana · detido', 'Ana detida');
 check((await ana.getByText('Vez de').count()) > 0, 'a vez passou para o Beto');
@@ -191,7 +211,7 @@ check((await text(ana.getByTestId('savings-balance'))) === '$ 900', 'poupança c
 
 // 8. Beto passa a vez: rodada 2, a poupança da Ana rende; a 1ª parcela do financiamento só vem na rodada 4 (semestre)
 await front(beto);
-await beto.locator(`[data-space="${FERIADO}"]`).click();
+await irPara(beto, FERIADO);
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
 await closePaper(beto);
 await front(ana);

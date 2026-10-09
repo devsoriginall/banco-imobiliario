@@ -111,7 +111,7 @@ export const NEWS: NewsCard[] = [
   { k: 'jail', v: 0, t: 'Vá para a prisão. Não passe pelo Início.' },
 ];
 
-export const PLAYER_COLORS = ['#0B6E50', '#1F4E79', '#B45309', '#7C3AED', '#BE185D', '#0E7490'];
+export const PLAYER_COLORS = ['#3D5AFE', '#E8175D', '#C2410C', '#7B2FF7', '#08875A', '#0E7490'];
 export const MAX_PLAYERS = 6;
 export const DEFAULTS: Settings = { start: 25000, salary: 2000, bail: 500, mortgageRate: 0.2 };
 
