@@ -537,7 +537,9 @@ describe('negociação entre jogadores', () => {
     expect(() => prop(side({ props: [PAULISTA] }), side())).toThrow(/não é mais de Ana/);
     expect(() => prop(side(), side({ props: [FARIA_LIMA] }))).toThrow(/não é mais de Beto/);
     expect(() => prop(side({ money: 30000 }), side({ props: [PAULISTA] }))).toThrow(/Ana não tem/);
-    expect(() => prop(side(), side({ money: 30000 }))).toThrow(/Beto não tem/);
+    // o saldo de Beto é privado: a proposta sai, e a falta de dinheiro só aparece quando ele tenta aceitar
+    const asked = prop(side(), side({ money: 30000 }));
+    expect(() => act(asked, 'beto', { type: 'acceptTrade', id: trades(asked)[0].id })).toThrow(/Beto não tem/);
     expect(() => prop(side({ shares: { [BANCO_AURORA]: 2 } }), side())).toThrow(/2 cotas/);
     expect(() => prop(side(), side())).toThrow(/Monte a proposta/);
     expect(() => prop(side({ money: -5 }), side())).toThrow(/inválido/);
