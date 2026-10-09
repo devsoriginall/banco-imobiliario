@@ -24,8 +24,30 @@ const playerBal = async (page, name) => {
   await page.getByRole('tab', { name: /Jogada/ }).click();
   return v;
 };
-const owner = async (page, idx) => (await page.locator(`[data-space="${idx}"]`).getAttribute('aria-label')).split(' · ')[1] || 'ninguém';
+// dono no tabuleiro (na vez do próprio jogador, o tabuleiro fica atrás do "Corrigir casa")
+const owner = async (page, idx) => {
+  const sp = page.locator(`[data-space="${idx}"]`);
+  if (!(await sp.count())) await page.getByTestId('manual-move').click();
+  return (await sp.getAttribute('aria-label')).split(' · ')[1] || 'ninguém';
+};
 const front = (page) => page.bringToFront();
+/**
+ * Anda com o peão do jogador da vez até a casa `idx`: digita a soma dos dados quando a casa está de 2 a 12 casas
+ * à frente (com `dupla`, só soma par); senão usa o "Corrigir casa / mover manualmente".
+ */
+async function irPara(page, idx, { dupla = false } = {}) {
+  const pos = Number(await page.getByTestId('turn').getAttribute('data-pos'));
+  const d = (idx - pos + 40) % 40;
+  if (d >= 2 && d <= 12 && (!dupla || d % 2 === 0)) {
+    await page.locator(`.sum[data-sum="${d}"]`).click();
+    if (dupla) await page.getByTestId('double-toggle').click();
+    await page.getByTestId('roll-btn').click();
+  } else {
+    await page.getByTestId('manual-move').click();
+    await page.locator(`[data-space="${idx}"]`).click();
+  }
+  await page.getByTestId('landed').waitFor();
+}
 const noToasts = (page) => page.waitForFunction(() => document.querySelectorAll('.toast').length === 0, null, { timeout: 10000 });
 const fail = (msg) => {
   console.error('FALHOU:', msg);
@@ -61,7 +83,7 @@ await ana.getByRole('button', { name: 'Começar partida' }).click();
 await ana.getByText('É a sua vez').waitFor();
 
 // 1. Ana compra a Av. 9 de Julho ($ 1.000)
-await ana.locator('[data-space="1"]').click();
+await irPara(ana, 1);
 await ana.getByRole('button', { name: /Comprar .*por/ }).click();
 await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
 await ana.getByRole('button', { name: 'Fechar' }).click();
@@ -70,7 +92,7 @@ await ana.getByRole('button', { name: 'Passar a vez' }).click();
 // 2. Beto compra a Av. Brasil ($ 750)
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
-await beto.locator('[data-space="2"]').click();
+await irPara(beto, 2);
 await beto.getByRole('button', { name: /Comprar .*por/ }).click();
 await beto.getByRole('button', { name: 'Confirmar Pix' }).click();
 await beto.getByRole('button', { name: 'Fechar' }).click();
@@ -213,7 +235,7 @@ await shot(ana, 'parcelas-3-cartao.png');
 // 8. Passa a vez (Ana e Beto param no Feriado) até a parcela 1/4 ser cobrada no início da vez da Ana, na rodada `first`
 const passTurn = async (page) => {
   await page.getByRole('tab', { name: /Jogada/ }).click();
-  await page.locator('[data-space="20"]').click();
+  await irPara(page, 20);
   await page.getByRole('button', { name: 'Passar a vez' }).click();
 };
 for (let r = takenRound; r < first; r++) {

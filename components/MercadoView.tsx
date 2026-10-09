@@ -45,7 +45,7 @@ export function Sparkline({ values, width = 96, height = 32, big = false, label 
   const x = (k: number) => pad + (k * (width - pad * 2)) / (vs.length - 1);
   const y = (v: number) => (max === min ? height / 2 : pad + ((max - v) * (height - pad * 2)) / (max - min));
   const up = vs[vs.length - 1] >= vs[0];
-  const color = vs[vs.length - 1] === vs[0] ? 'var(--muted)' : up ? 'var(--accent)' : 'var(--bad)';
+  const color = vs[vs.length - 1] === vs[0] ? 'var(--muted)' : up ? 'var(--money)' : 'var(--bad)';
   const d = vs.map((v, k) => `${k ? 'L' : 'M'}${x(k).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
   return (
     <svg width={big ? '100%' : width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={label} className="spark">
@@ -87,7 +87,17 @@ export function JornalModal({ state, ed, onClose, onHistory }: { state: GameStat
   return (
     <div className="jornal-full" role="dialog" aria-modal="true" aria-label={`Jornal da Cidade, edição ${ed.round}`}>
       <div className="jornal-inner">
-        <EditionPaper state={state} ed={ed} />
+        {/* a edição nova chega como uma folha de jornal virando para a esquerda */}
+        <div className="page-flip turning" key={ed.round}>
+          <EditionPaper state={state} ed={ed} />
+          <div className="page-leaf" aria-hidden="true">
+            <span className="leaf-name">Jornal da Cidade</span>
+            <span className="leaf-cols">
+              <i />
+              <i />
+            </span>
+          </div>
+        </div>
         <div className="stack" style={{ gap: 8 }}>
           <button className="btn primary block" onClick={onClose}>
             Fechar o jornal

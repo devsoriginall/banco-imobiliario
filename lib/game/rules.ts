@@ -1386,6 +1386,40 @@ function sendToJail(p: Player) {
   p.jailTries = 0;
 }
 
+/**
+ * O jogador da vez para na casa `idx` (pelos dados ou escolhendo a casa): pró-labore se passou pelo Início
+ * (inclusive parando nele), "Vá para a detenção" prende sem pró-labore, e marca o que já está resolvido.
+ */
+function landOn(st: GameState, p: Player, idx: number, passed: boolean, text: string, now: Date, actor: string) {
+  const ti = st.turnInfo;
+  const s = SPACES[idx];
+  p.pos = idx;
+  ti.landed = idx;
+  log(st, text, now, actor);
+  if (passed) applyTransfers(st, [{ from: BANK, to: p.id, amount: st.settings.salary, reason: 'Pró-labore do Início', kind: 'salary' }], now);
+  if (s.type === 'gotojail') {
+    sendToJail(p);
+    ti.resolved = true;
+    log(st, `${p.name} foi para a detenção sem receber pró-labore`, now, actor, true);
+  }
+  if (s.type === 'start' || s.type === 'free' || s.type === 'jail') ti.resolved = true;
+  if (s.type === 'street') {
+    const pr = st.props[idx];
+    if (pr && (pr.owner === p.id || pr.mortgaged)) ti.resolved = true;
+  }
+  if (s.type === 'company' && !othersHoldShares(st, idx, p.id)) ti.resolved = true;
+  // falta de saldo para o que é obrigatório pagar aqui (aluguel, imposto, a menor taxa da empresa)
+  const dueHere =
+    s.type === 'street' && !ti.resolved && ownedBy(st, idx)
+      ? rentOf(st, idx)
+      : s.type === 'tax'
+        ? s.amount
+        : s.type === 'company' && !ti.resolved
+          ? feeTransfers(st, idx, ti.dice ?? 2, p.id).reduce((a, t) => a + t.amount, 0)
+          : 0;
+  if (dueHere > p.balance) shortfall(st, p, s.type === 'street' ? 'o aluguel' : s.type === 'tax' ? 'o imposto' : 'a taxa da empresa');
+}
+
 function checkWinner(st: GameState) {
   const alive = st.players.filter((p) => !p.out);
   if (alive.length === 1) st.winner = alive[0].id;
@@ -1497,39 +1531,36 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
   };
 
   switch (action.type) {
+    case 'roll': {
+      turnOnly();
+      need(!p.jailed, 'Você está na detenção: tente a dupla, use a carta ou pague a fiança.');
+      need(ti.landed === null, 'Você já andou nesta jogada.');
+      const sum = action.sum;
+      need(Number.isInteger(sum) && sum >= 2 && sum <= 12, 'A soma dos dados vai de 2 a 12.');
+      // quem saiu da detenção com dupla anda com essa soma, mas não joga de novo
+      const double = !!action.double && !ti.jailExit;
+      need(!double || sum % 2 === 0, 'Dupla sempre dá soma par.');
+      ti.dice = sum;
+      ti.double = double;
+      if (double && (ti.doubles ?? 0) + 1 >= MAX_DOUBLES) {
+        // 3ª dupla seguida: direto para a detenção, sem andar e sem pró-labore
+        sendToJail(p);
+        ti.landed = JAIL_POS;
+        ti.resolved = true;
+        log(st, `${p.name} tirou ${MAX_DOUBLES} duplas seguidas e foi para a detenção`, now, actor, true);
+        break;
+      }
+      const idx = (p.pos + sum) % SPACES.length;
+      landOn(st, p, idx, p.pos + sum >= SPACES.length, `${p.name} tirou ${sum}${double ? ' (dupla)' : ''} e parou em ${SPACES[idx].name}`, now, actor);
+      break;
+    }
     case 'land': {
       turnOnly();
       need(ti.landed === null, 'Você já escolheu a casa desta jogada.');
       need(!p.jailed, 'Você está na detenção.');
       const idx = action.idx;
       need(Number.isInteger(idx) && idx >= 0 && idx < SPACES.length, 'Casa inválida.');
-      const s = SPACES[idx];
-      const passed = idx < p.pos;
-      p.pos = idx;
-      ti.landed = idx;
-      log(st, `${p.name} parou em ${s.name}`, now, actor);
-      if (passed) applyTransfers(st, [{ from: BANK, to: p.id, amount: st.settings.salary, reason: 'Pró-labore do Início', kind: 'salary' }], now);
-      if (s.type === 'gotojail') {
-        sendToJail(p);
-        ti.resolved = true;
-        log(st, `${p.name} foi para a detenção sem receber pró-labore`, now, actor, true);
-      }
-      if (s.type === 'start' || s.type === 'free' || s.type === 'jail') ti.resolved = true;
-      if (s.type === 'street') {
-        const pr = st.props[idx];
-        if (pr && (pr.owner === p.id || pr.mortgaged)) ti.resolved = true;
-      }
-      if (s.type === 'company' && !othersHoldShares(st, idx, p.id)) ti.resolved = true;
-      // falta de saldo para o que é obrigatório pagar aqui (aluguel, imposto, a menor taxa da empresa)
-      const dueHere =
-        s.type === 'street' && !ti.resolved && ownedBy(st, idx)
-          ? rentOf(st, idx)
-          : s.type === 'tax'
-            ? s.amount
-            : s.type === 'company' && !ti.resolved
-              ? feeTransfers(st, idx, 2, p.id).reduce((a, t) => a + t.amount, 0)
-              : 0;
-      if (dueHere > p.balance) shortfall(st, p, s.type === 'street' ? 'o aluguel' : s.type === 'tax' ? 'o imposto' : 'a taxa da empresa');
+      landOn(st, p, idx, idx < p.pos, `${p.name} parou em ${SPACES[idx].name}`, now, actor);
       break;
     }
     case 'buy': {
@@ -1710,6 +1741,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       need(p.jailed && ti.landed === null, 'Você não está na detenção.');
       p.jailed = false;
       p.jailTries = 0;
+      ti.jailExit = true;
       log(st, `${p.name} tirou dupla e saiu da detenção`, now, actor);
       break;
     }
@@ -1794,6 +1826,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       need(st.irPending?.pid !== p.id, 'Entregue a declaração do IR antes de passar a vez.');
       if (action.again) {
         need(!p.jailed, 'Na detenção não se joga de novo.');
+        need(!ti.jailExit, 'Quem sai da detenção com dupla anda, mas não joga de novo.');
         const doubles = (ti.doubles ?? 0) + 1;
         if (doubles >= MAX_DOUBLES) {
           sendToJail(p);

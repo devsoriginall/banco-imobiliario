@@ -123,7 +123,7 @@ export function Room({ code }: { code: string }) {
     lastTrades.current = nowTrades;
     const turnId = st.phase === 'playing' && !st.winner ? currentPlayer(st)?.id ?? null : null;
     if (turnId === me.id && lastTurn.current !== me.id && findPlayer(st, me.id)) {
-      toast('Sua vez', 'Jogue os dados e toque na casa onde parou.');
+      toast('Sua vez', 'Jogue os dados e toque na soma que tirou.');
       const myLoan = loanOf(st, me.id);
       if (myLoan && !isParcelado(myLoan) && loanRoundsLeft(st, me.id) === 1) toast('Empréstimo vence na próxima rodada', `Pague ${money(debtOf(st, me.id))} na aba Banco até a sua próxima vez, ou o banco cobra e faz a penhora.`);
     }

@@ -23,6 +23,23 @@ const norm = (t) => t.replace(/\s+/g, ' ').trim();
 const num = (t) => Number(norm(t).replace(/[^\d-]/g, ''));
 const wallet = async (page) => num(await page.getByTestId('wallet-balance').textContent());
 const front = (page) => page.bringToFront();
+/**
+ * Anda com o peão do jogador da vez até a casa `idx`: digita a soma dos dados quando a casa está de 2 a 12 casas
+ * à frente (com `dupla`, só soma par); senão usa o "Corrigir casa / mover manualmente".
+ */
+async function irPara(page, idx, { dupla = false } = {}) {
+  const pos = Number(await page.getByTestId('turn').getAttribute('data-pos'));
+  const d = (idx - pos + 40) % 40;
+  if (d >= 2 && d <= 12 && (!dupla || d % 2 === 0)) {
+    await page.locator(`.sum[data-sum="${d}"]`).click();
+    if (dupla) await page.getByTestId('double-toggle').click();
+    await page.getByTestId('roll-btn').click();
+  } else {
+    await page.getByTestId('manual-move').click();
+    await page.locator(`[data-space="${idx}"]`).click();
+  }
+  await page.getByTestId('landed').waitFor();
+}
 let failed = false;
 const check = (cond, msg) => {
   if (!cond) {
@@ -76,7 +93,7 @@ await closePaper(beto);
 await front(ana);
 await ana.getByText('É a sua vez').waitFor();
 const start = await wallet(ana);
-await ana.locator(`[data-space="${VOX}"]`).click();
+await irPara(ana, VOX);
 const buyBtn = ana.getByRole('button', { name: /Comprar 1 cota por/ });
 await buyBtn.waitFor();
 const price1 = num((await buyBtn.textContent()).split('por')[1]);
@@ -92,7 +109,7 @@ await ana.getByRole('button', { name: 'Passar a vez' }).click();
 // 4. Beto passa a vez: começa a rodada 2 e sai a edição 2, sem dividendos (pagos só no início do semestre)
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
-await beto.locator(`[data-space="${FERIADO}"]`).click();
+await irPara(beto, FERIADO);
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
 await beto.getByText('Edição nº 2').waitFor();
 await closePaper(beto);
@@ -109,7 +126,7 @@ check(bolsaTxt.includes('Dividendos pagos a cada semestre (rodadas 4, 7, 10…)'
 check(norm(await ana.locator(`[data-stock="${VOX}"]`).textContent()).includes('/cota na rodada 4'), 'próximo dividendo na lista');
 await ana.getByRole('tab', { name: /Jogada/ }).click();
 // Ana cai de novo na própria empresa (sem passar pelo Início) e passa a vez
-await ana.locator(`[data-space="${VOX}"]`).click();
+await irPara(ana, VOX);
 await ana.getByRole('button', { name: 'Passar a vez' }).click();
 // a sala pula para o fim da rodada 3 (como se as rodadas 2 e 3 tivessem passado sem novidade): grava direto na sala do
 // modo local e avisa as abas, como faria outro celular
@@ -125,7 +142,7 @@ await beto.evaluate((code) => {
   new BroadcastChannel('banco-imobiliario-rooms').postMessage({ code });
 }, code);
 await beto.getByText('Rodada 3', { exact: false }).first().waitFor();
-await beto.locator(`[data-space="${FERIADO}"]`).click();
+await irPara(beto, FERIADO);
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
 await beto.getByText('Edição nº 4').waitFor();
 await closePaper(beto);
