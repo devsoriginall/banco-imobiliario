@@ -498,3 +498,17 @@ a{color:inherit}
 .preview.empty{background:var(--surface-2);border-color:var(--line-strong)}
 .preview.empty .label{color:var(--muted)}
 .track{height:26px}
+
+/* ---------- Ilustração do endereço (PlaceArt) ---------- */
+.place-art{display:block;flex-shrink:0}
+.place-art.thumb{border-radius:10px;box-shadow:0 1px 3px rgba(23,20,46,.14)}
+.hero.has-art{min-height:150px;background-image:none !important}
+.hero.has-art .hero-art{position:absolute;inset:0;opacity:1;width:100%;height:100%}
+.hero .hero-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(10,8,30,.62) 100%)}
+.hero.place-banner{min-height:120px;padding:0}
+.li .place-art.thumb,.pick .place-art.thumb,.stock-row .place-art.thumb{align-self:center}
+@media (prefers-reduced-motion:no-preference){
+  .place-art{animation:place-in .35s cubic-bezier(.2,.8,.3,1) both}
+  .hero .place-art{transform-origin:50% 100%}
+  @keyframes place-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+}

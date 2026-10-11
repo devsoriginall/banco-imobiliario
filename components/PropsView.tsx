@@ -28,6 +28,7 @@ import {
 } from '@/lib/game/rules';
 import type { GroupId } from '@/lib/game/types';
 import type { GameUi } from './Game';
+import { PlaceArt } from './PlaceArt';
 import { PropBadges } from './PlayView';
 import { HoodPills } from './ui';
 
@@ -83,7 +84,8 @@ export function PropsView({ ui }: { ui: GameUi }) {
               }
               return (
                 <div className={`li${pr?.owner === me ? ' mine' : ''}`} key={i} style={{ flexWrap: 'wrap' }}>
-                  <div className="main">
+                  <PlaceArt idx={i} size={72} className="thumb" />
+                  <div className="main" style={{ flex: '1 1 170px' }}>
                     <b>{s.name}</b>
                     <span>
                       {pr
@@ -160,7 +162,8 @@ export function PropsView({ ui }: { ui: GameUi }) {
                 .join(' · ');
               return (
                 <div className={`li${(sh[me] || 0) > 0 ? ' mine' : ''}`} key={i}>
-                  <div className="main">
+                  <PlaceArt idx={i} size={72} className="thumb" />
+                  <div className="main" style={{ flex: '1 1 170px' }}>
                     <b>{s.name}</b>
                     <span>
                       Casa {i} · {parts || 'nenhuma cota vendida'} · empresa {bankShares(state, i)}
