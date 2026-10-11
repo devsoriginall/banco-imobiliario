@@ -26,6 +26,23 @@ const playerBal = async (page, name) => {
 };
 // cada celular fica em primeiro plano quando é usado (abas em segundo plano têm os timers pausados)
 const front = (page) => page.bringToFront();
+/**
+ * Anda com o peão do jogador da vez até a casa `idx`: digita a soma dos dados quando a casa está de 2 a 12 casas
+ * à frente (com `dupla`, só soma par); senão usa o "Corrigir casa / mover manualmente".
+ */
+async function irPara(page, idx, { dupla = false } = {}) {
+  const pos = Number(await page.getByTestId('turn').getAttribute('data-pos'));
+  const d = (idx - pos + 40) % 40;
+  if (d >= 2 && d <= 12 && (!dupla || d % 2 === 0)) {
+    await page.locator(`.sum[data-sum="${d}"]`).click();
+    if (dupla) await page.getByTestId('double-toggle').click();
+    await page.getByTestId('roll-btn').click();
+  } else {
+    await page.getByTestId('manual-move').click();
+    await page.locator(`[data-space="${idx}"]`).click();
+  }
+  await page.getByTestId('landed').waitFor();
+}
 const fail = (msg) => {
   console.error('FALHOU:', msg);
   process.exitCode = 1;
@@ -62,7 +79,7 @@ await ana.waitForTimeout(400);
 await shot(ana, '03-vez-da-ana.png');
 
 // 4. Ana cai na Av. 9 de Julho e compra
-await ana.locator('[data-space="1"]').click();
+await irPara(ana, 1);
 await ana.getByRole('button', { name: /Comprar terreno por \$\s1\.000/ }).click();
 await shot(ana, '05-pix-compra.png');
 await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
@@ -78,7 +95,7 @@ await ana.getByRole('button', { name: 'Passar a vez' }).click();
 // 5. Beto cai na Av. 9 de Julho e paga o aluguel via Pix
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
-await beto.locator('[data-space="1"]').click();
+await irPara(beto, 1);
 await beto.getByRole('button', { name: 'Pagar com Pix' }).click();
 await shot(beto, '07-pix-aluguel.png');
 const toast = ana.locator('.toast', { hasText: 'pagou o aluguel' });

@@ -2,7 +2,7 @@
 import { CREDIT, CREDIT_BANDS } from '@/lib/game/data';
 import { creditBand } from '@/lib/game/rules';
 
-const BAND_COLOR: Record<string, string> = { ruim: 'var(--bad)', regular: 'var(--warn)', bom: 'var(--info)', excelente: 'var(--accent)' };
+const BAND_COLOR: Record<string, string> = { ruim: 'var(--bad)', regular: 'var(--warn)', bom: 'var(--info)', excelente: 'var(--money)' };
 export const bandColor = (score: number) => BAND_COLOR[creditBand(score).id];
 
 /** Ponto no semicírculo para um score (0 à esquerda, 1000 à direita). */

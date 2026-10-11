@@ -26,6 +26,23 @@ const playerBal = async (page, name) => {
   return v;
 };
 const front = (page) => page.bringToFront();
+/**
+ * Anda com o peão do jogador da vez até a casa `idx`: digita a soma dos dados quando a casa está de 2 a 12 casas
+ * à frente (com `dupla`, só soma par); senão usa o "Corrigir casa / mover manualmente".
+ */
+async function irPara(page, idx, { dupla = false } = {}) {
+  const pos = Number(await page.getByTestId('turn').getAttribute('data-pos'));
+  const d = (idx - pos + 40) % 40;
+  if (d >= 2 && d <= 12 && (!dupla || d % 2 === 0)) {
+    await page.locator(`.sum[data-sum="${d}"]`).click();
+    if (dupla) await page.getByTestId('double-toggle').click();
+    await page.getByTestId('roll-btn').click();
+  } else {
+    await page.getByTestId('manual-move').click();
+    await page.locator(`[data-space="${idx}"]`).click();
+  }
+  await page.getByTestId('landed').waitFor();
+}
 const noToasts = (page) => page.waitForFunction(() => document.querySelectorAll('.toast').length === 0, null, { timeout: 10000 });
 const fail = (msg) => {
   console.error('FALHOU:', msg);
@@ -61,7 +78,7 @@ await ana.getByRole('button', { name: 'Começar partida' }).click();
 await ana.getByText('É a sua vez').waitFor();
 
 // 1. Ana cai na Av. 9 de Julho: terreno à venda, um preço só (o do tabuleiro), sem escolher casa
-await ana.locator('[data-space="1"]').click();
+await irPara(ana, 1);
 await ana.getByTestId('lot-offer').waitFor();
 const lotPrice = await text(ana.getByTestId('lot-price'));
 console.log('Terreno à venda:', lotPrice);
@@ -85,7 +102,7 @@ await ana.getByRole('button', { name: 'Passar a vez' }).click();
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
 await noToasts(beto);
-await beto.locator('[data-space="1"]').click();
+await irPara(beto, 1);
 const lotRent = await text(beto.getByTestId('rent-due'));
 console.log('Aluguel do terreno para o Beto:', lotRent);
 expectEq(lotRent, '$ 60', 'aluguel do terreno');
@@ -132,7 +149,7 @@ expectEq(await text(ana.getByTestId('calendar')), 'Ano 1 · rodada 6 de 6', 'cal
 await front(beto);
 await beto.getByText('É a sua vez').waitFor();
 await noToasts(beto);
-await beto.locator('[data-space="20"]').click();
+await irPara(beto, 20);
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
 await front(ana);
 // renda de $ 6.060, isenção de $ 2.000, IR de 15% = $ 609
@@ -175,7 +192,7 @@ await noToasts(ana);
 await ana.evaluate(() => window.scrollTo(0, 0));
 await shot(ana, 'calendario-1-cabecalho.png');
 // a declaração não volta a aparecer; o Início só paga o pró-labore
-await ana.locator('[data-space="0"]').click();
+await irPara(ana, 0);
 await ana.getByText('O pró-labore já entrou.').waitFor();
 expectEq(await ana.getByRole('dialog', { name: 'Declaração do IR' }).count(), 0, 'sem segunda declaração no Início');
 const ir = { anaCarteira: await wallet(ana), renda: await text(ana.getByTestId('wallet-income')) };
@@ -185,7 +202,7 @@ expectEq(ir.renda, `Renda no ano 2: ${brl(extra)}`, 'renda do novo ano (o rendim
 
 // 6. Ana tira dupla e cai no próprio terreno: o site da imobiliária oferece a primeira casa em 3 padrões
 await ana.getByRole('button', { name: 'Tirei dupla: jogar de novo' }).click();
-await ana.locator('[data-space="1"]').click();
+await irPara(ana, 1);
 const offer = ana.getByTestId('build-offer');
 await offer.waitFor();
 await ana.locator('.tiers').waitFor();
@@ -275,7 +292,7 @@ await beto.getByRole('dialog', { name: 'Declaração do IR' }).waitFor();
 await beto.getByRole('button', { name: 'Entendi' }).click();
 await beto.getByText('É a sua vez').waitFor();
 await noToasts(beto);
-await beto.locator('[data-space="1"]').click();
+await irPara(beto, 1);
 const rent = await text(beto.getByTestId('rent-due'));
 console.log('Aluguel da casa para o Beto:', rent);
 expectEq(rent, '$ 420', 'aluguel com 1 casa Alto padrão');
@@ -321,7 +338,7 @@ await beto.evaluate((code) => {
 await beto.getByTestId('calendar').filter({ hasText: 'rodada 6 de 6' }).waitFor();
 await beto.getByText('É a sua vez').waitFor();
 await noToasts(beto);
-await beto.locator('[data-space="20"]').click();
+await irPara(beto, 20);
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
 await front(ana);
 // a Ana fecha o ano 2 dela (isenta ou declarando tudo) e passa a vez
@@ -335,7 +352,7 @@ else {
 }
 await ana.getByText('É a sua vez').waitFor();
 await noToasts(ana);
-await ana.locator('[data-space="20"]').click();
+await irPara(ana, 20);
 await ana.getByRole('button', { name: 'Passar a vez' }).click();
 await front(beto);
 const betoIr = beto.getByRole('dialog', { name: 'Declaração do IR' });

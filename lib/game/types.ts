@@ -261,6 +261,12 @@ export interface TurnInfo {
   short?: string[];
   /** duplas seguidas já tiradas nesta vez (a 3ª leva à detenção) */
   doubles?: number;
+  /** soma dos dados desta jogada, quando o jogador andou pelos dados (salas antigas e "corrigir casa": ausente) */
+  dice?: number;
+  /** a jogada desta vez foi dupla (marcada ao andar pelos dados) */
+  double?: boolean;
+  /** saiu da detenção tirando dupla nesta vez: anda com a soma e não joga de novo */
+  jailExit?: boolean;
 }
 
 export interface Settings {
@@ -413,6 +419,9 @@ export type Action =
   | { type: 'setMercado'; on: boolean }
   | { type: 'start' }
   | { type: 'reset' }
+  /** andar pela soma dos dados (2 a 12); `double` marca que foi dupla */
+  | { type: 'roll'; sum: number; double?: boolean }
+  /** escolher a casa direto ("corrigir casa": carta que move o peão, engano) */
   | { type: 'land'; idx: number }
   | { type: 'buy'; finance?: LoanPlanId }
   | { type: 'skipBuy' }
