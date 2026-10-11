@@ -455,32 +455,50 @@ a{color:inherit}
   @keyframes wobble{0%,100%{transform:rotate(0)}10%{transform:rotate(-8deg)}20%{transform:rotate(6deg)}30%{transform:rotate(0)}}
 }
 
-/* ---------- Jornal: a página vira para a esquerda ---------- */
-.jornal-full{background:#E9E4D8;perspective:1600px}
-.jornal-full .paper{background:#FBF8F1;color:#1B1914;border:none;padding:18px 16px 20px;box-shadow:0 10px 30px rgba(40,30,10,.18);border-radius:2px;transform-origin:left center;backface-visibility:hidden}
+/* ---------- Jornal: a página vira para a esquerda, curvando como papel ---------- */
+.jornal-full{background:#E9E4D8;overflow-x:hidden}
+.jornal-full .paper{background:#FBF8F1;color:#1B1914;border:none;padding:18px 16px 20px;box-shadow:0 10px 30px rgba(40,30,10,.18);border-radius:2px}
 .jornal-full .paper-mast{border-bottom-color:#1B1914}
 .jornal-full .paper-name{font-family:'Old English Text MT','UnifrakturMaguntia',Georgia,'Times New Roman',serif}
 .jornal-full .paper-body,.jornal-full .paper-meta{color:#3A362C}
 .jornal-full .paper-effect{border-color:#1B1914}
-.page-flip{position:relative;perspective:1800px}
-.page-leaf{position:absolute;inset:0;z-index:2;background:#F4EFE3;color:#1B1914;transform-origin:left center;transform:rotateY(-180deg);visibility:hidden;pointer-events:none;border-radius:2px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 16px;overflow:hidden;backface-visibility:hidden
-}
-.page-leaf .leaf-name{font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:26px;border-bottom:3px double #1B1914;padding-bottom:6px;width:100%;text-align:center}
-.page-leaf .leaf-cols{flex:1;width:100%;display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.page-leaf .leaf-cols i{display:block;background:repeating-linear-gradient(180deg,rgba(27,25,20,.16) 0 3px,transparent 3px 11px);border-radius:1px}
+.jornal-hint{margin:-6px 0 0;text-align:center;font-size:13px;color:#6B6455}
+/* a folha: 12 tiras encaixadas (cada uma presa na borda direita da anterior); o giro de cada uma vem do
+   MercadoView (Web Animations), que enrola o papel num cilindro que corre da borda direita até a lombada */
+.page-flip{position:relative;perspective:1100px;touch-action:pan-y}
+.flip-shade,.page-leaf{display:none;position:absolute;inset:0;pointer-events:none}
+.flip-shade{z-index:1;overflow:hidden}
+.flip-shade>span{position:absolute;inset:0;background:linear-gradient(90deg,rgba(30,20,5,.42),rgba(30,20,5,.14) 12%,rgba(30,20,5,0) 40%);opacity:0}
+.page-leaf{z-index:2;transform-style:preserve-3d}
+.leaf-seg{position:absolute;top:0;left:0;width:calc(100% / 12);height:100%;transform-origin:left center;transform-style:preserve-3d}
+.leaf-seg .leaf-seg{left:100%;width:100%}
+.leaf-face{position:absolute;top:0;bottom:0;left:0;right:-1px;overflow:hidden;background:#F4EFE3;-webkit-backface-visibility:hidden;backface-visibility:hidden}
+.leaf-face.back{transform:rotateY(180deg);background:#EDE6D6}
+.leaf-light{position:absolute;inset:0;opacity:0}
+.leaf-face.front .leaf-light{background:linear-gradient(180deg,rgba(40,30,10,.32),rgba(40,30,10,.22) 55%,rgba(40,30,10,.36))}
+.leaf-face.back .leaf-light{background:linear-gradient(180deg,rgba(40,30,10,.22),rgba(40,30,10,.38))}
+.leaf-sheet{position:absolute;top:0;bottom:0;width:1200%;left:calc(var(--k) * -100%);display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 16px;color:#1B1914}
+.leaf-face.back .leaf-sheet{left:calc((11 - var(--k)) * -100%)}
+.leaf-name{font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:26px;border-bottom:3px double #1B1914;padding-bottom:6px;width:100%;text-align:center;white-space:nowrap}
+.leaf-cols{flex:1;width:100%;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px}
+.leaf-cols i{display:block;background:repeating-linear-gradient(180deg,rgba(27,25,20,.16) 0 3px,transparent 3px 11px);border-radius:1px}
+.leaf-face.back .leaf-cols i{background:repeating-linear-gradient(180deg,rgba(27,25,20,.13) 0 3px,transparent 3px 10px)}
 @media (prefers-reduced-motion:no-preference){
-  .page-flip.turning .page-leaf{visibility:visible;animation:leaf-turn .85s cubic-bezier(.45,.05,.25,1) both}
-  .page-flip.turning .paper{animation:under-page .85s ease-out both}
-  @keyframes leaf-turn{
-    0%{transform:rotateY(0);box-shadow:0 0 0 rgba(40,30,10,0)}
-    50%{box-shadow:-24px 12px 36px rgba(40,30,10,.38);filter:brightness(.92)}
-    99%{visibility:visible}
-    100%{transform:rotateY(-180deg);box-shadow:none;visibility:hidden}
+  .page-flip.turning .flip-shade,.page-flip.turning .page-leaf{display:block}
+  .page-flip.turning .page-leaf{animation:leaf-out 1.3s linear both}
+  .page-flip.turning .paper{animation:paper-settle 1.3s linear both}
+  .page-flip.fading .paper{animation:fade .35s ease-out both}
+  @keyframes leaf-out{0%,92%{opacity:1}100%{opacity:0}}
+  @keyframes paper-settle{
+    0%,80%{transform:none}
+    86%{transform:translateY(3px) scale(.994)}
+    93%{transform:translateY(-1px)}
+    100%{transform:none}
   }
-  @keyframes under-page{0%{filter:brightness(.82)}100%{filter:none}}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
 }
 @media (prefers-reduced-motion:reduce){
-  .page-flip.turning .paper{animation:fade .3s ease-out both}
+  .page-flip .paper{animation:fade .3s ease-out both}
   @keyframes fade{from{opacity:0}to{opacity:1}}
 }
 
