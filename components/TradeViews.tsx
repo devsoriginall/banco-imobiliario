@@ -7,6 +7,7 @@ import type { GameState, Trade, TradeSide } from '@/lib/game/types';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
 import { Sheet } from './Modals';
+import { PlaceArt } from './PlaceArt';
 import { useToast } from './Toasts';
 import { Avatar } from './ui';
 
@@ -153,7 +154,7 @@ function AssetPicker({ state, owner, me, side, onChange }: { state: GameState; o
         const on = side.props.includes(i);
         return (
           <button key={i} className="pick" aria-pressed={on} disabled={!!block} onClick={() => toggle(i)} data-pick={i}>
-            <span className="swatch" style={{ background: `var(${GROUPS[s.group].c})` }} />
+            <PlaceArt idx={i} size={56} className="thumb" />
             <span className="main">
               <b>{s.name}</b>
               <span>
@@ -173,6 +174,7 @@ function AssetPicker({ state, owner, me, side, onChange }: { state: GameState; o
         const q = side.shares[i] || 0;
         return (
           <div key={i} className="pick static">
+            <PlaceArt idx={i} size={56} className="thumb" />
             <span className="main">
               <b>{SPACES[i].name}</b>
               <span>

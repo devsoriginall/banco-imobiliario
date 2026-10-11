@@ -36,6 +36,7 @@ import {
 import type { GameState, Space, TierId } from '@/lib/game/types';
 import type { GameUi } from './Game';
 import { FinanceChooser } from './Finance';
+import { PlaceArt } from './PlaceArt';
 import { HouseSheet, HouseThumb, type SheetAction } from './HouseSheet';
 import { ConfirmModal } from './Modals';
 import { fmtChange } from './MercadoView';
@@ -356,13 +357,9 @@ export function Listing({ state, i, action, children }: { state: GameState; i: n
   const house = tier ? houseListing(i, tier) : null;
   return (
     <div className="listing">
-      <div className="hero" style={{ background: groupColor(s.group) }}>
-        <svg width="72" height="72" viewBox="0 0 96 96" fill="none" stroke="#fff" strokeWidth="2.5" aria-hidden="true">
-          <path d="M8 88h80" />
-          <rect x="14" y="40" width="20" height="48" />
-          <rect x="38" y="14" width="22" height="74" />
-          <rect x="64" y="30" width="18" height="58" />
-        </svg>
+      <div className="hero has-art" style={{ background: groupColor(s.group) }} data-testid="place-hero">
+        <PlaceArt idx={i} fill className="hero-art" />
+        <span className="hero-shade" aria-hidden="true" />
         <span className="h-text">
           <span className="h-sub">
             {s.city} · grupo {GROUPS[s.group].name.toLowerCase()}
@@ -643,6 +640,9 @@ function LandedView({ ui }: { ui: GameUi }) {
     const chg = priceChange(state, i);
     inner = (
       <>
+        <div className="hero has-art place-banner" data-testid="place-hero">
+          <PlaceArt idx={i} fill className="hero-art" />
+        </div>
         <div className="row" style={{ gap: 12 }}>
           <span className="avatar" style={{ background: 'var(--g-empresa)', color: 'var(--bg)', borderRadius: 12 }}>
             {s.short}

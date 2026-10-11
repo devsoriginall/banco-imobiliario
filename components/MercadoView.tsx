@@ -26,6 +26,7 @@ import {
 } from '@/lib/game/rules';
 import type { DecisionId, Edition, GameState } from '@/lib/game/types';
 import type { GameUi } from './Game';
+import { PlaceArt } from './PlaceArt';
 
 const CAT: Record<string, string> = { bairro: 'Bairros', empresa: 'Empresas', economia: 'Economia' };
 
@@ -226,7 +227,7 @@ function StockList({ ui, onOpen }: { ui: GameUi; onOpen: (i: number) => void }) 
             const q = sharesOf(state, i)[me] || 0;
             return (
               <button className={`li stock-row${q ? ' mine' : ''}`} key={i} onClick={() => onOpen(i)} data-stock={i} aria-label={`${s.name}: ${money(sk.price)}`}>
-                <span className="avatar co">{s.short}</span>
+                <PlaceArt idx={i} size={64} className="thumb" />
                 <span className="main">
                   <b>{s.name}</b>
                   <span>
@@ -286,7 +287,7 @@ function StockDetail({ ui, i, onBack }: { ui: GameUi; i: number; onBack: () => v
             <path d="M15 6l-6 6 6 6" />
           </svg>
         </button>
-        <span className="avatar co big">{s.short}</span>
+        <PlaceArt idx={i} size={77} className="thumb" />
         <div style={{ minWidth: 0 }}>
           <h2>{s.name}</h2>
           <span className="muted" style={{ fontSize: 13 }}>
