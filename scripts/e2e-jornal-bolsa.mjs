@@ -47,9 +47,16 @@ const check = (cond, msg) => {
     failed = true;
   }
 };
-/** Espera os avisos sumirem para a captura de tela ficar limpa. */
+/** Espera os avisos sumirem (e a página do Jornal terminar de virar) para a captura de tela ficar limpa. */
 async function calm(page) {
   await page.waitForFunction(() => !document.querySelector('.toast'), null, { timeout: 15000 }).catch(() => {});
+  // e espera a folha do Jornal terminar de virar
+  await page
+    .waitForFunction(() => {
+      const f = document.querySelector('.page-flip');
+      return !f || f.getAnimations({ subtree: true }).every((a) => a.playState === 'finished');
+    }, null, { timeout: 5000 })
+    .catch(() => {});
 }
 /** Fecha a edição do Jornal em tela cheia, se estiver aberta. */
 async function closePaper(page) {

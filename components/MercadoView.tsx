@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CALENDAR, COMPANY_IDX, DECISION_IDS, DECISIONS, HEADLINES, SHARES, STOCK } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
@@ -82,22 +82,152 @@ export function EditionPaper({ state, ed, compact = false }: { state: GameState;
   );
 }
 
-/** Edição da rodada em tela cheia, uma vez por celular. */
-export function JornalModal({ state, ed, onClose, onHistory }: { state: GameState; ed: Edition; onClose: () => void; onHistory: () => void }) {
-  return (
-    <div className="jornal-full" role="dialog" aria-modal="true" aria-label={`Jornal da Cidade, edição ${ed.round}`}>
-      <div className="jornal-inner">
-        {/* a edição nova chega como uma folha de jornal virando para a esquerda */}
-        <div className="page-flip turning" key={ed.round}>
-          <EditionPaper state={state} ed={ed} />
-          <div className="page-leaf" aria-hidden="true">
+/** Quantas tiras verticais formam a folha que vira (cada uma presa na borda direita da anterior). */
+const LEAF_STRIPS = 12;
+/** Duração da virada, em ms (igual à das animações em CSS da sombra e do assentar do papel). */
+const FLIP_MS = 1300;
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+/** Começa devagar (o papel sobe), acelera e freia no fim. */
+const easeFlip = (t: number) => 0.5 - 0.5 * Math.cos(Math.PI * t);
+
+/**
+ * Quadros da virada: a dobra nasce na borda direita e corre até a lombada (esquerda), enrolando o papel num cilindro.
+ * Para cada tira devolve o giro em relação à tira anterior (a 1ª gira em torno da lombada) e o brilho da frente e do verso.
+ */
+function leafFrames(samples = 48) {
+  const n = LEAF_STRIPS;
+  const frames: { seg: string[]; front: number[]; back: number[]; shade: Keyframe }[] = [];
+  for (let s = 0; s <= samples; s++) {
+    const t = s / samples;
+    const e = easeFlip(t);
+    const r = 3.4 - 1.9 * e; // raio da curva, em tiras: larga no começo, mais fechada quando corre
+    const roll = Math.PI * r;
+    const fold = n + 0.2 + (-roll - 0.6 - n - 0.2) * e; // onde o papel sai do plano
+    const flutter = 9 * (1 - t) * Math.abs(Math.sin(t * Math.PI * 3)); // a parte já virada ainda tremula no ar
+    const lift = 34 * Math.sin(Math.PI * Math.min(1, t * 1.15)); // a folha sobe um pouco da mesa
+    const abs = Array.from({ length: n }, (_, k) => {
+      const p = clamp01((k + 0.5 - fold) / roll);
+      return -(180 - flutter * p * (p >= 1 ? 1 : 0)) * p;
+    });
+    if (t === 1) abs.fill(-180);
+    frames.push({
+      seg: abs.map((a, k) => (k === 0 ? `translateZ(${lift.toFixed(1)}px) rotateY(${a.toFixed(2)}deg)` : `rotateY(${(a - abs[k - 1]).toFixed(2)}deg)`)),
+      front: abs.map((a) => 0.9 * Math.pow(Math.sin((-a * Math.PI) / 180), 1.4)),
+      back: abs.map((a) => 0.1 + 0.8 * Math.sin((-a * Math.PI) / 180)),
+      // a sombra da curva cai sobre a edição nova, logo à direita da dobra, e some quando a folha sai
+      shade: { transform: `translateX(${((Math.max(0, fold) / n) * 100).toFixed(2)}%)`, opacity: Math.min(1, t * 6) * (1 - clamp01((t - 0.7) / 0.3)) },
+    });
+  }
+  return frames;
+}
+
+/** Folha de jornal que vira para a esquerda enrolando como papel, com frente e verso de papel-jornal. */
+function PageLeaf() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || typeof root.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const segs = Array.from(root.querySelectorAll<HTMLElement>('.leaf-seg'));
+    const fronts = Array.from(root.querySelectorAll<HTMLElement>('.leaf-face.front .leaf-light'));
+    const backs = Array.from(root.querySelectorAll<HTMLElement>('.leaf-face.back .leaf-light'));
+    const shade = root.parentElement?.querySelector<HTMLElement>('.flip-shade > span');
+    const frames = leafFrames();
+    const opts: KeyframeAnimationOptions = { duration: FLIP_MS, fill: 'both', easing: 'linear' };
+    const anims = segs.flatMap((el, k) => [
+      el.animate(frames.map((f) => ({ transform: f.seg[k] })), opts),
+      fronts[k].animate(frames.map((f) => ({ opacity: f.front[k] })), opts),
+      backs[k].animate(frames.map((f) => ({ opacity: f.back[k] })), opts),
+    ]);
+    if (shade) anims.push(shade.animate(frames.map((f) => f.shade), opts));
+    return () => anims.forEach((a) => a.cancel());
+  }, []);
+  const strip = (k: number): React.ReactNode =>
+    k >= LEAF_STRIPS ? null : (
+      <span className="leaf-seg" style={{ '--k': k } as React.CSSProperties}>
+        <span className="leaf-face front">
+          <span className="leaf-sheet">
             <span className="leaf-name">Jornal da Cidade</span>
             <span className="leaf-cols">
               <i />
               <i />
             </span>
-          </div>
+          </span>
+          <span className="leaf-light" />
+        </span>
+        <span className="leaf-face back">
+          <span className="leaf-sheet">
+            <span className="leaf-cols">
+              <i />
+              <i />
+              <i />
+            </span>
+          </span>
+          <span className="leaf-light" />
+        </span>
+        {strip(k + 1)}
+      </span>
+    );
+  return (
+    <>
+      <span className="flip-shade" aria-hidden="true">
+        <span />
+      </span>
+      <span className="page-leaf" aria-hidden="true" ref={ref}>
+        {strip(0)}
+      </span>
+    </>
+  );
+}
+
+/** Edição da rodada em tela cheia, uma vez por celular. Deslizar para a esquerda vira para a edição anterior. */
+export function JornalModal({ state, ed, onClose, onHistory }: { state: GameState; ed: Edition; onClose: () => void; onHistory: () => void }) {
+  const eds = [ed, ...(state.jornal ?? []).filter((e) => e.round < ed.round)];
+  const [idx, setIdx] = useState(0);
+  const [back, setBack] = useState(false);
+  const touch = useRef<{ x: number; y: number } | null>(null);
+  const cur = eds[Math.min(idx, eds.length - 1)];
+  const go = (d: 1 | -1) => {
+    const n = idx + d;
+    if (n < 0 || n >= eds.length) return;
+    setBack(d < 0);
+    setIdx(n);
+  };
+  return (
+    <div className="jornal-full" role="dialog" aria-modal="true" aria-label={`Jornal da Cidade, edição ${cur.round}`}>
+      <div className="jornal-inner">
+        {/* a edição chega como uma folha de jornal virando para a esquerda; voltar para uma mais nova só esmaece */}
+        <div
+          className={`page-flip ${back ? 'fading' : 'turning'}`}
+          key={cur.round}
+          data-testid="page-flip"
+          onTouchStart={(e) => {
+            const t = e.touches[0];
+            touch.current = { x: t.clientX, y: t.clientY };
+          }}
+          onTouchEnd={(e) => {
+            const s = touch.current;
+            touch.current = null;
+            const t = e.changedTouches[0];
+            if (!s || !t) return;
+            const dx = t.clientX - s.x;
+            const dy = t.clientY - s.y;
+            if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+            go(dx < 0 ? 1 : -1);
+          }}
+        >
+          <EditionPaper state={state} ed={cur} />
+          <PageLeaf />
         </div>
+        {eds.length > 1 && (
+          <p className="jornal-hint" aria-live="polite">
+            {idx === eds.length - 1
+              ? 'Edição mais antiga guardada · deslize para a direita para voltar'
+              : idx > 0
+                ? 'Deslize para a esquerda (anterior) ou para a direita (mais nova)'
+                : 'Deslize para a esquerda para ver a edição anterior'}
+          </p>
+        )}
         <div className="stack" style={{ gap: 8 }}>
           <button className="btn primary block" onClick={onClose}>
             Fechar o jornal

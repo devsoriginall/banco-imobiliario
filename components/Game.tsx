@@ -230,6 +230,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       {irExempt && !irMine && !pixReq && !receipt && !pushed && <IrExemptModal year={irExempt.year} income={irExempt.income} onClose={closeExempt} />}
       {showJornal && !pixReq && !receipt && !pushed && (
         <JornalModal
+          key={showJornal.round}
           state={state}
           ed={showJornal}
           onClose={closeJornal}
