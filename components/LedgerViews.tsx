@@ -35,7 +35,8 @@ function IncomeBox({ state, me }: { state: GameState; me: string }) {
   );
 }
 
-export function TxView({ state, me }: { state: GameState; me: string }) {
+/** `newAfter`: transações minhas com seq maior que este ainda não vistas neste celular (ganham "novo"). */
+export function TxView({ state, me, newAfter = Infinity }: { state: GameState; me: string; newAfter?: number }) {
   const [onlyMine, setOnlyMine] = useState(false);
   const list = onlyMine ? state.tx.filter((t) => t.from === me || t.to === me) : state.tx;
   return (
@@ -60,6 +61,11 @@ export function TxView({ state, me }: { state: GameState; me: string }) {
                 <div className="main">
                   <b>
                     {pname(state, t.from)} → {pname(state, t.to)}
+                    {dir && t.seq > newAfter && (
+                      <span className="pill new" data-testid="tx-new">
+                        novo
+                      </span>
+                    )}
                   </b>
                   <span>{t.reason}</span>
                   <span>

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CALENDAR, COMPANY_IDX, DECISION_IDS, DECISIONS, HEADLINES, SHARES, STOCK } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
+  announcedDividend,
   bankShares,
   company,
   controller,
@@ -10,6 +11,7 @@ import {
   decisionText,
   dividendPerShare,
   nextDividendRound,
+  paysDividends,
   semesterYield,
   editionsAbout,
   feeRate,
@@ -78,6 +80,11 @@ export function EditionPaper({ state, ed, compact = false }: { state: GameState;
           </span>
         ))}
       </div>
+      {marketOn(state) && paysDividends(ed.round + 1) && (
+        <p className="paper-div" data-testid="paper-dividends">
+          Dividendos anunciados: pagos na rodada {ed.round + 1} a quem tiver cotas no começo dela
+        </p>
+      )}
     </article>
   );
 }
@@ -338,7 +345,7 @@ function StockList({ ui, onOpen }: { ui: GameUi; onOpen: (i: number) => void }) 
           <span className="pill info">Rodada {state.round}</span>
         </div>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          Cotação muda a cada rodada (sorteio de ±{Math.round(STOCK.drift * 100)}%, manchetes e decisões do dono). Dividendos pagos a cada semestre (rodadas 4, 7, 10…): {pct(STOCK.yield * CALENDAR.roundsPerSemester)} da cotação por cota, pela cotação do dia do pagamento; o próximo é na rodada{' '}
+          Cotação muda a cada rodada (sorteio de ±{Math.round(STOCK.drift * 100)}%, manchetes e decisões do dono). Dividendos pagos a cada semestre (rodadas 4, 7, 10…): {pct(STOCK.yield * CALENDAR.roundsPerSemester)} da cotação por cota, valor anunciado na rodada anterior; o próximo é na rodada{' '}
           {nextDividendRound(state.round)}. Toque numa empresa para
           ver detalhes e vender cotas.
         </p>
@@ -354,14 +361,21 @@ function StockList({ ui, onOpen }: { ui: GameUi; onOpen: (i: number) => void }) 
             const sk = stockOf(state, i);
             const ctrl = controller(state, i);
             const q = sharesOf(state, i)[me] || 0;
+            const ann = announcedDividend(state, i);
             return (
               <button className={`li stock-row${q ? ' mine' : ''}`} key={i} onClick={() => onOpen(i)} data-stock={i} aria-label={`${s.name}: ${money(sk.price)}`}>
                 <span className="avatar co">{s.short}</span>
                 <span className="main">
                   <b>{s.name}</b>
-                  <span>
-                    Dividendo {pct(semesterYield(state, i, nextDividendRound(state.round)))} · {money(dividendPerShare(state, i, nextDividendRound(state.round)))}/cota na rodada {nextDividendRound(state.round)}
-                  </span>
+                  {ann ? (
+                    <span className="div-announced" data-testid="div-announced">
+                      {ann.perShare ? `Paga ${money(ann.perShare)} por cota na rodada ${ann.round}` : `Dividendo suspenso por greve na rodada ${ann.round}`}
+                    </span>
+                  ) : (
+                    <span>
+                      Dividendo {pct(semesterYield(state, i, nextDividendRound(state.round)))} · {money(dividendPerShare(state, i, nextDividendRound(state.round)))}/cota na rodada {nextDividendRound(state.round)}
+                    </span>
+                  )}
                   <span>
                     {ctrl ? `Dono: ${ctrl === me ? 'você' : pname(state, ctrl)}` : 'Sem dono'}
                     {q ? ` · você tem ${q} (${money(q * sk.price)})` : ''}
@@ -400,6 +414,7 @@ function StockDetail({ ui, i, onBack }: { ui: GameUi; i: number; onBack: () => v
   const news = editionsAbout(state, i).slice(0, 4);
   const effects = stockEffects(state, i);
   const block = manageBlock(state, i, me);
+  const ann = announcedDividend(state, i);
 
   const decide = (d: DecisionId) => {
     const action = { type: 'manage', idx: i, decision: d } as const;
@@ -467,9 +482,19 @@ function StockDetail({ ui, i, onBack }: { ui: GameUi; i: number; onBack: () => v
           <div>
             <span>Dividendo por cota (por semestre)</span>
             <span data-testid="stock-dividend">
-              {money(dividendPerShare(state, i, nextDividendRound(state.round)))} na rodada {nextDividendRound(state.round)} ({pct(semesterYield(state, i, nextDividendRound(state.round)))})
+              {ann
+                ? ann.perShare
+                  ? `Paga ${money(ann.perShare)} por cota na rodada ${ann.round} (anunciado)`
+                  : `Suspenso por greve na rodada ${ann.round}`
+                : `${money(dividendPerShare(state, i, nextDividendRound(state.round)))} na rodada ${nextDividendRound(state.round)} (${pct(semesterYield(state, i, nextDividendRound(state.round)))})`}
             </span>
           </div>
+          {ann && (
+            <div data-testid="stock-datacom">
+              <span style={{ whiteSpace: 'nowrap' }}>Data com</span>
+              <span>Até o fim da rodada {ann.round - 1}: quem tiver cotas no começo da rodada {ann.round} recebe</span>
+            </div>
+          )}
           <div>
             <span>Taxa da casa {i}</span>
             <span>

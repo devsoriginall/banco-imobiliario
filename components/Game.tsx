@@ -40,7 +40,7 @@ export interface GameUi {
 }
 
 export function Game({ state, me, run, pushed, onPushedClose }: { state: GameState; me: string; run: Run; pushed?: PushedReceipt | null; onPushedClose?: () => void }) {
-  const [tab, setTab] = useState<Tab>('jogada');
+  const [tab, setTabRaw] = useState<Tab>('jogada');
   const [seg, setSeg] = useState<MercadoSeg>('jornal');
   const [stock, setStock] = useState<number | null>(null);
   const [pixReq, setPixReq] = useState<PixRequest | null>(null);
@@ -82,6 +82,28 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       sessionStorage.setItem(jornalKey, '1');
     } catch {}
     setSeenJornal((xs) => [...xs, jornalKey]);
+  };
+
+  /** Extrato: última transação minha já vista neste celular (seq); as mais novas ganham "novo" */
+  const txKey = `extrato-visto:${state.code}:${me}`;
+  const [seenTx, setSeenTx] = useState<{ key: string; seq: number } | null>(null);
+  const storedTx = seenTx?.key === txKey ? seenTx.seq : readSeq(txKey);
+  const myLastSeq = state.tx.reduce((a, t) => ((t.from === me || t.to === me) && t.seq > a ? t.seq : a), 0);
+  /** o que já estava visto ao abrir o Extrato: as linhas mais novas mostram "novo" enquanto a aba fica aberta */
+  const [txFloor, setTxFloor] = useState(0);
+  const markTxSeen = () => {
+    if (myLastSeq <= storedTx) return;
+    try {
+      localStorage.setItem(txKey, String(myLastSeq));
+    } catch {}
+    setSeenTx({ key: txKey, seq: myLastSeq });
+  };
+  const setTab = (t: Tab) => {
+    if (t === 'extrato' && tab !== 'extrato') {
+      setTxFloor(storedTx);
+      markTxSeen();
+    } else if (t !== 'extrato' && tab === 'extrato') markTxSeen();
+    setTabRaw(t);
   };
 
   const ui: GameUi = {
@@ -169,7 +191,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
         {tab === 'imoveis' && <PropsView ui={ui} />}
         {tab === 'mercado' && <MercadoView ui={ui} seg={seg} setSeg={setSeg} stock={stock} setStock={setStock} />}
         {tab === 'banco' && <BankView ui={ui} onTrade={setTradeWith} />}
-        {tab === 'extrato' && <TxView state={state} me={me} />}
+        {tab === 'extrato' && <TxView state={state} me={me} newAfter={txFloor} />}
         {tab === 'placar' && <ScoreView state={state} />}
       </main>
 
@@ -180,6 +202,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
               <span className="tab-ic">
                 <Icon name={k} />
                 {k === 'jogada' && cur?.id === me && !state.winner && tab !== 'jogada' && <i className="tab-badge" aria-label="sua vez" />}
+                {k === 'extrato' && tab !== 'extrato' && myLastSeq > storedTx && <i className="tab-badge" aria-label="transações novas" data-testid="extrato-badge" />}
               </span>
               {l}
             </button>
@@ -318,6 +341,15 @@ function LoanLine({ state, me }: { state: GameState; me: string }) {
       Dívida {money(loanOwed(loan))} · {left <= 1 ? 'vence na próxima rodada' : `vence em ${left} rodadas`}
     </div>
   );
+}
+
+/** Número guardado no localStorage deste celular (0 se não houver ou sem acesso). */
+function readSeq(key: string): number {
+  try {
+    return typeof window !== 'undefined' ? Number(localStorage.getItem(key)) || 0 : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function wasSeen(key: string): boolean {

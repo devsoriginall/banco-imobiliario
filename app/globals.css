@@ -374,6 +374,9 @@ a{color:inherit}
 .paper-effect{border:1.5px solid var(--fg);padding:14px;display:flex;flex-direction:column;gap:6px}
 .paper-effect-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--bad)}
 .paper-effect-line{font-size:15px;font-weight:700}
+.paper-div{border:1.5px dashed var(--fg);padding:10px 14px;font-size:14px;font-weight:700}
+.li .main .pill.new{margin-left:6px;padding:1px 7px;font-size:11px;background:var(--hot-soft);color:var(--hot);vertical-align:1px}
+.li .main span.div-announced{color:var(--money);font-weight:700}
 .paper.compact .paper-name{font-size:24px}
 .paper.compact .paper-head{font-size:22px}
 .jornal-full{position:fixed;inset:0;z-index:25;background:var(--surface);overflow:auto;display:flex;justify-content:center}
@@ -462,6 +465,7 @@ a{color:inherit}
 .jornal-full .paper-name{font-family:'Old English Text MT','UnifrakturMaguntia',Georgia,'Times New Roman',serif}
 .jornal-full .paper-body,.jornal-full .paper-meta{color:#3A362C}
 .jornal-full .paper-effect{border-color:#1B1914}
+.jornal-full .paper-div{border-color:#1B1914}
 .jornal-hint{margin:-6px 0 0;text-align:center;font-size:13px;color:#6B6455}
 /* a folha: 12 tiras encaixadas (cada uma presa na borda direita da anterior); o giro de cada uma vem do
    MercadoView (Web Animations), que enrola o papel num cilindro que corre da borda direita até a lombada */
