@@ -171,6 +171,10 @@ export interface Tx {
   ref?: string;
   /** casa do imóvel (compra e aluguel) */
   tier?: TierId;
+  /** quem fez a ação que gerou a transação (ausente nas automáticas e em salas antigas) */
+  by?: string;
+  /** cobrança, rendimento ou pagamento automático do começo da rodada ou da vez (ninguém tocou em nada) */
+  auto?: boolean;
 }
 
 /** Um lado de uma proposta de negociação: dinheiro, imóveis (índices) e cotas (empresa → quantidade). */
@@ -246,6 +250,8 @@ export interface FeedItem {
   /** quem provocou o evento */
   by?: string;
   important?: boolean;
+  /** evento do dinheiro de um jogador só (parcela, quitação, cobrança): só o dono vê */
+  for?: string;
 }
 
 export interface TurnInfo {

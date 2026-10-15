@@ -469,7 +469,7 @@ function marketRound(st: GameState, now: Date, first = false) {
     const owner = st.props[i].owner;
     const name = street(i).name;
     applyTransfers(st, [{ from: BANK, to: owner, amount: lost, reason: `Indenização do seguro da ${name}: ${h.tag} (valor caiu de ${money(before)} para ${money(before - lost)})`, kind: 'indenizacao', space: i }], now);
-    log(st, `Seguro: ${pname(st, owner)} recebeu ${money(lost)} de indenização pela ${name} (${h.tag})`, now, undefined, true);
+    log(st, `Seguro: ${pname(st, owner)} recebeu ${money(lost)} de indenização pela ${name} (${h.tag})`, now, undefined, true, owner);
   }
   // 3. cotações
   for (const i of COMPANY_IDX) {
@@ -1073,9 +1073,9 @@ function pay(st: GameState, list: Transfer[], now: Date) {
   applyTransfers(st, list, now);
 }
 
-function log(st: GameState, text: string, now: Date, by?: string, important = false) {
+function log(st: GameState, text: string, now: Date, by?: string, important = false, forId?: string) {
   st.feedCount += 1;
-  st.feed.unshift({ seq: st.feedCount, at: now.toISOString(), text, by, important });
+  st.feed.unshift({ seq: st.feedCount, at: now.toISOString(), text, by, important, ...(forId ? { for: forId } : {}) });
   if (st.feed.length > MAX_FEED) st.feed = st.feed.slice(0, MAX_FEED);
 }
 
@@ -1142,11 +1142,11 @@ function openIR(st: GameState, p: Player, now: Date) {
   if (!tax) {
     p.irYear = year;
     p.irLast = { year, income, tax: 0, outcome: 'isento', paid: 0, round: st.round };
-    log(st, `${p.name} fechou o ano ${year}: isento de IR (renda de ${money(income)})`, now, p.id);
+    log(st, `${p.name} fechou o ano ${year}: isento de IR (renda de ${money(income)})`, now, p.id, false, p.id);
     return;
   }
   st.irPending = { pid: p.id, year, income, tax, due: tax, cal: true };
-  log(st, `${p.name}: hora da declaração do IR do ano ${year}`, now, p.id);
+  log(st, `${p.name}: hora da declaração do IR do ano ${year}`, now, p.id, false, p.id);
 }
 
 /** IR resolvido (declarado, sonegado ou pago com multa): marca o ano para não declarar de novo. */
@@ -1154,7 +1154,17 @@ function settleIR(p: Player, ir: { year: number; cal?: boolean }) {
   if (ir.cal) p.irYear = Math.max(p.irYear ?? 0, ir.year);
 }
 
+/** Passa a vez: o que o começo da rodada e da vez cobram, pagam e rendem fica marcado como automático no extrato. */
 function nextTurn(st: GameState, now: Date) {
+  const t0 = st.txCount;
+  passTurn(st, now);
+  for (const t of st.tx) {
+    if (t.seq <= t0) break;
+    t.auto = true;
+  }
+}
+
+function passTurn(st: GameState, now: Date) {
   const n = st.players.length;
   let i = st.turn;
   const roundBefore = st.round;
@@ -1177,7 +1187,7 @@ function nextTurn(st: GameState, now: Date) {
   openIR(st, p, now);
   collectFins(st, p, now);
   if (p.out) {
-    if (!st.winner) nextTurn(st, now);
+    if (!st.winner) passTurn(st, now);
     return;
   }
   const l = loanOf(st, p.id);
@@ -1191,7 +1201,7 @@ function nextTurn(st: GameState, now: Date) {
       collectParcel(st, p, cur, np, now);
     }
   } else if (st.round >= l.dueRound) collectLoan(st, p, now);
-  if (p.out && !st.winner) nextTurn(st, now);
+  if (p.out && !st.winner) passTurn(st, now);
 }
 
 /** Rendimento da poupança no início da vez do jogador (conta como renda para o IR e fica na poupança). */
@@ -1202,7 +1212,7 @@ function savingsTurn(st: GameState, p: Player, now: Date) {
   // o rendimento entra na poupança, não na carteira
   p.balance -= y;
   p.savings = savingsOf(p) + y;
-  log(st, `Poupança de ${p.name} rendeu ${money(y)}`, now, p.id);
+  log(st, `Poupança de ${p.name} rendeu ${money(y)}`, now, p.id, false, p.id);
 }
 
 /** Tira `amount` da poupança para a carteira (resgate), com a linha no extrato. */
@@ -1238,12 +1248,12 @@ function collectFins(st: GameState, p: Player, now: Date) {
  */
 function collectFin(st: GameState, p: Player, f: Financing, amount: number, tag: string, n: number, now: Date) {
   const name = street(f.idx).name;
-  log(st, `${tag} de ${p.name}: ${money(amount)}`, now, undefined, true);
+  log(st, `${tag} de ${p.name}: ${money(amount)}`, now, undefined, true, p.id);
   if (p.balance < amount) fromSavings(st, p, Math.min(savingsOf(p), amount - p.balance), `Cobrança do banco: resgate da poupança para ${tag.toLowerCase()}`, now);
   if (p.balance < amount) {
     repossess(st, p, f.idx, now);
     changeCredit(st, p, CREDIT.parcelPenhora, `${tag} sem saldo: imóvel retomado`);
-    log(st, `Sem saldo para a parcela: o banco retomou a ${name} de ${p.name} e cancelou o financiamento`, now, undefined, true);
+    log(st, `Sem saldo para a parcela: o banco retomou a ${name} de ${p.name} e cancelou o financiamento`, now, undefined, true, p.id);
     return;
   }
   applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: tag, kind: 'financiamento', space: f.idx }], now);
@@ -1255,7 +1265,7 @@ function collectFin(st: GameState, p: Player, f: Financing, amount: number, tag:
   if (loanOwed(f) <= 0) {
     delete st.fin![f.idx];
     changeCredit(st, p, isParcelado(f) ? CREDIT.parcelLoanPaid : CREDIT.loanPaid, `Financiamento da ${name} quitado`);
-    log(st, `${p.name} quitou o financiamento da ${name}: o imóvel não está mais alienado ao banco`, now, undefined, true);
+    log(st, `${p.name} quitou o financiamento da ${name}: o imóvel não está mais alienado ao banco`, now, undefined, true, p.id);
   }
 }
 
@@ -1297,7 +1307,7 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
     sold += 1;
     applyTransfers(st, [{ from: BANK, to: p.id, amount: value, reason: `Penhora: venda de ${hotel ? 'hotel' : 'casa'} na ${s.name} (metade do custo)`, kind: 'penhora', space: i }], now);
   }
-  if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true);
+  if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true, p.id);
   let taken = 0;
   while (p.balance < owed) {
     // imóveis financiados (já alienados ao banco) por último; ao tomar um, o financiamento é cancelado e só sobra a diferença
@@ -1314,7 +1324,7 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
       [{ from: BANK, to: p.id, amount: value, reason: `Penhora: ${s.name} tomada pelo banco (${value ? 'valor de hipoteca' : 'já hipotecada, sem valor'})`, kind: 'penhora', space: i }],
       now,
     );
-    log(st, `Penhora: o banco tomou a ${s.name} de ${p.name}`, now, undefined, true);
+    log(st, `Penhora: o banco tomou a ${s.name} de ${p.name}`, now, undefined, true, p.id);
   }
   const paid = Math.min(p.balance, owed);
   if (paid > 0) applyTransfers(st, [{ from: p.id, to: BANK, amount: paid, reason, kind: 'loanpay' }], now);
@@ -1325,13 +1335,13 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
 function collectLoan(st: GameState, p: Player, now: Date) {
   const l = loanOf(st, p.id)!;
   const owed = loanOwed(l);
-  log(st, `Vencimento: o banco cobra ${money(owed)} do empréstimo de ${p.name}`, now, undefined, true);
+  log(st, `Vencimento: o banco cobra ${money(owed)} do empréstimo de ${p.name}`, now, undefined, true, p.id);
   const { paid, penhora } = collectDebt(st, p, owed, 'Cobrança do empréstimo vencido', now);
   if (penhora) changeCredit(st, p, CREDIT.penhora, 'Empréstimo vencido com penhora');
   else changeCredit(st, p, CREDIT.loanPaid, 'Empréstimo pago no vencimento');
   if (paid >= owed) {
     delete st.loans![p.id];
-    log(st, `${p.name} pagou o empréstimo vencido`, now, undefined, true);
+    log(st, `${p.name} pagou o empréstimo vencido`, now, undefined, true, p.id);
     return;
   }
   l.paid += paid;
@@ -1342,7 +1352,7 @@ function collectLoan(st: GameState, p: Player, now: Date) {
 /** Parcela do empréstimo parcelado: cobra só o valor da parcela (com penhora limitada a ela, se faltar saldo). */
 function collectParcel(st: GameState, p: Player, l: Loan, np: NonNullable<ReturnType<typeof nextParcel>>, now: Date) {
   const tag = `Parcela ${np.n}/${np.of} do empréstimo`;
-  log(st, `${tag} de ${p.name}: ${money(np.amount)}`, now, undefined, true);
+  log(st, `${tag} de ${p.name}: ${money(np.amount)}`, now, undefined, true, p.id);
   const { paid, penhora } = collectDebt(st, p, np.amount, tag, now);
   l.paid += paid;
   if (paid < np.amount) {
@@ -1359,7 +1369,7 @@ function collectParcel(st: GameState, p: Player, l: Loan, np: NonNullable<Return
   if (np.n >= np.of || loanOwed(l) <= 0) {
     delete st.loans![p.id];
     if (!l.penhora) changeCredit(st, p, CREDIT.parcelLoanPaid, 'Empréstimo parcelado quitado');
-    log(st, `${p.name} pagou a última parcela e quitou o empréstimo`, now, undefined, true);
+    log(st, `${p.name} pagou a última parcela e quitou o empréstimo`, now, undefined, true, p.id);
   }
 }
 
@@ -1960,13 +1970,13 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
         const due = sched.dueRound;
         st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, firstRound: sched.firstRound, rate, plan } };
         applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(total)} na rodada ${due} (${semesterText(due)})`, kind: 'loan' }], now);
-        log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)} (pagamento único)`, now, actor);
+        log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)} (pagamento único)`, now, actor, false, actor);
       } else {
         const parcels = parcelSchedule(total, info.parcels);
         st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: sched.dueRound, firstRound: sched.firstRound, rate, plan, parcels, parcelsPaid: 0 } };
         const each = parcelText({ plan, total, parcels, firstRound: sched.firstRound, dueRound: sched.dueRound });
         applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco em ${info.short} a ${pct(rate)}: ${each} (total ${money(total)})`, kind: 'loan' }], now);
-        log(st, `${me.name} pegou ${money(amt)} emprestado no banco em ${info.short} a ${pct(rate)}`, now, actor);
+        log(st, `${me.name} pegou ${money(amt)} emprestado no banco em ${info.short} a ${pct(rate)}`, now, actor, false, actor);
       }
       break;
     }
@@ -1995,7 +2005,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
           changeCredit(st, me, CREDIT.partialPay, 'Pagamento parcial do empréstimo');
         }
       }
-      log(st, full ? `${me.name} quitou o empréstimo` : `${me.name} pagou ${money(amt)} do empréstimo`, now, actor);
+      log(st, full ? `${me.name} quitou o empréstimo` : `${me.name} pagou ${money(amt)} do empréstimo`, now, actor, false, actor);
       break;
     }
     case 'declareIR': {
@@ -2008,11 +2018,11 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       if (ir.caught) {
         const before = irTax(ir.declared ?? 0);
         p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'pego', paid: before + ir.due, round: st.round, declared: ir.declared ?? 0 };
-        log(st, `${p.name} pagou o IR do ano ${ir.year} com a multa da malha fina`, now, actor);
+        log(st, `${p.name} pagou o IR do ano ${ir.year} com a multa da malha fina`, now, actor, false, actor);
       } else {
         changeCredit(st, p, CREDIT.irDeclared, 'IR declarado em dia');
         p.irLast = { year: ir.year, income: ir.income, tax: ir.tax, outcome: 'declarou', paid: ir.tax, round: st.round };
-        log(st, `${p.name} declarou o IR do ano ${ir.year} e pagou ${money(ir.tax)}`, now, actor);
+        log(st, `${p.name} declarou o IR do ano ${ir.year} e pagou ${money(ir.tax)}`, now, actor, false, actor);
       }
       break;
     }
@@ -2046,6 +2056,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
         now,
         actor,
         true,
+        actor,
       );
       if (p.balance >= due) {
         applyTransfers(st, [{ from: p.id, to: BANK, amount: due, reason: malhaReason(ir.year, declared > 0), kind: 'ir' }], now);
@@ -2104,6 +2115,11 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
     }
   }
 
+  // quem fez a ação fica em cada transação nova (as automáticas da passagem de vez já vêm marcadas)
+  for (const t of st.tx) {
+    if (t.seq <= state.txCount) break;
+    if (!t.auto) t.by = actor;
+  }
   if (!NO_UNDO.has(action.type)) {
     const prev = clone(state);
     prev.prev = null;

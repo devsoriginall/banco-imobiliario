@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { money } from '@/lib/game/format';
 import { calendarText, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf, yearOf } from '@/lib/game/rules';
 import type { Action, GameState, IrResult, Tx } from '@/lib/game/types';
+import { needItems, NeedsYou, RoundSummarySheet, useRoundSummary } from './Avisos';
 import { BankView } from './BankView';
 import { Icon } from './Icon';
 import { ScoreView, TxView } from './LedgerViews';
@@ -106,6 +107,10 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
     setTabRaw(t);
   };
 
+  /** resumo da rodada ("Seu dinheiro"): aparece assim que a rodada muda, se algo mexeu no meu dinheiro */
+  const { summary, close: closeSummary } = useRoundSummary(state, me);
+  const summaryOpen = !!summary && !showJornal && !pixReq && !receipt && !pushed && !tradeWith;
+
   const ui: GameUi = {
     state,
     me,
@@ -129,6 +134,9 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       if (txs.length) setReceipt({ txs, title });
     },
   };
+
+  /** faixa "Precisa de você" da Jogada (fica até resolver); em outra aba, a Jogada ganha o ponto */
+  const needs = needItems(state, me, { ir: irPending, onDeclare: () => setIrDeferred(null), goTab: (t) => ui.goTab(t) });
 
   return (
     <>
@@ -177,16 +185,10 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
           <div className="banner info">Você está assistindo esta partida. Ela começou antes de você entrar.</div>
         )}
 
+        {tab === 'jogada' && <NeedsYou items={needs} />}
+
         <TradeInbox ui={ui} />
 
-        {tab === 'jogada' && irHidden && irPending && (
-          <div className="banner warn ir-pending" data-testid="ir-pending-banner">
-            <span>Declaração do IR pendente: entregue antes de passar a vez.</span>
-            <button className="btn small" onClick={() => setIrDeferred(null)}>
-              Abrir a declaração
-            </button>
-          </div>
-        )}
         {tab === 'jogada' && <PlayView ui={ui} />}
         {tab === 'imoveis' && <PropsView ui={ui} />}
         {tab === 'mercado' && <MercadoView ui={ui} seg={seg} setSeg={setSeg} stock={stock} setStock={setStock} />}
@@ -201,7 +203,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
             <button key={k} className={`tab t-${k}`} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
               <span className="tab-ic">
                 <Icon name={k} />
-                {k === 'jogada' && cur?.id === me && !state.winner && tab !== 'jogada' && <i className="tab-badge" aria-label="sua vez" />}
+                {k === 'jogada' && tab !== 'jogada' && (needs.length > 0 || (cur?.id === me && !state.winner)) && <i className="tab-badge" aria-label="precisa de você" data-testid="jogada-badge" />}
                 {k === 'extrato' && tab !== 'extrato' && myLastSeq > storedTx && <i className="tab-badge" aria-label="transações novas" data-testid="extrato-badge" />}
               </span>
               {l}
@@ -232,7 +234,8 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
       {tradeWith && !pixReq && <TradeBuilder ui={ui} partner={tradeWith} onClose={() => setTradeWith(null)} />}
       {!pixReq && !tradeWith && receipt && <ReceiptModal state={state} receipt={receipt.txs} title={receipt.title} onClose={() => setReceipt(null)} />}
       {!pixReq && !tradeWith && !receipt && pushed && <ReceiptModal state={state} receipt={pushed.txs} title={pushed.title} onClose={() => onPushedClose?.()} />}
-      {irMine && !pixReq && !tradeWith && !receipt && !pushed && (
+      {summaryOpen && summary && <RoundSummarySheet summary={summary} onClose={closeSummary} />}
+      {irMine && !pixReq && !tradeWith && !receipt && !pushed && !summaryOpen && !showJornal && (
         <IrModal
           key={irKey ?? undefined}
           ir={irMine}
@@ -250,7 +253,7 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
         />
       )}
       {irPassed !== null && !pixReq && !receipt && <IrPassedModal result={irPassed} onClose={() => setIrPassed(null)} />}
-      {irExempt && !irMine && !pixReq && !receipt && !pushed && <IrExemptModal year={irExempt.year} income={irExempt.income} onClose={closeExempt} />}
+      {irExempt && !irMine && !pixReq && !receipt && !pushed && !summaryOpen && <IrExemptModal year={irExempt.year} income={irExempt.income} onClose={closeExempt} />}
       {showJornal && !pixReq && !receipt && !pushed && (
         <JornalModal
           key={showJornal.round}
