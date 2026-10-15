@@ -520,3 +520,27 @@ a{color:inherit}
 .preview.empty{background:var(--surface-2);border-color:var(--line-strong)}
 .preview.empty .label{color:var(--muted)}
 .track{height:26px}
+/* Avisos: faixa "Precisa de você" (topo da Jogada) e resumo da rodada ("Seu dinheiro") */
+.needs{background:var(--sun-soft);border:1.5px solid var(--sun);border-radius:18px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;color:var(--on-sun)}
+.needs-label{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--on-sun);opacity:.75}
+.need{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.need + .need{border-top:1px solid color-mix(in srgb,var(--sun) 55%,transparent);padding-top:8px}
+.need-txt{display:flex;flex-direction:column;min-width:0}
+.need-txt b{font-size:15px}
+.need-txt span{font-size:13px;opacity:.85}
+.need.compact .need-txt{flex-direction:row;flex-wrap:wrap;gap:0 8px;align-items:baseline}
+.need-btn{background:var(--sun);border-color:var(--sun);color:var(--on-sun);flex-shrink:0;min-height:40px}
+.need-btn:not(:disabled):hover{border-color:var(--on-sun)}
+.card.trade.flash{animation:need-flash 1.2s ease-out}
+@keyframes need-flash{0%,40%{box-shadow:0 0 0 4px var(--sun)}100%{box-shadow:var(--shadow)}}
+.sum-head{display:flex;flex-direction:column;gap:2px}
+.sum-sec{display:flex;flex-direction:column;gap:6px}
+.sum-title{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.sum-title.in{color:var(--money)}
+.sum-title.out{color:var(--hot)}
+.sum-line{display:flex;justify-content:space-between;gap:12px;font-size:15px;align-items:baseline}
+.sum-line b.in{color:var(--money)}
+.sum-line b.out{color:var(--hot)}
+.sum-notes{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.sum-total{display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid var(--line);padding-top:10px;font-size:15px}
+.sum-foot{font-size:12px;text-align:center}

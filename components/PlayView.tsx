@@ -94,7 +94,7 @@ export function PlayView({ ui }: { ui: GameUi }) {
         <Players state={state} me={me} />
       </div>
       {body}
-      <Feed state={state} />
+      <Feed state={state} me={me} />
     </>
   );
 }
@@ -216,8 +216,9 @@ function Track({ state, from, sum }: { state: GameState; from: number; sum: numb
   );
 }
 
-function Feed({ state }: { state: GameState }) {
-  const items = state.feed.slice(0, 8);
+/** O que acontece na mesa; eventos do dinheiro de um jogador só (parcela, quitação, cobrança) só o dono vê. */
+function Feed({ state, me }: { state: GameState; me: string }) {
+  const items = state.feed.filter((f) => !f.for || f.for === me).slice(0, 8);
   if (!items.length) return null;
   const [first, ...rest] = items;
   return (

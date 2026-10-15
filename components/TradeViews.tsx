@@ -66,7 +66,7 @@ function TradeCard({ ui, t }: { ui: GameUi; t: Trade }) {
     setBusy(false);
   };
   return (
-    <div className={`card trade${incoming ? ' incoming' : ''}`} data-testid={incoming ? 'trade-incoming' : 'trade-outgoing'}>
+    <div className={`card trade${incoming ? ' incoming' : ''}`} data-testid={incoming ? 'trade-incoming' : 'trade-outgoing'} data-trade={t.id}>
       <div className="row between">
         <span className="row" style={{ gap: 8 }}>
           <Icon name="trade" size={20} />

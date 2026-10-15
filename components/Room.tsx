@@ -1,8 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { money } from '@/lib/game/format';
-import { currentPlayer, debtOf, describeSide, findPlayer, isParcelado, loanOf, loanRoundsLeft, migrateState, pname, RuleError, tradesOf } from '@/lib/game/rules';
+import { findPlayer, migrateState, pname, RuleError, tradesOf } from '@/lib/game/rules';
 import type { Action, GameState, Trade, Tx } from '@/lib/game/types';
 import { getStore, isLocalMode, type RoomSnapshot } from '@/lib/room';
 import { getIdentity, saveName, type Identity } from '@/lib/room/identity';
@@ -33,7 +32,6 @@ export function Room({ code }: { code: string }) {
   const snapRef = useRef<RoomSnapshot | null>(null);
   const lastSeen = useRef<number | null>(null);
   const lastFeed = useRef<number | null>(null);
-  const lastTurn = useRef<string | null>(null);
   const mySeqs = useRef(new Set<number>());
   const lastTrades = useRef<Trade[]>([]);
   /** propostas que eu mesmo aceitei, recusei ou cancelei (não precisam de aviso) */
@@ -78,38 +76,31 @@ export function Room({ code }: { code: string }) {
     };
   }, [code, accept]);
 
-  // Notificações: Pix recebido, eventos importantes dos outros, "sua vez"
+  // Notificações curtas (fila em Toasts): Pix recebido no meio da rodada, negociação, falência e vencedor
   useEffect(() => {
     if (!snap || !me) return;
     const st = snap.state;
     if (lastSeen.current === null) {
       lastSeen.current = st.txCount;
       lastFeed.current = st.feedCount;
-      lastTurn.current = st.phase === 'playing' ? currentPlayer(st)?.id ?? null : null;
       lastTrades.current = tradesOf(st);
       return;
     }
-    const incoming = incomingSince(st, me.id, lastSeen.current);
-    // dividendos de várias empresas na mesma rodada viram um aviso só
-    const divs = incoming.filter((t) => t.kind === 'dividend' && !(mySeqs.current.has(t.seq) && t.reason.startsWith('Dividendo extra')));
-    if (divs.length > 1) toast('Dividendos', `Você recebeu ${money(divs.reduce((a, t) => a + t.amount, 0))} de ${divs.length} empresas`);
-    for (const t of incoming) {
-      if (t.kind === 'dividend' && (divs.length > 1 || !divs.includes(t))) continue;
-      if (mySeqs.current.has(t.seq) && t.kind !== 'salary' && t.kind !== 'dividend') continue;
-      // negociação e penhora têm avisos próprios; empréstimo é sempre do próprio jogador
-      // resgate da poupança pelo banco (cobrança, falência) aparece no aviso da cobrança
-      if (t.kind === 'trade' || t.kind === 'penhora' || t.kind === 'loan' || t.kind === 'poupanca') continue;
+    // Avisos curtos só do que acontece no meio da rodada (aluguel, taxa, aposta da mesa, negociação).
+    // O automático (dividendos, parcelas, cobranças, indenização, rendimento, penhora) vai para o resumo da rodada;
+    // o que precisa de mim (sua vez, proposta, IR, vencimento) fica na faixa "Precisa de você" da Jogada.
+    for (const t of incomingSince(st, me.id, lastSeen.current)) {
+      if (t.auto || QUIET.has(t.kind)) continue;
+      if (mySeqs.current.has(t.seq) && t.kind !== 'salary') continue;
       const d = describeIncoming(st, t);
       toast(d.title, d.text);
     }
+    // da mesa, só falência e vencedor viram aviso para todos (o resto vai para o Jornal; o dinheiro dos outros não aparece)
     for (const f of [...st.feed].reverse()) {
-      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id) toast(feedTitle(f.text), f.text);
+      if (f.seq > (lastFeed.current ?? 0) && f.important && f.by !== me.id && (!f.for || f.for === me.id) && TOAST_FEED.test(f.text)) toast(feedTitle(f.text), f.text);
     }
-    // Negociação: proposta nova para mim, fechada, recusada ou cancelada
+    // Negociação: fechada, recusada ou cancelada (a proposta nova aparece na faixa da Jogada)
     const nowTrades = tradesOf(st);
-    for (const t of nowTrades)
-      if (t.to === me.id && !lastTrades.current.some((x) => x.id === t.id))
-        toast(`Proposta de ${pname(st, t.from)}`, `Dá ${describeSide(t.give)} e pede ${describeSide(t.get)}.`);
     for (const t of lastTrades.current) {
       if (nowTrades.some((x) => x.id === t.id) || myTradeActs.current.has(t.id)) continue;
       const deal = st.tx.filter((x) => x.ref === t.id).sort((a, b) => a.seq - b.seq);
@@ -121,15 +112,8 @@ export function Room({ code }: { code: string }) {
       } else if (t.to === me.id && !deal.length) toast('Proposta cancelada', `${pname(st, t.from)} cancelou a proposta.`);
     }
     lastTrades.current = nowTrades;
-    const turnId = st.phase === 'playing' && !st.winner ? currentPlayer(st)?.id ?? null : null;
-    if (turnId === me.id && lastTurn.current !== me.id && findPlayer(st, me.id)) {
-      toast('Sua vez', 'Jogue os dados e toque na soma que tirou.');
-      const myLoan = loanOf(st, me.id);
-      if (myLoan && !isParcelado(myLoan) && loanRoundsLeft(st, me.id) === 1) toast('Empréstimo vence na próxima rodada', `Pague ${money(debtOf(st, me.id))} na aba Banco até a sua próxima vez, ou o banco cobra e faz a penhora.`);
-    }
     lastSeen.current = Math.max(lastSeen.current, st.txCount);
     lastFeed.current = Math.max(lastFeed.current ?? 0, st.feedCount);
-    lastTurn.current = turnId;
   }, [snap, me, toast]);
 
   const run: Run = useCallback(
@@ -222,15 +206,15 @@ export function Room({ code }: { code: string }) {
   );
 }
 
+/** Pix que não vira aviso curto: automáticos (resumo da rodada), negociação e empréstimo (avisos e comprovantes próprios). */
+const QUIET = new Set<Tx['kind']>(['dividend', 'indenizacao', 'rendimento', 'penhora', 'poupanca', 'loan', 'loanpay', 'financiamento', 'trade']);
+/** Eventos da mesa que ainda viram aviso para todos: falência, vencedor, desfazer e volta ao lobby. */
+const TOAST_FEED = /faliu e saiu do jogo|venceu a partida|desfez a última ação|voltou para o lobby/;
+
 /** Título do aviso de um evento importante da mesa. */
 function feedTitle(text: string): string {
-  if (text.includes('Taxa Selic')) return 'Taxa Selic';
-  if (text.includes('financiamento')) return 'Financiamento';
-  if (text.startsWith('Parcela ')) return 'Parcela do empréstimo';
-  if (text.startsWith('Seguro: ')) return 'Seguro';
-  if (text.includes('duplas seguidas')) return 'Detenção';
-  if (text.startsWith('Gerência da ')) return 'Decisão da gerência';
-  if (text.startsWith('Greve na ') || text.startsWith('Investimento na ')) return 'Bolsa';
+  if (text.includes('venceu a partida')) return 'Fim de jogo';
+  if (text.includes('faliu')) return 'Falência';
   return 'Na mesa';
 }
 
