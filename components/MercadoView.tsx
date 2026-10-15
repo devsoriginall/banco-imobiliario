@@ -21,12 +21,14 @@ import {
   pct,
   pname,
   priceChange,
+  roundInYear,
+  yearOf,
   sharePrice,
   sharesOf,
   stockEffects,
   stockOf,
 } from '@/lib/game/rules';
-import type { DecisionId, Edition, GameState } from '@/lib/game/types';
+import type { DecisionId, Edition, GameState, JornalNote, JornalSection } from '@/lib/game/types';
 import type { GameUi } from './Game';
 
 const CAT: Record<string, string> = { bairro: 'Bairros', empresa: 'Empresas', economia: 'Economia' };
@@ -57,18 +59,52 @@ export function Sparkline({ values, width = 96, height = 32, big = false, label 
   );
 }
 
-/** Uma edição do Jornal da Cidade no estilo de jornal (tela cheia e aba Mercado). */
-export function EditionPaper({ state, ed, compact = false }: { state: GameState; ed: Edition; compact?: boolean }) {
+/** Um caderno do jornal completo (some quando não há nota). */
+function Caderno({ sec, label, notes }: { sec: JornalSection; label: string; notes: JornalNote[] }) {
+  if (!notes.length) return null;
+  return (
+    <section className={`caderno c-${sec}`} data-testid={`caderno-${sec}`}>
+      <h3 className="caderno-head">{label}</h3>
+      {notes.map((n, k) => (
+        <div className="nota" key={k}>
+          <b className="nota-title">{n.title}</b>
+          {n.text && <p className="nota-text">{n.text}</p>}
+          {n.movers && (
+            <div className="movers">
+              {n.movers.map((m) => (
+                <span key={m.name} className={`mover ${m.pct >= 0 ? 'up' : 'down'}`}>
+                  {m.name} {fmtChange(m.pct)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * Uma edição do Jornal da Cidade no estilo de jornal. Tela cheia da virada de rodada: só a manchete.
+ * `full` (aba Mercado): o jornal completo, com os cadernos do que aconteceu na rodada.
+ */
+export function EditionPaper({ state, ed, compact = false, full = false }: { state: GameState; ed: Edition; compact?: boolean; full?: boolean }) {
   const h = HEADLINES[ed.h];
   if (!h) return null;
+  const notes = ed.notes ?? [];
+  const bySec = (sec: JornalSection) => notes.filter((n) => n.sec === sec);
+  const total = notes.length + 1;
   return (
-    <article className={`paper${compact ? ' compact' : ''}`} data-testid="jornal-edition">
+    <article className={`paper${compact ? ' compact' : ''}${full ? ' full' : ''}`} data-testid="jornal-edition">
       <header className="paper-mast">
         <span className="paper-name">Jornal da Cidade</span>
-        <span className="paper-meta">
-          Sala {state.code} · Edição nº {ed.round} · Rodada {ed.round}
+        <span className="paper-meta" data-testid="paper-meta">
+          {full
+            ? `Edição ${ed.round} · Ano ${yearOf(ed.round)} · rodada ${roundInYear(ed.round)} · ${total} notícia${total > 1 ? 's' : ''}`
+            : `Sala ${state.code} · Edição nº ${ed.round} · Rodada ${ed.round}`}
         </span>
       </header>
+      {full && <span className="caderno-kicker">Manchete</span>}
       <span className={`paper-cat c-${h.cat}`}>{CAT[h.cat]}</span>
       <h2 className="paper-head">{h.title}</h2>
       <p className="paper-body">{h.body}</p>
@@ -84,6 +120,19 @@ export function EditionPaper({ state, ed, compact = false }: { state: GameState;
         <p className="paper-div" data-testid="paper-dividends">
           Dividendos anunciados: pagos na rodada {ed.round + 1} a quem tiver cotas no começo dela
         </p>
+      )}
+      {full && notes.length > 0 && (
+        <div className="cadernos" data-testid="cadernos">
+          <Caderno sec="economia" label="Economia" notes={bySec('economia')} />
+          <Caderno sec="bolsa" label="Bolsa" notes={bySec('bolsa')} />
+          {(bySec('policia').length > 0 || bySec('imoveis').length > 0) && (
+            <div className="cadernos-par">
+              <Caderno sec="policia" label="Polícia" notes={bySec('policia')} />
+              <Caderno sec="imoveis" label="Imóveis" notes={bySec('imoveis')} />
+            </div>
+          )}
+          <Caderno sec="negocios" label="Negócios" notes={bySec('negocios')} />
+        </div>
       )}
     </article>
   );
@@ -226,6 +275,11 @@ export function JornalModal({ state, ed, onClose, onHistory }: { state: GameStat
           <EditionPaper state={state} ed={cur} />
           <PageLeaf />
         </div>
+        {(cur.notes?.length ?? 0) > 0 && (
+          <p className="jornal-hint jornal-more" data-testid="jornal-more">
+            Mais {cur.notes!.length} notícia{cur.notes!.length > 1 ? 's' : ''} na aba Mercado
+          </p>
+        )}
         {eds.length > 1 && (
           <p className="jornal-hint" aria-live="polite">
             {idx === eds.length - 1
@@ -298,7 +352,7 @@ function JornalList({ state }: { state: GameState }) {
   const [latest, ...older] = eds;
   return (
     <>
-      <EditionPaper state={state} ed={latest} compact />
+      <EditionPaper state={state} ed={latest} full />
       {older.length > 0 && (
         <div className="card">
           <h3>Edições anteriores</h3>

@@ -255,6 +255,33 @@ export const DECISION_IDS: DecisionId[] = ['investir', 'dividendo', 'cortar', 'm
 /** Jornal da Cidade: quantas edições ficam guardadas. */
 export const JORNAL = { keep: 40 };
 
+/**
+ * Caderno de Polícia do Jornal: histórias curtas (e engraçadas) de quem vai para a detenção.
+ * {nome} = o jogador, {rua} = uma rua do tabuleiro. Escolhidas pelo sorteio da sala.
+ */
+export const JAIL_STORIES: string[] = [
+  '{nome} foi pego tentando pagar o pedágio da {rua} com moedas de chocolate.',
+  '{nome} estacionou o carro alegórico em fila dupla na {rua} e não quis tirar.',
+  '{nome} vendeu "lotes na Lua" em plena {rua}, com escritura assinada a giz de cera.',
+  '{nome} foi flagrado pintando faixas de pedestre cor-de-rosa na {rua}.',
+  '{nome} tentou alugar o mesmo imóvel da {rua} para três famílias ao mesmo tempo.',
+  '{nome} promoveu um churrasco no canteiro central da {rua} sem convidar o síndico.',
+  '{nome} foi detido por imitar o apito do guarda de trânsito na {rua} durante a hora do rush.',
+  '{nome} abriu uma "agência bancária" numa barraca de praia na {rua}.',
+  '{nome} tentou registrar o próprio cachorro como sócio de uma empresa na {rua}.',
+  '{nome} foi pego trocando todas as placas da {rua} por placas com o próprio nome.',
+  '{nome} organizou um bingo clandestino na {rua} com cartelas desenhadas à mão.',
+  '{nome} jurou que a {rua} era dele "desde a época do Império" e cercou a calçada.',
+  '{nome} tentou pagar a conta do restaurante da {rua} com dinheiro do Banco Imobiliário.',
+  '{nome} foi visto subindo no poste da {rua} para "melhorar o sinal do Wi-Fi".',
+  '{nome} soltou 200 pombos na {rua} para "valorizar a vizinhança".',
+  '{nome} tentou leiloar o semáforo da {rua} pela internet.',
+  '{nome} instalou uma catraca na entrada da {rua} e cobrava para passar.',
+  '{nome} foi pego ensinando papagaios a gritar "compra, compra!" na {rua}.',
+  '{nome} declarou à polícia que estava só "medindo a {rua} com uma régua de 30 cm".',
+  '{nome} confundiu a {rua} com a pista do autódromo e deu três voltas de patinete.',
+];
+
 // empresas pelo índice da casa no tabuleiro
 const BA = 3; // Banco Aurora
 const HV = 8; // Horizonte Viagens

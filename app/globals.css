@@ -544,3 +544,26 @@ a{color:inherit}
 .sum-notes{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:14px}
 .sum-total{display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid var(--line);padding-top:10px;font-size:15px}
 .sum-foot{font-size:12px;text-align:center}
+/* Jornal completo (aba Mercado): papel, manchete e cadernos da rodada */
+.paper.full{background:#F7F3E8;color:#1B1914;border-color:#DDD5C2;border-radius:4px;box-shadow:0 6px 20px rgba(40,30,10,.10)}
+.paper.full .paper-mast{border-bottom-color:#1B1914}
+.paper.full .paper-name{font-size:28px;font-family:'Old English Text MT','UnifrakturMaguntia',Georgia,'Times New Roman',serif}
+.paper.full .paper-head{font-size:24px}
+.paper.full .paper-body,.paper.full .paper-meta{color:#3A362C}
+.paper.full .paper-effect,.paper.full .paper-div{border-color:#1B1914}
+.caderno-kicker{font-family:Georgia,'Times New Roman',serif;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#6B6455}
+.cadernos{display:flex;flex-direction:column;gap:14px;margin-top:6px}
+.cadernos-par{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:560px){.cadernos-par{grid-template-columns:1fr 1fr}.cadernos-par>.caderno:only-child{grid-column:1/-1}}
+.caderno{display:flex;flex-direction:column;gap:8px;min-width:0}
+.caderno-head{font-family:Georgia,'Times New Roman',serif;font-size:14px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;border-top:4px double #1B1914;border-bottom:1px solid #1B1914;padding:5px 0 4px;margin:0}
+.nota{display:flex;flex-direction:column;gap:2px;font-family:Georgia,'Times New Roman',serif}
+.nota + .nota{border-top:1px dotted #B9B0A0;padding-top:8px}
+.nota-title{font-size:16px;line-height:1.25}
+.nota-text{margin:0;font-size:14px;line-height:1.4;color:#3A362C}
+.caderno.c-policia .nota-text{font-style:italic}
+.movers{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.mover{font-family:var(--body);font-size:13px;font-weight:700;padding:3px 9px;border-radius:999px;font-variant-numeric:tabular-nums}
+.mover.up{background:#E2F7EE;color:#08875A}
+.mover.down{background:#FFE8F0;color:#E8175D}
+.jornal-more{font-weight:700;color:#3A362C}
