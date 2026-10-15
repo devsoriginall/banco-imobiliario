@@ -322,6 +322,20 @@ export interface Edition {
   h: number;
   /** efeitos no jogo, já com as rodadas, ex.: "Bairro Verde −15% até a rodada 9" */
   effects: string[];
+  /** o que aconteceu na rodada, por caderno (salas antigas: ausente; nunca saldos nem valores entre jogadores) */
+  notes?: JornalNote[];
+}
+
+/** Cadernos do Jornal da Cidade. */
+export type JornalSection = 'economia' | 'bolsa' | 'policia' | 'imoveis' | 'negocios';
+
+/** Uma nota do Jornal: só fatos públicos da mesa e do mercado. */
+export interface JornalNote {
+  sec: JornalSection;
+  title: string;
+  text?: string;
+  /** maiores altas e quedas da Bolsa na rodada (variação em fração, ex.: 0,12 = +12%) */
+  movers?: { name: string; pct: number }[];
 }
 
 /** Modificador temporário do bairro (manchete): vale até a rodada `until`, inclusive. */

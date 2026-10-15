@@ -180,6 +180,9 @@ await closePaper(beto);
 await front(ana);
 await ana.getByText('Edição nº 4').waitFor();
 const effect4 = norm(await ana.locator('.paper-effect').first().textContent());
+// a tela cheia continua só com a manchete e avisa que o resto está na aba Mercado
+check((await ana.locator('.jornal-full .caderno').count()) === 0, 'tela cheia só com a manchete');
+check(/^Mais \d+ notícias? na aba Mercado$/.test(norm(await ana.getByTestId('jornal-more').textContent())), 'linha "Mais N notícias" na tela cheia');
 // os dividendos chegam no resumo da rodada (depois do Jornal), não num aviso curto
 await ana.removeLocatorHandler(summaryDialog(ana));
 await closePaper(ana);
@@ -201,6 +204,13 @@ await ana.waitForTimeout(200);
 await calm(ana);
 await ana.getByTestId('jornal-edition').scrollIntoViewIfNeeded();
 await shot(ana, 'jornal-3-edicoes.png');
+// jornal completo: cabeçalho da edição e caderno da Bolsa com os dividendos pagos na rodada 4
+const meta = norm(await ana.getByTestId('jornal-edition').getByTestId('paper-meta').textContent());
+check(/^Edição 4 · Ano 1 · rodada 4 · \d+ notícias$/.test(meta), `cabeçalho do jornal completo: ${meta}`);
+const bolsaCad = norm(await ana.getByTestId('caderno-bolsa').textContent());
+check(bolsaCad.includes('Dividendos do semestre pagos') && bolsaCad.includes('Vox Telecom'), `caderno da Bolsa: ${bolsaCad}`);
+await ana.getByTestId('cadernos').scrollIntoViewIfNeeded();
+await shot(ana, 'jornal-4-cadernos.png');
 check((await ana.getByTestId('jornal-history').locator('.li').count()) === 2, 'duas edições anteriores no histórico');
 await ana.getByRole('radio', { name: 'Bolsa' }).click();
 await ana.getByTestId('stock-list').waitFor();

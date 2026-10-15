@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { BANK_RATES, CALENDAR, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
-import type { Action, ActionContext, CompanySpace, DecisionId, Edition, Financing, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
+import { BANK_RATES, CALENDAR, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JAIL_STORIES, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
+import type { Action, ActionContext, CompanySpace, DecisionId, Edition, Financing, JornalNote, JornalSection, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -216,7 +216,10 @@ export function applyNeighbourhoodChange(state: GameState, group: GroupId, pct: 
   if (!Number.isFinite(pct)) throw new RuleError('Variação inválida.');
   const st = clone(state);
   const delta = shiftHood(st, group, pct);
-  if (delta) log(st, `Bairro ${GROUPS[group].name.toLowerCase()} ${delta > 0 ? 'valorizou' : 'desvalorizou'} ${Math.abs(delta)}%: preços e aluguéis ${delta > 0 ? 'sobem' : 'caem'}`, now, undefined, true);
+  if (delta) {
+    log(st, `Bairro ${GROUPS[group].name.toLowerCase()} ${delta > 0 ? 'valorizou' : 'desvalorizou'} ${Math.abs(delta)}%: preços e aluguéis ${delta > 0 ? 'sobem' : 'caem'}`, now, undefined, true);
+    note(st, 'imoveis', `Bairro ${GROUPS[group].name.toLowerCase()} ${delta > 0 ? 'valoriza' : 'desvaloriza'} ${Math.abs(delta)}%`, `Preços e aluguéis ${delta > 0 ? 'sobem' : 'caem'} (${groupStreets(group)}).`);
+  }
   return st;
 }
 
@@ -435,6 +438,64 @@ function applyHeadlineEffect(st: GameState, h: Headline, e: HeadlineEffect, stoc
   }
 }
 
+// ---------- Cadernos do Jornal ----------
+
+/** Notas por edição (as primeiras ficam; o resto não cabe no jornal). */
+const MAX_NOTES = 40;
+
+/**
+ * Nota no caderno da edição desta rodada (a mais nova). Sem Jornal (Mercado desligado) ou sem a edição da rodada, nada.
+ * Só fatos públicos: nunca saldos, parcelas, IR, empréstimos nem valores de negociação entre jogadores.
+ */
+function note(st: GameState, sec: JornalSection, title: string, text?: string, extra?: Pick<JornalNote, 'movers'>) {
+  const ed = st.jornal?.[0];
+  if (!ed || ed.round !== st.round) return;
+  const notes = ed.notes ?? [];
+  if (notes.length >= MAX_NOTES) return;
+  ed.notes = [...notes, { sec, title, ...(text ? { text } : {}), ...(extra ?? {}) }];
+}
+
+/** Número do sorteio da sala sem gastar o sorteio (as histórias da Polícia não mudam nenhum outro resultado). */
+function peekRandom(st: GameState, salt: string): number {
+  let t = (hashStr(`${st.seed ?? 0}|${st.feedCount}|${st.round}|${salt}`) + 0x6d2b79f5) >>> 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** História do caderno de Polícia para quem vai para a detenção: modelo e rua pelo sorteio da sala. */
+export function jailStory(st: GameState, name: string): string {
+  const streets = SPACES.filter((x) => x.type === 'street').map((x) => x.name);
+  const tpl = JAIL_STORIES[Math.floor(peekRandom(st, 'policia') * JAIL_STORIES.length)];
+  const rua = streets[Math.floor(peekRandom(st, 'rua') * streets.length)];
+  return tpl.replace('{nome}', name).replace('{rua}', rua);
+}
+
+function jailNote(st: GameState, p: Player, title: string) {
+  note(st, 'policia', title, jailStory(st, p.name));
+}
+
+/** Itens de um lado da negociação sem o dinheiro (o Jornal não publica valores entre jogadores). */
+function tradeItems(side: TradeSide): string[] {
+  const out = side.props.map((i) => street(i).name);
+  for (const [k, q] of Object.entries(side.shares)) if (q > 0) out.push(`${q} cota${q > 1 ? 's' : ''} da ${company(Number(k)).name}`);
+  if (side.money > 0) out.push(out.length ? 'um valor em dinheiro' : 'dinheiro');
+  return out;
+}
+
+const listText = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} e ${xs[xs.length - 1]}`);
+
+/** Começo da rodada, depois da manchete: Selic do semestre e fim do ano no caderno de Economia. */
+function economyNotes(st: GameState, selicBefore: number | undefined, yearClosed: number | null) {
+  const r = st.round;
+  if (yearClosed !== null) note(st, 'economia', `Fim do ano ${yearClosed}: hora do Imposto de Renda`, `Cada jogador declara a renda do ano ${yearClosed} na primeira vez dele no ano ${yearClosed + 1}.`);
+  if (!isSemesterStart(r) || st.selicRound !== r || st.selic === undefined) return;
+  const until = selicUntil(r);
+  if (selicBefore === undefined) note(st, 'economia', `Taxa Selic do semestre: ${pct(st.selic)}`, `Vale até a rodada ${until}.`);
+  else if (selicBefore === st.selic) note(st, 'economia', `Selic mantida em ${pct(st.selic)}`, `O Banco Central segura os juros até a rodada ${until}.`);
+  else note(st, 'economia', `Selic ${st.selic > selicBefore ? 'sobe' : 'cai'} para ${pct(st.selic)}`, `Era ${pct(selicBefore)}. Vale até a rodada ${until}: empréstimos e poupança acompanham.`);
+}
+
 /**
  * Começo de rodada do Jornal e da Bolsa (logo depois do sorteio dos juros):
  * 1. tira os efeitos vencidos; 2. sorteia a manchete e aplica os efeitos; 3. atualiza as cotações
@@ -461,8 +522,14 @@ function marketRound(st: GameState, now: Date, first = false) {
   const h = HEADLINES[hi];
   const stockPct: Record<number, number> = {};
   const effects = h.effects.map((e) => applyHeadlineEffect(st, h, e, stockPct));
-  st.jornal = [{ round: r, h: hi, effects }, ...(st.jornal ?? [])].slice(0, JORNAL.keep);
+  st.jornal = [{ round: r, h: hi, effects, notes: [] }, ...(st.jornal ?? [])].slice(0, JORNAL.keep);
   log(st, `Jornal da Cidade, edição ${r}: ${h.title}`, now);
+  h.effects.forEach((e, k) => {
+    if (e.k !== 'hood' && e.k !== 'hoodAll') return;
+    const one = e.k === 'hood';
+    const verb = e.pct > 0 ? (one ? 'valoriza' : 'valorizam') : one ? 'desvaloriza' : 'desvalorizam';
+    note(st, 'imoveis', `${one ? `Bairro ${GROUPS[e.group].name.toLowerCase()}` : 'Todos os bairros'} ${verb} ${Math.abs(e.pct)}%`, effects[k]);
+  });
   for (const { i, before } of insured) {
     const lost = before - propValue(st, i);
     if (lost <= 0) continue;
@@ -484,12 +551,17 @@ function marketRound(st: GameState, now: Date, first = false) {
         const up = D.min + Math.min(D.max - D.min, Math.floor(nextRandom(st) * (D.max - D.min + 1)));
         change += up / 100;
         log(st, `Investimento na ${name} deu resultado: cota +${up}%`, now, undefined, true);
+        note(st, 'bolsa', `Investimento na ${name} dá resultado`, `A cota sobe ${up}% nesta rodada.`);
       }
       if (p.strike !== undefined) {
         if (nextRandom(st) < p.strike) {
           sk.yieldMods = [...(sk.yieldMods ?? []), { zero: true, from: r, until: r, why: 'Greve' }];
           log(st, `Greve na ${name} depois do corte de custos: dividendo zero nesta rodada`, now, undefined, true);
-        } else log(st, `Corte de custos na ${name} sem greve: dividendo maior`, now);
+          note(st, 'bolsa', `Greve na ${name}`, 'Funcionários cruzam os braços depois do corte de custos: dividendo zero nesta rodada.');
+        } else {
+          log(st, `Corte de custos na ${name} sem greve: dividendo maior`, now);
+          note(st, 'bolsa', `Corte de custos na ${name} sem greve`, 'O dividendo fica maior por enquanto.');
+        }
       }
     }
     sk.pend = (sk.pend ?? []).filter((x) => x.round > r);
@@ -499,13 +571,17 @@ function marketRound(st: GameState, now: Date, first = false) {
   }
   // 4. dividendos: só no início do semestre (rodadas 4, 7, 10…), o valor anunciado na rodada anterior
   //    (salas antigas, sem anúncio: cotação atual × rendimento); greve ativa = suspenso. Depois, data ex: a cota cai o dividendo.
+  const paid: string[] = [];
   for (const i of paysDividends(r) ? COMPANY_IDX : []) {
     const sk = ensureStock(st, i);
     const ann = sk.divAnnounced;
     delete sk.divAnnounced;
     const name = company(i).name;
     if (onStrike(st, i)) {
-      if (ann?.round === r && ann.perShare > 0) log(st, `Dividendos da ${name}: suspenso por greve`, now);
+      if (ann?.round === r && ann.perShare > 0) {
+        log(st, `Dividendos da ${name}: suspenso por greve`, now);
+        note(st, 'bolsa', `${name} suspende os dividendos`, 'Greve: o dividendo anunciado não é pago.');
+      }
       continue;
     }
     const each = ann?.round === r ? ann.perShare : dividendPerShare(st, i);
@@ -517,17 +593,36 @@ function marketRound(st: GameState, now: Date, first = false) {
       applyTransfers(st, list, now);
       log(st, `Dividendos do semestre da ${name}: ${money(each)} por cota`, now);
     }
+    paid.push(`${name} ${money(each)} por cota`);
     const before = sk.price;
     sk.price = clampPrice(before - each);
     sk.hist = [...sk.hist.slice(0, -1), sk.price];
     if (sk.price !== before) log(st, `${name}: cota ajustada −${money(before - sk.price)} após os dividendos (data ex)`, now);
   }
+  if (paid.length) note(st, 'bolsa', 'Dividendos do semestre pagos', paid.join(' · '));
   // 5. anúncio ("data com"): na rodada antes do pagamento, guarda o dividendo por cota pela cotação de agora
-  if (paysDividends(r + 1))
+  if (paysDividends(r + 1)) {
+    const ann: string[] = [];
     for (const i of COMPANY_IDX) {
       const sk = ensureStock(st, i);
       sk.divAnnounced = { round: r + 1, perShare: dividendPerShare(st, i, r + 1) };
+      if (sk.divAnnounced.perShare > 0) ann.push(`${company(i).name} ${money(sk.divAnnounced.perShare)}`);
     }
+    if (ann.length) note(st, 'bolsa', `Dividendos anunciados para a rodada ${r + 1}`, `Por cota, a quem tiver cotas no começo dela: ${ann.join(' · ')}.`);
+  }
+  // sobe e desce da rodada: até 3 maiores variações (começo desta rodada contra o da anterior)
+  if (!first) {
+    const movers = COMPANY_IDX.map((i) => {
+      const hist = ensureStock(st, i).hist;
+      const a = hist[hist.length - 2];
+      const b = hist[hist.length - 1];
+      return { name: company(i).name, pct: a ? b / a - 1 : 0 };
+    })
+      .filter((m) => Math.abs(m.pct) >= 0.0005)
+      .sort((x, y) => Math.abs(y.pct) - Math.abs(x.pct))
+      .slice(0, 3);
+    if (movers.length) note(st, 'bolsa', 'Sobe e desce da Bolsa', undefined, { movers });
+  }
 }
 
 /** Texto de cada decisão da gerência para a tela da empresa. */
@@ -1176,9 +1271,12 @@ function passTurn(st: GameState, now: Date) {
   st.turn = i;
   st.turnInfo = emptyTurn();
   if (st.round !== roundBefore) {
-    if (isYearStart(st.round) && st.round > 1) closeYear(st, yearOf(st.round) - 1, now);
+    const selicBefore = st.selic ?? st.bankRate;
+    const yearClosed = isYearStart(st.round) && st.round > 1 ? yearOf(st.round) - 1 : null;
+    if (yearClosed !== null) closeYear(st, yearClosed, now);
     drawBankRate(st, now);
     marketRound(st, now);
+    economyNotes(st, selicBefore, yearClosed);
   }
   // Início da vez: a poupança rende, o IR do ano fechado espera a declaração e, no início do semestre,
   // as parcelas do empréstimo e dos financiamentos são cobradas antes de qualquer jogada
@@ -1254,6 +1352,7 @@ function collectFin(st: GameState, p: Player, f: Financing, amount: number, tag:
     repossess(st, p, f.idx, now);
     changeCredit(st, p, CREDIT.parcelPenhora, `${tag} sem saldo: imóvel retomado`);
     log(st, `Sem saldo para a parcela: o banco retomou a ${name} de ${p.name} e cancelou o financiamento`, now, undefined, true, p.id);
+    note(st, 'imoveis', `Banco retoma a ${name}`, `O imóvel de ${p.name} volta ao banco e fica à venda.`);
     return;
   }
   applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: tag, kind: 'financiamento', space: f.idx }], now);
@@ -1307,7 +1406,10 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
     sold += 1;
     applyTransfers(st, [{ from: BANK, to: p.id, amount: value, reason: `Penhora: venda de ${hotel ? 'hotel' : 'casa'} na ${s.name} (metade do custo)`, kind: 'penhora', space: i }], now);
   }
-  if (sold) log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true, p.id);
+  if (sold) {
+    log(st, `Penhora: o banco vendeu ${sold} construç${sold > 1 ? 'ões' : 'ão'} de ${p.name}`, now, undefined, true, p.id);
+    note(st, 'imoveis', `Penhora: ${sold} construç${sold > 1 ? 'ões vendidas' : 'ão vendida'} ao banco`, `Construções de ${p.name} voltam para o banco.`);
+  }
   let taken = 0;
   while (p.balance < owed) {
     // imóveis financiados (já alienados ao banco) por último; ao tomar um, o financiamento é cancelado e só sobra a diferença
@@ -1325,6 +1427,7 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
       now,
     );
     log(st, `Penhora: o banco tomou a ${s.name} de ${p.name}`, now, undefined, true, p.id);
+    note(st, 'imoveis', `Penhora: banco toma a ${s.name}`, `O imóvel de ${p.name} volta ao banco e fica à venda.`);
   }
   const paid = Math.min(p.balance, owed);
   if (paid > 0) applyTransfers(st, [{ from: p.id, to: BANK, amount: paid, reason, kind: 'loanpay' }], now);
@@ -1397,8 +1500,12 @@ function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: s
   if (st.irPending?.pid === d.id) st.irPending = null;
   st.trades = tradesOf(st).filter((t) => t.from !== d.id && t.to !== d.id);
   log(st, `${d.name} faliu e saiu do jogo`, now, by, true);
+  note(st, 'negocios', `${d.name} vai à falência`, 'Os bens mudam de dono e a mesa fica menor.');
   checkWinner(st);
-  if (st.winner) log(st, `${pname(st, st.winner)} venceu a partida!`, now, by, true);
+  if (st.winner) {
+    log(st, `${pname(st, st.winner)} venceu a partida!`, now, by, true);
+    note(st, 'negocios', `${pname(st, st.winner)} vence a partida!`, 'Último jogador de pé na cidade.');
+  }
 }
 
 /** Imóvel volta ao banco como terreno, sem casa (e sem padrão, seguro ou financiamento). */
@@ -1439,6 +1546,7 @@ function landOn(st: GameState, p: Player, idx: number, passed: boolean, text: st
     sendToJail(p);
     ti.resolved = true;
     log(st, `${p.name} foi para a detenção sem receber pró-labore`, now, actor, true);
+    jailNote(st, p, `${p.name} vai para a detenção`);
   }
   if (s.type === 'start' || s.type === 'free' || s.type === 'jail') ti.resolved = true;
   if (s.type === 'street') {
@@ -1528,6 +1636,8 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       log(st, `Partida começou com ${st.players.length} jogadores`, now, actor, true);
       drawBankRate(st, now);
       marketRound(st, now, true);
+      note(st, 'economia', 'Começa a partida', `${st.players.length} jogadores chegam à cidade com o mesmo dinheiro no bolso.`);
+      economyNotes(st, undefined, null);
       return keep(state, st);
     }
     case 'reset': {
@@ -1586,6 +1696,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
         ti.landed = JAIL_POS;
         ti.resolved = true;
         log(st, `${p.name} tirou ${MAX_DOUBLES} duplas seguidas e foi para a detenção`, now, actor, true);
+        jailNote(st, p, `${p.name} tira ${MAX_DOUBLES} duplas seguidas e vai para a detenção`);
         break;
       }
       const idx = (p.pos + sum) % SPACES.length;
@@ -1617,6 +1728,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
         const f = startFinance(state, st, actor, ti.landed!, 'terreno', price, action.finance);
         log(st, `${p.name} comprou o terreno da ${s.name} financiado: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)}`, now, actor);
       } else log(st, `${p.name} comprou o terreno da ${s.name} por ${money(list[0].amount)}`, now, actor);
+      note(st, 'imoveis', `${p.name} compra a ${s.name}`, `Terreno de tabela ${money(price)}.`);
       break;
     }
     case 'skipBuy': {
@@ -1725,6 +1837,13 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       sk.decRound = r;
       sk.decision = action.decision;
       log(st, `Gerência da ${name}: ${me.name} ${what}`, now, actor, true);
+      const dn: Record<DecisionId, [string, string]> = {
+        investir: ['investe na empresa', `A cota deve subir de ${DECISIONS.investir.min}% a ${DECISIONS.investir.max}% na próxima rodada.`],
+        dividendo: ['paga dividendo extra', `${money(extraDividendPerShare(state, i))} por cota agora; a cota cai ${-DECISIONS.dividendo.nextPct}% na próxima rodada.`],
+        cortar: ['corta custos', `Dividendo maior até a rodada ${r + DECISIONS.cortar.rounds}, com risco de greve.`],
+        marketing: ['lança campanha de marketing', `Taxa da casa +${DECISIONS.marketing.pct}% ${untilText(st, r + DECISIONS.marketing.rounds - 1)}.`],
+      };
+      note(st, 'bolsa', `Gerência da ${name} ${dn[action.decision][0]}`, `Decisão de ${me.name}. ${dn[action.decision][1]}`);
       break;
     }
     case 'drawNews': {
@@ -1754,6 +1873,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       } else if (n.k === 'jail') {
         sendToJail(p);
         log(st, `${p.name} foi para a detenção`, now, actor, true);
+        jailNote(st, p, `${p.name} vai para a detenção`);
       } else pay(st, transfersFor(state, action, actor), now);
       ti.resolved = true;
       break;
@@ -1781,6 +1901,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       p.jailTries = 0;
       ti.jailExit = true;
       log(st, `${p.name} tirou dupla e saiu da detenção`, now, actor);
+      note(st, 'policia', `${p.name} sai da detenção`, 'Tirou dupla nos dados e foi liberado.');
       break;
     }
     case 'jailFail': {
@@ -1800,6 +1921,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       p.jailed = false;
       p.jailTries = 0;
       log(st, `${p.name} pagou a fiança e saiu da detenção`, now, actor);
+      note(st, 'policia', `${p.name} paga a fiança`, 'Saiu da detenção e volta às ruas.');
       break;
     }
     case 'useCard': {
@@ -1810,6 +1932,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       p.jailed = false;
       p.jailTries = 0;
       log(st, `${p.name} usou a carta e saiu da detenção`, now, actor);
+      note(st, 'policia', `${p.name} sai da detenção`, 'Usou a carta de saída livre.');
       break;
     }
     case 'build': {
@@ -1832,6 +1955,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
         const f = startFinance(state, st, actor, action.idx, 'casa', price, action.finance);
         log(st, `${me.name} construiu ${what} na ${s.name} financiada: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)}`, now, actor);
       } else log(st, `${me.name} construiu ${what} na ${s.name}`, now, actor);
+      note(st, 'imoveis', `${me.name} constrói na ${s.name}`, `${what.charAt(0).toUpperCase()}${what.slice(1)}${pr.houses !== 1 && pr.tier ? `, padrão ${tierName(pr.tier)}` : ''}.`);
       break;
     }
     case 'sellHouse': {
@@ -1869,6 +1993,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
         if (doubles >= MAX_DOUBLES) {
           sendToJail(p);
           log(st, `${p.name} tirou ${MAX_DOUBLES} duplas seguidas e foi para a detenção`, now, actor, true);
+          jailNote(st, p, `${p.name} tira ${MAX_DOUBLES} duplas seguidas e vai para a detenção`);
           nextTurn(st, now);
           if (!st.winner) log(st, `Vez de ${currentPlayer(st).name}`, now, actor);
           break;
@@ -1948,6 +2073,12 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       move(t.get, t.to, t.from);
       st.trades = tradesOf(st).filter((x) => x.id !== t.id);
       log(st, `Negociação fechada entre ${a.name} e ${me.name}: ${describeSide(t.give)} por ${describeSide(t.get)}`, now, actor);
+      {
+        const toB = tradeItems(t.give);
+        const toA = tradeItems(t.get);
+        const parts = [toA.length ? `${a.name} fica com ${listText(toA)}` : '', toB.length ? `${me.name} fica com ${listText(toB)}` : ''].filter(Boolean);
+        note(st, 'negocios', `Negócio fechado entre ${a.name} e ${me.name}`, `${parts.join('; ')}.`);
+      }
       break;
     }
     case 'takeLoan': {
