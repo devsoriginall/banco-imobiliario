@@ -18,6 +18,29 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'pt-BR' });
 const ana = await context.newPage();
 const beto = await context.newPage();
+// Resumo da rodada ("Seu dinheiro"): quando aparece no meio de outra ação, guarda o texto e fecha
+// (os passos que conferem o resumo esperam por ele antes de tocar na tela)
+const summaries = { ana: [], beto: [] };
+const summaryDialog = (page) => page.getByRole('dialog', { name: 'Resumo da rodada' });
+const autoSummary = (page) =>
+  page.addLocatorHandler(summaryDialog(page), async (d) => {
+    summaries[page === ana ? 'ana' : 'beto'].push((await d.textContent()).replace(/\s+/g, ' ').trim());
+    await d.getByRole('button', { name: 'OK, entendi' }).click();
+  });
+/** Espera o resumo aparecer (sem fechar sozinho) e devolve o texto; `close()` fecha e volta a fechar sozinho. */
+const waitSummary = async (page, timeout = 8000) => {
+  await page.removeLocatorHandler(summaryDialog(page));
+  await summaryDialog(page).waitFor({ timeout });
+  return {
+    text: (await summaryDialog(page).textContent()).replace(/\s+/g, ' ').trim(),
+    close: async () => {
+      await summaryDialog(page).getByRole('button', { name: 'OK, entendi' }).click();
+      await autoSummary(page);
+    },
+  };
+};
+await autoSummary(ana);
+await autoSummary(beto);
 const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join(OUT, name), fullPage });
 const norm = (t) => t.replace(/\s+/g, ' ').trim();
 const num = (t) => Number(norm(t).replace(/[^\d-]/g, ''));
@@ -157,17 +180,18 @@ await closePaper(beto);
 await front(ana);
 await ana.getByText('Edição nº 4').waitFor();
 const effect4 = norm(await ana.locator('.paper-effect').first().textContent());
-const divToast = ana.locator('.toast', { hasText: 'Dividendos' });
-await divToast.waitFor();
-const divText = norm(await divToast.textContent());
-console.log('Toast:', divText);
+// os dividendos chegam no resumo da rodada (depois do Jornal), não num aviso curto
+await ana.removeLocatorHandler(summaryDialog(ana));
+await closePaper(ana);
+const divSummary = await waitSummary(ana);
+const divText = divSummary.text;
+console.log('Resumo:', divText);
 await ana.waitForTimeout(300);
 await shot(ana, 'bolsa-0-aviso-dividendos.png');
-await calm(ana);
-await closePaper(ana);
+await divSummary.close();
 const afterDiv = await wallet(ana);
 const div = afterDiv - (start - price1);
-check(div > 0 && divText.includes(`$ ${div}`) && divText.includes('Vox Telecom'), `dividendo de ${div} na carteira e no aviso`);
+check(div > 0 && divText.includes(`Dividendos da Vox Telecom+$ ${div}`) && divText.includes('Rodada 4 começou'), `dividendo de ${div} na carteira e no resumo`);
 
 // 6. Aba Mercado: histórico do Jornal e a Bolsa
 await ana.getByRole('tab', { name: /Mercado/ }).click();

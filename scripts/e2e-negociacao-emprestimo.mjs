@@ -14,6 +14,29 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'pt-BR' });
 const ana = await context.newPage();
 const beto = await context.newPage();
+// Resumo da rodada ("Seu dinheiro"): quando aparece no meio de outra ação, guarda o texto e fecha
+// (os passos que conferem o resumo esperam por ele antes de tocar na tela)
+const summaries = { ana: [], beto: [] };
+const summaryDialog = (page) => page.getByRole('dialog', { name: 'Resumo da rodada' });
+const autoSummary = (page) =>
+  page.addLocatorHandler(summaryDialog(page), async (d) => {
+    summaries[page === ana ? 'ana' : 'beto'].push((await d.textContent()).replace(/\s+/g, ' ').trim());
+    await d.getByRole('button', { name: 'OK, entendi' }).click();
+  });
+/** Espera o resumo aparecer (sem fechar sozinho) e devolve o texto; `close()` fecha e volta a fechar sozinho. */
+const waitSummary = async (page, timeout = 8000) => {
+  await page.removeLocatorHandler(summaryDialog(page));
+  await summaryDialog(page).waitFor({ timeout });
+  return {
+    text: (await summaryDialog(page).textContent()).replace(/\s+/g, ' ').trim(),
+    close: async () => {
+      await summaryDialog(page).getByRole('button', { name: 'OK, entendi' }).click();
+      await autoSummary(page);
+    },
+  };
+};
+await autoSummary(ana);
+await autoSummary(beto);
 const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join(OUT, name), fullPage });
 const norm = (t) => t.replace(/\s+/g, ' ').trim();
 const wallet = async (page) => norm(await page.getByTestId('wallet-balance').textContent());
@@ -115,13 +138,15 @@ await shot(ana, 'negociacao-1-proposta.png');
 await ana.getByRole('button', { name: 'Enviar proposta' }).click();
 await ana.getByTestId('trade-outgoing').waitFor();
 
-// 4. Beto recebe a proposta (notificação + cartão) e aceita
+// 4. Beto recebe a proposta (faixa "Precisa de você" + cartão, sem aviso curto) e aceita
 await front(beto);
-const propToast = beto.locator('.toast', { hasText: 'Proposta de Ana' });
-await propToast.waitFor({ timeout: 5000 });
+const propNeed = beto.getByTestId('need-trade');
+await propNeed.waitFor({ timeout: 5000 });
+expectEq(norm(await propNeed.textContent()), 'Proposta de AnaAceite ou recuse no cartão da proposta.Ver proposta', 'faixa da proposta no Beto');
+expectEq(await beto.locator('.toast', { hasText: 'Proposta de Ana' }).count(), 0, 'proposta sem aviso curto');
+await propNeed.getByRole('button', { name: 'Ver proposta' }).click();
 await beto.getByTestId('trade-incoming').waitFor();
-await beto.getByTestId('trade-incoming').scrollIntoViewIfNeeded();
-await beto.waitForTimeout(400);
+await beto.waitForTimeout(600);
 await shot(beto, 'negociacao-2-beto-recebe.png');
 await beto.getByTestId('trade-incoming').getByRole('button', { name: 'Aceitar' }).click();
 await beto.getByText('Negociação fechada', { exact: true }).first().waitFor();
@@ -253,15 +278,20 @@ for (let r = takenRound; r < first; r++) {
 expectEq(norm(await beto.getByTestId('turn').textContent()).includes('É a sua vez'), true, 'vez do Beto antes da cobrança');
 await passTurn(beto);
 const parcelToast = `Parcela 1/4 do empréstimo de Ana: ${brl(parcels[0])}`;
-await beto.locator('.toast', { hasText: 'Parcela 1/4' }).waitFor({ timeout: 5000 });
-expectEq(norm(await beto.locator('.toast', { hasText: 'Parcela 1/4' }).first().textContent()).includes(parcelToast), true, 'aviso da parcela no Beto');
+// a parcela é da Ana: aparece só no resumo da rodada dela; o Beto não vê aviso nem linha na mesa
 await front(ana);
-const anaToast = ana.locator('.toast', { hasText: 'Parcela 1/4' });
-await anaToast.waitFor({ timeout: 5000 });
-expectEq(norm(await anaToast.first().textContent()).includes(parcelToast), true, 'aviso da parcela na Ana');
-await ana.getByText('É a sua vez').waitFor();
-await ana.waitForTimeout(800); // espera a animação das notificações
+const anaSummary = await waitSummary(ana);
+const sumText = anaSummary.text;
+console.log('Resumo da Ana:', sumText);
+expect(sumText.includes(`Rodada ${first} começou`), `título do resumo: ${sumText}`);
+expect(sumText.includes(`Parcela 1/4 do empréstimo−${brl(parcels[0])}`), `parcela no resumo: ${sumText}`);
+expect(sumText.includes(`Saldo${brl(25500)} → ${brl(25500 - parcels[0])}`), `saldo no resumo: ${sumText}`);
+await ana.waitForTimeout(400);
 await shot(ana, 'parcelas-4-parcela-cobrada.png');
+await anaSummary.close();
+await ana.getByText('É a sua vez').waitFor();
+expectEq(await beto.locator('.toast', { hasText: 'Parcela 1/4' }).count(), 0, 'parcela da Ana sem aviso no Beto');
+expectEq((await beto.locator('.feed li').allTextContents()).some((x) => x.includes('Parcela 1/4')), false, 'parcela da Ana fora da mesa do Beto');
 const c = {
   anaCarteira: await wallet(ana),
   betoVeAna: await playerBal(beto, 'Ana'),

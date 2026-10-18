@@ -16,6 +16,16 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'pt-BR' });
 const ana = await context.newPage();
 const beto = await context.newPage();
+// Resumo da rodada ("Seu dinheiro"): quando aparece no meio de outra ação, guarda o texto e fecha
+const summaries = { ana: [], beto: [] };
+const summaryDialog = (page) => page.getByRole('dialog', { name: 'Resumo da rodada' });
+const autoSummary = (page) =>
+  page.addLocatorHandler(summaryDialog(page), async (d) => {
+    summaries[page === ana ? 'ana' : 'beto'].push((await d.textContent()).replace(/\s+/g, ' ').trim());
+    await d.getByRole('button', { name: 'OK, entendi' }).click();
+  });
+await autoSummary(ana);
+await autoSummary(beto);
 const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join(OUT, name), fullPage });
 const norm = (t) => t.replace(/\s+/g, ' ').trim();
 const num = (t) => Number(norm(t).replace(/[^\d-]/g, ''));
@@ -194,7 +204,9 @@ await ana.evaluate(() => window.scrollTo(0, 0));
 await calm(ana);
 await shot(ana, 'duplas-3-detencao.png');
 await front(beto);
-await beto.locator('.toast', { hasText: 'Ana tirou 3 duplas seguidas' }).waitFor({ timeout: 8000 });
+// o Beto vê a detenção na mesa (evento público: vai para o Jornal, sem aviso curto)
+await beto.locator('.feed li', { hasText: 'Ana tirou 3 duplas seguidas e foi para a detenção' }).waitFor({ timeout: 8000 });
+check((await beto.locator('.toast', { hasText: 'Ana tirou 3 duplas seguidas' }).count()) === 0, 'detenção sem aviso curto no Beto');
 await beto.getByText('É a sua vez').waitFor();
 
 // 7. Fora da vez, Ana resgata $ 100 da poupança

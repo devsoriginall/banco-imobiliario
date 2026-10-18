@@ -14,6 +14,29 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'pt-BR' });
 const ana = await context.newPage();
 const beto = await context.newPage();
+// Resumo da rodada ("Seu dinheiro"): quando aparece no meio de outra ação, guarda o texto e fecha
+// (os passos que conferem o resumo esperam por ele antes de tocar na tela)
+const summaries = { ana: [], beto: [] };
+const summaryDialog = (page) => page.getByRole('dialog', { name: 'Resumo da rodada' });
+const autoSummary = (page) =>
+  page.addLocatorHandler(summaryDialog(page), async (d) => {
+    summaries[page === ana ? 'ana' : 'beto'].push((await d.textContent()).replace(/\s+/g, ' ').trim());
+    await d.getByRole('button', { name: 'OK, entendi' }).click();
+  });
+/** Espera o resumo aparecer (sem fechar sozinho) e devolve o texto; `close()` fecha e volta a fechar sozinho. */
+const waitSummary = async (page, timeout = 8000) => {
+  await page.removeLocatorHandler(summaryDialog(page));
+  await summaryDialog(page).waitFor({ timeout });
+  return {
+    text: (await summaryDialog(page).textContent()).replace(/\s+/g, ' ').trim(),
+    close: async () => {
+      await summaryDialog(page).getByRole('button', { name: 'OK, entendi' }).click();
+      await autoSummary(page);
+    },
+  };
+};
+await autoSummary(ana);
+await autoSummary(beto);
 const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join(OUT, name), fullPage });
 const norm = (t) => t.replace(/\s+/g, ' ').trim();
 const text = async (loc) => norm(await loc.textContent());
@@ -152,6 +175,11 @@ await noToasts(beto);
 await irPara(beto, 20);
 await beto.getByRole('button', { name: 'Passar a vez' }).click();
 await front(ana);
+// virada do ano: primeiro o resumo da rodada (rendimento da poupança e o aviso do IR), depois a declaração
+const yearSummary = await waitSummary(ana);
+console.log('Resumo da virada do ano:', yearSummary.text);
+check(yearSummary.text.includes('Rodada 7 começou') && yearSummary.text.includes('O ano 1 fechou'), `resumo na virada do ano: ${yearSummary.text}`);
+await yearSummary.close();
 // renda de $ 6.060, isenção de $ 2.000, IR de 15% = $ 609
 await ana.getByRole('dialog', { name: 'Declaração do IR' }).waitFor();
 const tax = await text(ana.getByTestId('ir-tax'));
@@ -165,10 +193,11 @@ check(await ana.getByRole('button', { name: /Declarar e pagar/ }).isDisabled(), 
 await noToasts(ana);
 await shot(ana, 'ir-sem-saldo-1-levantar.png');
 await ana.getByRole('button', { name: 'Levantar dinheiro' }).click();
-await ana.getByTestId('ir-pending-banner').waitFor();
+await ana.getByTestId('need-ir').waitFor();
 await ana.evaluate(() => window.scrollTo(0, 0));
 await shot(ana, 'ir-sem-saldo-2-pendente.png');
-expectEq(await text(ana.getByTestId('ir-pending-banner')), 'Declaração do IR pendente: entregue antes de passar a vez.Abrir a declaração', 'aviso da declaração pendente');
+expectEq(await text(ana.getByTestId('need-ir')), 'Declaração do IR do ano 1Entregue antes de passar a vez.Declarar', 'faixa da declaração pendente');
+expectEq(await text(ana.getByTestId('need-turn')), 'Sua vezJogue os dados e toque na soma que tirou.', 'faixa da vez');
 await ana.getByRole('tab', { name: /Banco/ }).click();
 await ana.getByTestId('savings-card').getByRole('button', { name: 'Resgatar tudo' }).click();
 await ana.locator('.sheet').getByText('Resgate da poupança').first().waitFor();
@@ -177,7 +206,7 @@ await ana.getByRole('button', { name: 'Fechar' }).click();
 const extra = (await wallet(ana)).replace(/\D/g, '') - 24060;
 console.log('Rendimento da poupança no início da vez:', extra);
 await ana.getByRole('tab', { name: /Jogada/ }).click();
-await ana.getByTestId('ir-pending-banner').getByRole('button', { name: 'Abrir a declaração' }).click();
+await ana.getByTestId('need-ir').getByRole('button', { name: 'Declarar' }).click();
 await ana.getByRole('dialog', { name: 'Declaração do IR' }).waitFor();
 expectEq(await ana.getByRole('button', { name: 'Levantar dinheiro' }).count(), 0, 'sem "Levantar dinheiro" com saldo');
 await noToasts(ana);

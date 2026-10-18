@@ -14,6 +14,16 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'pt-BR' });
 const ana = await context.newPage();
 const beto = await context.newPage();
+// Resumo da rodada ("Seu dinheiro"): quando aparece no meio de outra ação, guarda o texto e fecha
+const summaries = { ana: [], beto: [] };
+const summaryDialog = (page) => page.getByRole('dialog', { name: 'Resumo da rodada' });
+const autoSummary = (page) =>
+  page.addLocatorHandler(summaryDialog(page), async (d) => {
+    summaries[page === ana ? 'ana' : 'beto'].push((await d.textContent()).replace(/\s+/g, ' ').trim());
+    await d.getByRole('button', { name: 'OK, entendi' }).click();
+  });
+await autoSummary(ana);
+await autoSummary(beto);
 const shot = (page, name, fullPage = false) => page.screenshot({ path: path.join(OUT, name), fullPage });
 const norm = (t) => t.replace(/\s+/g, ' ').trim(); // o app usa espaço não separável nos valores
 const wallet = async (page) => norm(await page.getByTestId('wallet-balance').textContent());
