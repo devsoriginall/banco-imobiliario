@@ -352,6 +352,8 @@ export interface Stock {
   decRound?: number;
   /** última decisão (para mostrar) */
   decision?: DecisionId;
+  /** dividendo anunciado na rodada antes do pagamento ("data com"): pago na rodada `round`, `perShare` por cota */
+  divAnnounced?: { round: number; perShare: number };
 }
 
 export interface GameState {

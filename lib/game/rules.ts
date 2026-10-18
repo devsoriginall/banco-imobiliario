@@ -292,6 +292,11 @@ export const dividendPerShare = (st: GameState, i: number, round = st.round) => 
 export const nextDividendRound = (round: number) => semesterStartFrom(round + 1);
 /** Esta rodada paga dividendos (início de semestre, a partir da rodada 4)? */
 export const paysDividends = (round: number) => round > 1 && isSemesterStart(round);
+/** Dividendo anunciado nesta rodada para o pagamento da próxima ("data com"), ou null se não há anúncio. */
+export function announcedDividend(st: GameState, i: number): { round: number; perShare: number } | null {
+  const a = stockOf(st, i).divAnnounced;
+  return a && a.round === st.round + 1 ? a : null;
+}
 /** Greve ativa (dividendo zero) nesta rodada. */
 export const onStrike = (st: GameState, i: number) => (stockOf(st, i).yieldMods ?? []).some((m) => m.zero && activeIn(m, st.round));
 /** Soma dos aumentos da taxa da casa ativos nesta rodada (em %). */
@@ -492,18 +497,37 @@ function marketRound(st: GameState, now: Date, first = false) {
     sk.price = clampPrice(sk.price * (1 + change));
     sk.hist = [...sk.hist, sk.price].slice(-STOCK.history);
   }
-  // 4. dividendos: só no início do semestre (rodadas 4, 7, 10…)
+  // 4. dividendos: só no início do semestre (rodadas 4, 7, 10…), o valor anunciado na rodada anterior
+  //    (salas antigas, sem anúncio: cotação atual × rendimento); greve ativa = suspenso. Depois, data ex: a cota cai o dividendo.
   for (const i of paysDividends(r) ? COMPANY_IDX : []) {
-    const each = dividendPerShare(st, i);
-    if (!each) continue;
+    const sk = ensureStock(st, i);
+    const ann = sk.divAnnounced;
+    delete sk.divAnnounced;
     const name = company(i).name;
+    if (onStrike(st, i)) {
+      if (ann?.round === r && ann.perShare > 0) log(st, `Dividendos da ${name}: suspenso por greve`, now);
+      continue;
+    }
+    const each = ann?.round === r ? ann.perShare : dividendPerShare(st, i);
+    if (!each) continue;
     const list: Transfer[] = Object.entries(sharesOf(st, i))
       .filter(([pid, q]) => q > 0 && findPlayer(st, pid) && !findPlayer(st, pid)!.out)
       .map(([pid, q]) => ({ from: BANK, to: pid, amount: q * each, reason: `Dividendos do semestre da ${name}: ${q} cota${q > 1 ? 's' : ''} × ${money(each)}`, kind: 'dividend' as const, space: i }));
-    if (!list.length) continue;
-    applyTransfers(st, list, now);
-    log(st, `Dividendos do semestre da ${name}: ${money(each)} por cota`, now);
+    if (list.length) {
+      applyTransfers(st, list, now);
+      log(st, `Dividendos do semestre da ${name}: ${money(each)} por cota`, now);
+    }
+    const before = sk.price;
+    sk.price = clampPrice(before - each);
+    sk.hist = [...sk.hist.slice(0, -1), sk.price];
+    if (sk.price !== before) log(st, `${name}: cota ajustada −${money(before - sk.price)} após os dividendos (data ex)`, now);
   }
+  // 5. anúncio ("data com"): na rodada antes do pagamento, guarda o dividendo por cota pela cotação de agora
+  if (paysDividends(r + 1))
+    for (const i of COMPANY_IDX) {
+      const sk = ensureStock(st, i);
+      sk.divAnnounced = { round: r + 1, perShare: dividendPerShare(st, i, r + 1) };
+    }
 }
 
 /** Texto de cada decisão da gerência para a tela da empresa. */

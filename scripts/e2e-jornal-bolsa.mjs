@@ -207,8 +207,10 @@ check((await ana.getByTestId('sell-card').count()) === 0, 'sem cotas para vender
 await ana.getByRole('tab', { name: /Extrato/ }).click();
 const txt = norm(await ana.getByTestId('tx-list').textContent());
 check(txt.includes('Dividendos do semestre da Vox Telecom: 1 cota'), 'dividendo no extrato');
-// o dividendo do semestre = cotação da rodada 4 × 9%: a venda foi na mesma rodada, pela mesma cotação
-if (!/[Dd]ividendo/.test(effect4)) check(div === Math.round(price2 * 0.09), `dividendo de 9% da cotação (${div} de ${price2})`);
+// o dividendo do semestre = cotação da rodada 4 × 9% (a sala pulou a rodada 3, sem anúncio guardado); depois do pagamento
+// a cota cai o dividendo (data ex, a $ 10): a venda foi na mesma rodada, pela cotação já ajustada
+const exOk = Array.from({ length: 96 }, (_, k) => 50 + k * 10).some((p) => Math.round(p * 0.09) === div && Math.max(50, Math.round((p - div) / 10) * 10) === price2);
+if (!/[Dd]ividendo/.test(effect4)) check(exOk, `dividendo de 9% da cotação e cota ajustada na data ex (${div}, venda a ${price2})`);
 else console.log('Manchete da rodada 4 mexe nos dividendos:', effect4);
 check(txt.includes('Venda de 1 cota da Vox Telecom à empresa'), 'venda no extrato');
 await shot(ana, 'bolsa-6-extrato.png');
