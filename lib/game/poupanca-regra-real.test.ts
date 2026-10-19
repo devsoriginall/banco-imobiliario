@@ -64,7 +64,7 @@ describe('poupança pela regra real', () => {
     expect(isIncome('rendimento')).toBe(false);
     const tx = st.tx.find((t) => t.kind === 'rendimento')!;
     expect(tx).toMatchObject({ from: 'bank', to: 'ana', amount: 100 });
-    expect(tx.reason.replace(/\s/g, ' ')).toBe('Rendimento da poupança: 1,03% de $ 10.000 (6,17% ao ano)');
+    expect(tx.reason.replace(/\s/g, ' ')).toBe('Rendimento da poupança: 1,03% na vez (6,17% ao ano)');
   });
 
   it('60 vezes com Selic de 15%: o saldo não chega a dobrar', () => {

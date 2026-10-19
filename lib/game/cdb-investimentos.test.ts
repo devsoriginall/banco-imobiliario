@@ -107,7 +107,7 @@ describe('aplicação, rendimento e resgate', () => {
     expect(incomeOf(pl(st, 'ana'))).toBe(110);
     const tx = st.tx.find((t) => t.kind === 'cdb')!;
     expect(tx).toMatchObject({ from: 'bank', to: 'ana', amount: 110, auto: true });
-    expect(n(tx.reason)).toBe('Rendimento do CDB · Banco Horizonte: 2,28% de $ 5.000 (115% do CDI)');
+    expect(n(tx.reason)).toBe('Rendimento do CDB · Banco Horizonte: 2,28% na vez (115% do CDI)');
     expect(st.feed.some((f) => n(f.text) === 'CDB de Ana rendeu $ 110')).toBe(true);
     // o rendimento da poupança continua isento; o do CDB conta
     expect(isIncome('cdb')).toBe(true);
@@ -146,7 +146,7 @@ describe('carência', () => {
     st = toAna(st, 2);
     const y = r10((5000 * 0.1488) / CALENDAR.roundsPerYear); // 124 → 120
     expect(cdbOf(pl(st, 'ana'), 'horizonte').locked).toEqual([{ amount: 5000 + y, until: 4 }]);
-    expect(n(st.tx.find((t) => t.kind === 'cdb')!.reason)).toBe('Rendimento do CDB com carência · Banco Horizonte: 2,48% de $ 5.000 (125% do CDI)');
+    expect(n(st.tx.find((t) => t.kind === 'cdb')!.reason)).toBe('Rendimento do CDB com carência · Banco Horizonte: 2,48% na vez (125% do CDI)');
     // na rodada 3 ainda está presa, mesmo fora da vez
     st = toAna(st, 3);
     expect(cdbLocks(pl(st, 'ana'), 'horizonte', st.round)).toHaveLength(1);

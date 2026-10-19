@@ -1461,7 +1461,7 @@ function passTurn(st: GameState, now: Date) {
 function savingsTurn(st: GameState, p: Player, now: Date) {
   const y = savingsYield(st, p);
   if (y <= 0) return;
-  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct2(savingsRate(st))} de ${money(savingsOf(p))} (${pct2(savingsAnnualRate(st))} ao ano)`, kind: 'rendimento' }], now);
+  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct2(savingsRate(st))} na vez (${pct2(savingsAnnualRate(st))} ao ano)`, kind: 'rendimento' }], now);
   // o rendimento entra na poupança, não na carteira
   p.balance -= y;
   p.savings = savingsOf(p) + y;
@@ -1481,7 +1481,7 @@ function cdbTurn(st: GameState, p: Player, now: Date) {
     const name = bankInfo(bank).name;
     const yf = cdbYieldOf(st, c.free, bank);
     if (yf > 0) {
-      applyTransfers(st, [{ from: BANK, to: p.id, amount: yf, reason: `Rendimento do CDB · ${name}: ${pct2(cdbTurnRate(st, bank))} de ${money(c.free)} (${pct(cdbCdiShare(bank))} do CDI)`, kind: 'cdb' }], now);
+      applyTransfers(st, [{ from: BANK, to: p.id, amount: yf, reason: `Rendimento do CDB · ${name}: ${pct2(cdbTurnRate(st, bank))} na vez (${pct(cdbCdiShare(bank))} do CDI)`, kind: 'cdb' }], now);
       p.balance -= yf;
       c.free += yf;
       total += yf;
@@ -1495,7 +1495,7 @@ function cdbTurn(st: GameState, p: Player, now: Date) {
       yl += y;
     }
     if (yl > 0) {
-      applyTransfers(st, [{ from: BANK, to: p.id, amount: yl, reason: `Rendimento do CDB com carência · ${name}: ${pct2(cdbTurnRate(st, bank, true))} de ${money(base)} (${pct(cdbCdiShare(bank, true))} do CDI)`, kind: 'cdb' }], now);
+      applyTransfers(st, [{ from: BANK, to: p.id, amount: yl, reason: `Rendimento do CDB com carência · ${name}: ${pct2(cdbTurnRate(st, bank, true))} na vez (${pct(cdbCdiShare(bank, true))} do CDI)`, kind: 'cdb' }], now);
       p.balance -= yl;
       total += yl;
     }
