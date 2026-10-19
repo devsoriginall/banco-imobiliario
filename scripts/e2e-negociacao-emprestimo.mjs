@@ -197,29 +197,33 @@ expectEq(await ana.getByRole('button', { name: /^(Casa|Hotel) \$/ }).count(), 0,
 await front(ana);
 await ana.waitForTimeout(4700); // deixa as notificações sumirem
 await ana.getByRole('tab', { name: /Banco/ }).click();
+// escolhe o banco: com score 500 o Órbita (score mínimo 600) fica fechado
+expectEq(await ana.locator('[data-testid="loan-banks"] [data-bank="orbita"]').isDisabled(), true, 'Órbita fechado com score Regular');
+await ana.locator('[data-testid="loan-banks"] [data-bank="aurora"]').click();
 await ana.getByRole('button', { name: /Mais .* no empréstimo/ }).click();
 await ana.getByRole('button', { name: /Mais .* no empréstimo/ }).click();
 expectEq(norm(await ana.getByTestId('loan-amount').textContent()), '$ 2.000', 'valor do empréstimo');
 const parse = (t) => Number(t.replace(/[^\d,]/g, '').replace(',', '.'));
-// a taxa da rodada é sorteada e ajustada pelo score: confere a simulação com a "sua taxa" (2x) + adicional de cada plano
+// a taxa da rodada é sorteada e ajustada pelo score: confere a simulação com a "sua taxa" (ao ano, no Aurora) pelo prazo de cada plano
 const baseRate = parse(norm(await ana.getByTestId('my-rate').textContent())) / 100;
 const sim = await ana.locator('.loan-sim-row').evaluateAll((rows) => rows.map((r) => ({ plan: r.dataset.plan, cells: [...r.children].map((c) => c.textContent.replace(/\s+/g, ' ').trim()) })));
 console.log('Simulação:', JSON.stringify(sim));
 expectEq(sim.map((r) => r.plan).join(','), 'x2,x3,x4,x5,unico', 'planos da simulação');
-const addOn = { x2: 0, x3: 0.02, x4: 0.04, x5: 0.06, unico: 0.08 };
+const addOn = { x2: 0, x3: 0, x4: 0, x5: 0, unico: 0.03 };
+const years = { x2: 1, x3: 1.5, x4: 2, x5: 2.5, unico: 1 };
 const parcelsOf = (total, k) => {
   const b = Math.round(total / k / 10) * 10;
   return [...Array(k - 1).fill(b), total - b * (k - 1)];
 };
 for (const r of sim) {
   const rate = Math.max(0.02, Math.round((baseRate + addOn[r.plan]) * 10000) / 10000);
-  const total = 2000 + Math.round(2000 * rate);
+  const total = 2000 + Math.round(2000 * rate * years[r.plan]);
   expectEq(r.cells[1], `${Math.round(rate * 1000) / 10}%`.replace('.', ','), `taxa do plano ${r.plan}`);
-  expectEq(r.cells[3], brl(total), `total do plano ${r.plan}`);
+  expect(r.cells[3].startsWith(brl(total)) && r.cells[3].includes(`juros ${brl(total - 2000)}`), `total do plano ${r.plan}: ${r.cells[3]}`);
   if (r.plan !== 'unico') expect(r.cells[2].startsWith(brl(parcelsOf(total, Number(r.plan[1]))[0])), `parcela do plano ${r.plan}: ${r.cells[2]}`);
 }
-const rate4 = Math.max(0.02, Math.round((baseRate + 0.04) * 10000) / 10000);
-const total = 2000 + Math.round(2000 * rate4);
+const rate4 = Math.max(0.02, baseRate);
+const total = 2000 + Math.round(2000 * rate4 * 2);
 const parcels = parcelsOf(total, 4);
 console.log('4x:', `${rate4 * 100}%`, 'total', brl(total), 'parcelas', parcels.map(brl).join(' + '));
 await ana.locator('.loan-sim-row[data-plan="x4"]').click();
@@ -284,7 +288,7 @@ const anaSummary = await waitSummary(ana);
 const sumText = anaSummary.text;
 console.log('Resumo da Ana:', sumText);
 expect(sumText.includes(`Rodada ${first} começou`), `título do resumo: ${sumText}`);
-expect(sumText.includes(`Parcela 1/4 do empréstimo−${brl(parcels[0])}`), `parcela no resumo: ${sumText}`);
+expect(sumText.includes(`Parcela 1/4 do empréstimo · Banco Aurora−${brl(parcels[0])}`), `parcela no resumo: ${sumText}`);
 expect(sumText.includes(`Saldo${brl(25500)} → ${brl(25500 - parcels[0])}`), `saldo no resumo: ${sumText}`);
 await ana.waitForTimeout(400);
 await shot(ana, 'parcelas-4-parcela-cobrada.png');

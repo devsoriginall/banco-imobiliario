@@ -195,6 +195,9 @@ export interface Trade {
   round: number;
 }
 
+/** Bancos que emprestam e financiam (ver BANKS). */
+export type BankId = 'aurora' | 'orbita' | 'horizonte';
+
 /** Planos de pagamento do empréstimo: parcelado em 2x a 5x (parcelas semestrais) ou pagamento único no 2º semestre. */
 export type LoanPlanId = 'x2' | 'x3' | 'x4' | 'x5' | 'unico';
 
@@ -213,8 +216,10 @@ export interface Loan {
   dueRound: number;
   /** rodada da 1ª cobrança semestral (salas antigas, com cobrança por rodada: ausente até a migração) */
   firstRound?: number;
-  /** taxa travada ao pegar (taxa da rodada + ajuste do score); salas antigas: LOAN.interest */
+  /** taxa travada ao pegar: ao ano nos empréstimos com `bank`; salas antigas (sem `bank`): taxa cobrada uma vez */
   rate?: number;
+  /** banco que emprestou (salas antigas: ausente = Banco Aurora, juros cobrados uma vez) */
+  bank?: BankId;
   /** rodada do último pagamento parcial que contou para o score */
   partRound?: number;
   /** plano escolhido (salas antigas: pagamento único) */
@@ -303,7 +308,9 @@ export type HeadlineEffect =
   /** taxa da casa da empresa +`pct`% por `rounds` rodadas */
   | { k: 'fee'; co: number; pct: number; rounds: number }
   /** taxa do banco nesta rodada ± `pp` pontos percentuais */
-  | { k: 'rate'; pp: number };
+  | { k: 'rate'; pp: number }
+  /** taxa de um banco (spread) ± `pp` pontos percentuais por `rounds` rodadas */
+  | { k: 'bank'; bank: BankId; pp: number; rounds: number };
 
 export interface Headline {
   cat: 'bairro' | 'empresa' | 'economia';
@@ -373,7 +380,7 @@ export interface Stock {
   /** última decisão (para mostrar) */
   decision?: DecisionId;
   /** dividendo anunciado na rodada antes do pagamento ("data com"): pago na rodada `round`, `perShare` por cota */
-  divAnnounced?: { round: number; perShare: number };
+  divAnnounced?: { round: number; perShare: number; fromLoans?: number };
 }
 
 export interface GameState {
@@ -431,6 +438,10 @@ export interface GameState {
   stocks?: Record<number, Stock>;
   /** financiamentos ativos, pelo índice do imóvel (salas antigas: nenhum) */
   fin?: Record<number, Financing>;
+  /** ajustes temporários da taxa de um banco (manchetes), em pontos percentuais */
+  bankMods?: (TimedMod & { bank: BankId; pp: number })[];
+  /** juros recebidos pelo Banco Aurora desde o último anúncio de dividendos (viram dividendo extra) */
+  auroraProfit?: number;
   /** versão do calendário da partida (salas antigas: ausente até a migração; ver migrateState) */
   cal?: 1;
 }
@@ -445,7 +456,7 @@ export type Action =
   | { type: 'roll'; sum: number; double?: boolean }
   /** escolher a casa direto ("corrigir casa": carta que move o peão, engano) */
   | { type: 'land'; idx: number }
-  | { type: 'buy'; finance?: LoanPlanId }
+  | { type: 'buy'; finance?: LoanPlanId; bank?: BankId }
   | { type: 'skipBuy' }
   | { type: 'payRent' }
   | { type: 'payFee'; dice: number }
@@ -460,7 +471,7 @@ export type Action =
   | { type: 'jailFail' }
   | { type: 'bail' }
   | { type: 'useCard' }
-  | { type: 'build'; idx: number; tier?: TierId; finance?: LoanPlanId }
+  | { type: 'build'; idx: number; tier?: TierId; finance?: LoanPlanId; bank?: BankId }
   | { type: 'sellHouse'; idx: number }
   | { type: 'mortgage'; idx: number }
   | { type: 'unmortgage'; idx: number }
@@ -471,7 +482,7 @@ export type Action =
   | { type: 'acceptTrade'; id: string }
   | { type: 'declineTrade'; id: string }
   | { type: 'cancelTrade'; id: string }
-  | { type: 'takeLoan'; amount: number; plan?: LoanPlanId }
+  | { type: 'takeLoan'; amount: number; plan?: LoanPlanId; bank?: BankId }
   | { type: 'payLoan'; amount: number }
   | { type: 'declareIR' }
   /** declarar menos que a renda real: `declared` de 0 até a renda − 1 (ausente = 0, sonega tudo) */
