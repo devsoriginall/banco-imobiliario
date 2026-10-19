@@ -54,7 +54,7 @@ export interface Player {
   builtRound?: number;
   /** rodada em que comprou cota da empresa pela última vez (uma cota por rodada) */
   shareRound?: number;
-  /** renda tributável do ano do calendário em curso (aluguéis, taxas de empresa, notícias, dividendos, poupança) */
+  /** renda tributável do ano do calendário em curso (aluguéis, taxas de empresa, notícias, dividendos; a poupança é isenta) */
   income?: number;
   /** obsoleto (salas antigas): voltas completas, quando o IR fechava a cada volta; não é mais usado */
   year?: number;
@@ -147,7 +147,7 @@ export type TxKind =
   | 'gestao'
   /** depósito e resgate da poupança */
   | 'poupanca'
-  /** rendimento da poupança (conta como renda) */
+  /** rendimento da poupança (isento de IR) */
   | 'rendimento'
   /** prêmio do seguro do imóvel */
   | 'seguro'

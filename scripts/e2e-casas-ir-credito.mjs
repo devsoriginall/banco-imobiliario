@@ -227,7 +227,7 @@ expectEq(await ana.getByRole('dialog', { name: 'Declaração do IR' }).count(), 
 const ir = { anaCarteira: await wallet(ana), renda: await text(ana.getByTestId('wallet-income')) };
 console.log('Depois do IR:', JSON.stringify(ir));
 expectEq(ir.anaCarteira, brl(25451 + extra), 'carteira depois do IR e do pró-labore'); // 24.060 − 609 + 2.000
-expectEq(ir.renda, `Renda no ano 2: ${brl(extra)}`, 'renda do novo ano (o rendimento da poupança já conta no ano 2)');
+expectEq(ir.renda, 'Renda no ano 2: $ 0', 'renda do novo ano (o rendimento da poupança é isento de IR)');
 
 // 6. Ana tira dupla e cai no próprio terreno: o site da imobiliária oferece a primeira casa em 3 padrões
 await ana.getByRole('button', { name: 'Tirei dupla: jogar de novo' }).click();

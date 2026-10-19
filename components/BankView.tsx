@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { BANK_RATES, CREDIT, CREDIT_BANDS, FINANCE, LOAN, LOAN_PLANS, SAVINGS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, planInfo, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
+import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, pct2, planInfo, savingsAnnualRate, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
 import type { Financing, Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
 import { PARCEL_RULE, planSummary, PlanTable } from './Finance';
@@ -58,7 +58,7 @@ function SavingsCard({ ui }: { ui: GameUi }) {
           </span>
           <h2>Poupança</h2>
         </span>
-        <span className="pill ok">{pct(savingsRate(state))} por vez</span>
+        <span className="pill ok">{pct2(savingsRate(state))} por vez · {pct2(savingsAnnualRate(state))} ao ano</span>
       </div>
       <div>
         <div className="muted" style={{ fontSize: 13 }}>
@@ -69,7 +69,7 @@ function SavingsCard({ ui }: { ui: GameUi }) {
         </div>
       </div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Rende metade da Taxa Selic no início de cada vez sua{saved > 0 ? `: ${money(nextYield)} com a taxa de agora` : ''}. O rendimento conta como renda no IR. Deposite na sua vez; resgate a qualquer momento, até para pagar um aluguel. Se o banco cobrar uma dívida, tira da poupança antes de penhorar.
+        Rende 0,5% ao mês (6,17% ao ano) quando a Selic passa de 8,5%; senão, 70% da Selic. A taxa do ano é dividida pelas 6 rodadas e paga no início de cada vez sua{saved > 0 ? `: ${money(nextYield)} com a taxa de agora` : ''}. Isento de IR. Deposite na sua vez; resgate a qualquer momento, até para pagar um aluguel. Se o banco cobrar uma dívida, tira da poupança antes de penhorar.
       </p>
       <div className="stack" style={{ gap: 8 }}>
         {myTurn ? (

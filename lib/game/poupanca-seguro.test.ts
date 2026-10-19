@@ -1,6 +1,6 @@
 // Poupança, seguro do imóvel, 3 duplas seguidas = detenção e financiamento na compra.
 import { describe, expect, it } from 'vitest';
-import { CREDIT, HEADLINES, INSURANCE } from './data';
+import { CALENDAR, CREDIT, HEADLINES, INSURANCE, SAVINGS } from './data';
 import {
   applyAction,
   canMortgage,
@@ -123,27 +123,30 @@ describe('poupança', () => {
     expect(() => act(st, 'ana', { type: 'withdraw', amount: 250 })).toThrow(/múltiplos/);
   });
 
-  it('rende metade da Taxa Selic no início de cada vez sua, a $ 10, e conta como renda', () => {
+  it('rende pela regra real (6,17% ao ano acima de 8,5%, senão 70% da taxa), dividido pelas rodadas do ano, a $ 10, isento de IR', () => {
     let st = game();
-    st = act(st, 'ana', { type: 'deposit', amount: 1000 });
+    st = act(st, 'ana', { type: 'deposit', amount: 6000 });
     st = pass(st); // vez do Beto: a Ana não rende
-    expect(savingsOf(pl(st, 'ana'))).toBe(1000);
+    expect(savingsOf(pl(st, 'ana'))).toBe(6000);
     st = pass(st); // rodada 2, vez da Ana
     const rate = st.bankRate!;
-    const y = Math.round((1000 * rate * 0.5) / 10) * 10;
+    const annual = rate > SAVINGS.selicThreshold ? SAVINGS.fixedAnnual : rate * SAVINGS.shareBelow;
+    const y = Math.round((6000 * annual) / CALENDAR.roundsPerYear / 10) * 10;
     expect(y).toBeGreaterThan(0);
-    expect(savingsOf(pl(st, 'ana'))).toBe(1000 + y);
-    expect(bal(st, 'ana')).toBe(24000); // o rendimento fica na poupança
-    expect(incomeOf(pl(st, 'ana'))).toBe(y);
+    expect(savingsOf(pl(st, 'ana'))).toBe(6000 + y);
+    expect(bal(st, 'ana')).toBe(19000); // o rendimento fica na poupança
+    expect(incomeOf(pl(st, 'ana'))).toBe(0); // isento de IR
     const tx = st.tx.find((t) => t.kind === 'rendimento')!;
     expect(tx).toMatchObject({ from: 'bank', to: 'ana', amount: y });
     expect(st.feed.some((f) => n(f.text) === `Poupança de Ana rendeu $ ${y}`)).toBe(true);
   });
 
-  it('rendimento arredondado a $ 10 (taxa de 15%: 7,5% de $ 1.300 = $ 97,50 → $ 100)', () => {
+  it('rendimento arredondado a $ 10 (taxa de 15%: 6,17% ÷ 6 de $ 9.000 = $ 92,55 → $ 90)', () => {
     const st = game();
     st.bankRate = 0.15;
-    pl(st, 'ana').savings = 1300;
+    pl(st, 'ana').savings = 9000;
+    expect(savingsYield(st, pl(st, 'ana'))).toBe(90);
+    pl(st, 'ana').savings = 9800; // $ 100,78 → $ 100
     expect(savingsYield(st, pl(st, 'ana'))).toBe(100);
     pl(st, 'ana').savings = 0;
     expect(savingsYield(st, pl(st, 'ana'))).toBe(0);
@@ -401,7 +404,7 @@ describe('financiamento na compra', () => {
     expect(st.props[BRASIL].owner).toBe('ana'); // o outro imóvel fica
     expect(pl(st, 'ana').out).toBe(false);
     expect(savingsOf(pl(st, 'ana'))).toBe(0); // a poupança foi usada primeiro
-    expect(bal(st, 'ana')).toBe(300 + 10); // carteira + poupança + rendimento de 5% de $ 200, nada cobrado
+    expect(bal(st, 'ana')).toBe(300); // carteira + poupança (o rendimento de $ 200 arredonda a $ 0), nada cobrado
     expect(creditOf(pl(st, 'ana'))).toBe(CREDIT.start + CREDIT.parcelPenhora);
     expect(st.feed.some((f) => f.important && f.text === 'Sem saldo para a parcela: o banco retomou a Av. 9 de Julho de Ana e cancelou o financiamento')).toBe(true);
   });

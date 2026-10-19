@@ -561,8 +561,14 @@ export const HEADLINES: Headline[] = [
 export const SAVINGS = {
   /** depósitos e resgates em múltiplos de (o resgate de tudo vale qualquer valor) */
   step: 100,
-  /** rendimento por vez = esta fração da Taxa Selic atual × saldo, arredondado a $ 10 */
-  rateShare: 0.5,
+  /**
+   * Regra real da poupança, por ano (um ano do jogo = CALENDAR.roundsPerYear rodadas, a taxa por vez é a anual
+   * dividida pelas rodadas do ano): com a taxa do banco acima de `selicThreshold`, rende `fixedAnnual`
+   * (0,5% ao mês); senão, `shareBelow` × a taxa do banco. Isento de IR.
+   */
+  selicThreshold: 0.085,
+  fixedAnnual: 0.0617,
+  shareBelow: 0.7,
 };
 
 /** Seguro do imóvel: prêmio sobre o valor atual (terreno + casas), cobre esta quantidade de rodadas. */

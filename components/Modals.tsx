@@ -269,7 +269,7 @@ export function IrModal({
       </div>
       <div className="lines" data-testid="ir-lines">
         <div>
-          <span>Renda do ano (aluguéis, empresas, notícias, poupança)</span>
+          <span>Renda do ano (aluguéis, empresas, notícias)</span>
           <span className="num">{money(ir.income)}</span>
         </div>
         <div>
@@ -373,7 +373,7 @@ export function IrExemptModal({ year, income, onClose }: { year: number; income:
       </div>
       <div className="lines" data-testid="ir-exempt-lines">
         <div>
-          <span>Renda do ano (aluguéis, empresas, notícias, poupança)</span>
+          <span>Renda do ano (aluguéis, empresas, notícias)</span>
           <span className="num">{money(income)}</span>
         </div>
         <div>

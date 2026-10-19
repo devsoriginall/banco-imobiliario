@@ -681,10 +681,17 @@ export const equity = (st: GameState, p: Player) => netWorth(st, p) - debtOf(st,
 // ---------- Poupança ----------
 
 export const savingsOf = (p: Player | undefined) => p?.savings ?? 0;
-/** Rendimento da poupança no início da vez: saldo × metade da Taxa Selic atual, arredondado a $ 10. */
-export const savingsYield = (st: GameState, p: Player) => round10(savingsOf(p) * bankRate(st) * SAVINGS.rateShare);
+/** Taxa anual da poupança (regra real): 6,17% ao ano com a taxa do banco acima de 8,5%; senão 70% dela. */
+export const savingsAnnualRate = (st: GameState) => {
+  const r = bankRate(st);
+  return r > SAVINGS.selicThreshold ? SAVINGS.fixedAnnual : r * SAVINGS.shareBelow;
+};
+/** Taxa da poupança por vez, sem arredondar: a anual dividida pelas rodadas do ano. */
+const savingsTurnRate = (st: GameState) => savingsAnnualRate(st) / CALENDAR.roundsPerYear;
+/** Rendimento da poupança no início da vez: saldo × taxa por vez, arredondado a $ 10. */
+export const savingsYield = (st: GameState, p: Player) => round10(savingsOf(p) * savingsTurnRate(st));
 /** Taxa da poupança por vez (fração). */
-export const savingsRate = (st: GameState) => round4(bankRate(st) * SAVINGS.rateShare);
+export const savingsRate = (st: GameState) => round4(savingsTurnRate(st));
 
 // ---------- Seguro do imóvel ----------
 
@@ -821,6 +828,8 @@ export const nextChargeRound = (l: Loan) => nextParcel(l)?.round ?? l.dueRound;
 export const loanRate = (l: Loan) => l.rate ?? (l.principal ? round4(l.interest / l.principal) : LOAN.interest);
 export const loanInterest = (principal: number, rate: number = LOAN.interest) => Math.round(principal * rate);
 export const pct = (r: number) => `${Math.round(r * 1000) / 10}%`.replace('.', ',');
+/** Porcentagem com até duas casas (ex.: 1,03%, 6,17%). */
+export const pct2 = (r: number) => `${Math.round(r * 10000) / 100}%`.replace('.', ',');
 /** Rodadas até o vencimento (0 = vence no início da vez nesta rodada). */
 export const loanRoundsLeft = (st: GameState, pid: string) => {
   const l = loanOf(st, pid);
@@ -915,8 +924,8 @@ const irReason = (year: number, income: number) => `Imposto de renda do ano ${ye
 const malhaReason = (year: number, partial: boolean) => `Malha fina: IR ${partial ? 'que faltou ' : ''}do ano ${year} + multa de ${Math.round(IR.fine * 100)}%`;
 /** Renda tributável do ano do calendário em curso. */
 export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
-/** Tipos de transação que contam como renda para o IR. */
-const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend', 'rendimento']);
+/** Tipos de transação que contam como renda para o IR (o rendimento da poupança é isento). */
+const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend']);
 export const isIncome = (kind: TxKind) => INCOME_KINDS.has(kind) || (IR.salaryIsIncome && kind === 'salary');
 
 const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
@@ -1302,11 +1311,11 @@ function passTurn(st: GameState, now: Date) {
   if (p.out && !st.winner) passTurn(st, now);
 }
 
-/** Rendimento da poupança no início da vez do jogador (conta como renda para o IR e fica na poupança). */
+/** Rendimento da poupança no início da vez do jogador (isento de IR; fica na poupança). */
 function savingsTurn(st: GameState, p: Player, now: Date) {
   const y = savingsYield(st, p);
   if (y <= 0) return;
-  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct(savingsRate(st))} de ${money(savingsOf(p))} (metade da Taxa Selic)`, kind: 'rendimento' }], now);
+  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct2(savingsRate(st))} de ${money(savingsOf(p))} (${pct2(savingsAnnualRate(st))} ao ano)`, kind: 'rendimento' }], now);
   // o rendimento entra na poupança, não na carteira
   p.balance -= y;
   p.savings = savingsOf(p) + y;
