@@ -207,7 +207,7 @@ export function Room({ code }: { code: string }) {
 }
 
 /** Pix que não vira aviso curto: automáticos (resumo da rodada), negociação e empréstimo (avisos e comprovantes próprios). */
-const QUIET = new Set<Tx['kind']>(['dividend', 'indenizacao', 'rendimento', 'penhora', 'poupanca', 'loan', 'loanpay', 'financiamento', 'trade']);
+const QUIET = new Set<Tx['kind']>(['dividend', 'indenizacao', 'rendimento', 'cdb', 'cdbmov', 'penhora', 'poupanca', 'loan', 'loanpay', 'financiamento', 'trade']);
 /** Eventos da mesa que ainda viram aviso para todos: falência, vencedor, desfazer e volta ao lobby. */
 const TOAST_FEED = /faliu e saiu do jogo|venceu a partida|desfez a última ação|voltou para o lobby/;
 

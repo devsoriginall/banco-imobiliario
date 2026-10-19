@@ -70,6 +70,15 @@ export interface Player {
   irLast?: IrResult;
   /** saldo da poupança (salas antigas: 0) */
   savings?: number;
+  /** CDBs por banco (salas antigas: nenhum) */
+  cdb?: Partial<Record<BankId, CdbPosition>>;
+}
+
+/** CDB em um banco: saldo livre (resgate a qualquer momento) e depósitos com carência. */
+export interface CdbPosition {
+  free: number;
+  /** depósitos com carência: valor (com os rendimentos) e rodada a partir da qual podem ser resgatados */
+  locked?: { amount: number; until: number }[];
 }
 
 export interface CreditEvent {
@@ -149,6 +158,10 @@ export type TxKind =
   | 'poupanca'
   /** rendimento da poupança (isento de IR) */
   | 'rendimento'
+  /** depósito e resgate do CDB */
+  | 'cdbmov'
+  /** rendimento do CDB (conta como renda para o IR) */
+  | 'cdb'
   /** prêmio do seguro do imóvel */
   | 'seguro'
   /** indenização do seguro */
@@ -489,6 +502,9 @@ export type Action =
   | { type: 'evadeIR'; declared?: number }
   | { type: 'deposit'; amount: number }
   | { type: 'withdraw'; amount: number }
+  /** CDB: depósito na sua vez (`lock`: com carência de um semestre) e resgate do saldo livre a qualquer momento */
+  | { type: 'cdbDeposit'; bank: BankId; amount: number; lock?: boolean }
+  | { type: 'cdbWithdraw'; bank: BankId; amount: number }
   | { type: 'insure'; idx: number }
   | { type: 'payFin'; idx: number };
 

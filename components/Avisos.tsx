@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { calendarText, currentPlayer, debtOf, findPlayer, isParcelado, loanOf, loanRoundsLeft, othersHoldShares, ownedBy, pname, savingsOf, shortPayers, transfersFor, tradesOf } from '@/lib/game/rules';
+import { calendarText, cdbFreeTotal, currentPlayer, debtOf, findPlayer, isParcelado, loanOf, loanRoundsLeft, othersHoldShares, ownedBy, pname, savingsOf, shortPayers, transfersFor, tradesOf } from '@/lib/game/rules';
 import type { Action, GameState, IrPending, Transfer } from '@/lib/game/types';
 import { markNow, roundSummary, type SummaryMark } from '@/lib/room/summary';
 import { Sheet } from './Modals';
@@ -88,8 +88,8 @@ export function needItems(
     out.push({
       key: 'short',
       title: `Falta dinheiro: ${money(short)} a pagar`,
-      text: savingsOf(mine) > 0 ? 'Resgate da poupança, hipoteque ou venda casas.' : 'Hipoteque ou venda casas, ou peça um empréstimo.',
-      button: { label: 'Levantar dinheiro', onClick: () => opts.goTab(savingsOf(mine) > 0 ? 'banco' : 'imoveis') },
+      text: savingsOf(mine) > 0 || cdbFreeTotal(mine, state.round) > 0 ? 'Resgate da poupança ou do CDB, hipoteque ou venda casas.' : 'Hipoteque ou venda casas, ou peça um empréstimo.',
+      button: { label: 'Levantar dinheiro', onClick: () => opts.goTab(savingsOf(mine) > 0 || cdbFreeTotal(mine, state.round) > 0 ? 'banco' : 'imoveis') },
     });
   return out;
 }

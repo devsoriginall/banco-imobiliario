@@ -1,5 +1,5 @@
 // Resumo da rodada ("Seu dinheiro"): o que mexeu no MEU dinheiro sem eu tocar em nada desde o último resumo
-// (dividendos, parcelas, cobranças, indenização, penhora, rendimento, o que os outros me pagaram), agrupado.
+// (dividendos, parcelas, cobranças, indenização, penhora, rendimento da poupança e do CDB, o que os outros me pagaram), agrupado.
 import { SPACES } from '@/lib/game/data';
 import { findPlayer, pname } from '@/lib/game/rules';
 import type { GameState, Tx, TxKind } from '@/lib/game/types';
@@ -15,7 +15,7 @@ export interface SummaryLine {
   text: string;
   /** valor positivo (o sinal vem da seção) */
   amount: number;
-  /** não mexe na carteira (rendimento que fica na poupança) */
+  /** não mexe na carteira (rendimento que fica na poupança ou no CDB) */
   savings?: boolean;
 }
 
@@ -68,6 +68,10 @@ function groupText(st: GameState, kind: TxKind, incoming: boolean, xs: Tx[]): st
       return 'Rendimento da poupança (fica na poupança)';
     case 'poupanca':
       return incoming ? 'Resgate da poupança pelo banco' : xs[0].reason;
+    case 'cdb':
+      return 'Rendimento do CDB (fica no CDB)';
+    case 'cdbmov':
+      return incoming ? 'Resgate do CDB pelo banco' : xs[0].reason;
     case 'rent':
       return n > 1 ? `${n} aluguéis ${incoming ? 'recebidos' : 'pagos'}` : `Aluguel da ${spaceName(xs[0])} · ${other(xs[0])}`;
     case 'fee':
@@ -92,7 +96,7 @@ export function moneyLines(st: GameState, me: string, txs: Tx[]): { entrou: Summ
   const groups = new Map<string, { kind: TxKind; incoming: boolean; xs: Tx[] }>();
   for (const t of txs) {
     const incoming = t.to === me;
-    const known: TxKind[] = ['dividend', 'financiamento', 'loanpay', 'indenizacao', 'penhora', 'rendimento', 'poupanca', 'rent', 'fee', 'news', 'salary', 'trade', 'bankrupt'];
+    const known: TxKind[] = ['dividend', 'financiamento', 'loanpay', 'indenizacao', 'penhora', 'rendimento', 'poupanca', 'cdb', 'cdbmov', 'rent', 'fee', 'news', 'salary', 'trade', 'bankrupt'];
     const key = `${incoming ? 'in' : 'out'}:${t.kind}${known.includes(t.kind) ? '' : `:${t.reason}`}`;
     const g = groups.get(key) ?? { kind: t.kind, incoming, xs: [] };
     g.xs.push(t);
@@ -103,7 +107,7 @@ export function moneyLines(st: GameState, me: string, txs: Tx[]): { entrou: Summ
   for (const g of groups.values()) {
     const amount = g.xs.reduce((a, t) => a + t.amount, 0);
     if (amount <= 0) continue;
-    const line: SummaryLine = { text: groupText(st, g.kind, g.incoming, g.xs), amount, ...(g.kind === 'rendimento' ? { savings: true } : {}) };
+    const line: SummaryLine = { text: groupText(st, g.kind, g.incoming, g.xs), amount, ...(g.kind === 'rendimento' || g.kind === 'cdb' ? { savings: true } : {}) };
     (g.incoming ? entrou : saiu).push(line);
   }
   const big = (a: SummaryLine, b: SummaryLine) => b.amount - a.amount;

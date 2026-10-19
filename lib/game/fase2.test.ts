@@ -195,10 +195,10 @@ describe('terreno na compra e três padrões de casa na construção', () => {
 
   it('penhora vende casas pela metade do custo do padrão e o terreno volta ao banco sem casa', () => {
     let st = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
-    st.bankRate = 0.07; // pagamento único: +3 pp ao ano, por 1 ano = 10%
+    st.bankRate = 0.07; // pagamento único: +5 pp do pessoal +3 pp ao ano, por 1 ano = 15%
     st = act(st, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(st.round === 6 && st.turn === 1)) st = pass(st); // vence na rodada 7
-    st.players[0].balance = 500; // 500 + 325 da casa + 500 do terreno cobre os 1.100
+    st.players[0].balance = 500; // 500 + 325 da casa + 500 do terreno cobre os 1.150
     st = pass(st);
     expect(st.tx.filter((t) => t.kind === 'penhora').map((t) => t.amount).reverse()).toEqual([325, 500]);
     expect(st.props[NOVE_JULHO]).toBeUndefined();
@@ -474,23 +474,25 @@ describe('score de crédito', () => {
     expect(() => act(ruim, 'ana', { type: 'takeLoan', amount: 1000 })).toThrow(/score de crédito \(150\)/);
   });
 
-  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), nunca abaixo da poupança + 1 ponto', () => {
+  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4) + 5 pp do pessoal, nunca abaixo do melhor CDB líquido + 1 ponto', () => {
     const st = game();
     st.bankRate = 0.12;
     const rate = (score: number) => {
       st.players[0].credit = score;
       return loanRateFor(st, 'ana');
     };
-    expect([rate(250), rate(500), rate(700), rate(900)]).toEqual([0.17, 0.12, 0.1, 0.08]);
+    // Excelente: 12 − 4 + 5 = 13%, mas o CDB do Horizonte com carência (125% do CDI de 11,9%) rende 15,82% em um ano
+    // (juros sobre juros), 13,45% sem o IR: o mínimo é 14,46%
+    expect([rate(250), rate(500), rate(700), rate(900)]).toEqual([0.22, 0.17, 0.15, 0.1446]);
     st.bankRate = 0.05;
-    // 5 − 4 = 1%, mas a poupança rende 3,5% ao ano (70% da Selic): o mínimo é 4,5%
-    expect(rate(900)).toBe(0.045);
+    // 5 − 4 = 1%, mas a poupança rende 3,5% ao ano (70% da Selic): o mínimo é 4,5%, + 5 pp do pessoal
+    expect(rate(900)).toBe(0.095);
     expect(rate(900)).toBeGreaterThan(BANK_RATES.minLoanRate);
   });
 
   it('quitar o empréstimo +80; pagamento parcial +10 (uma vez por rodada, a partir de $ 500)', () => {
     let st = game();
-    st.bankRate = 0.07; // pagamento único: +3 pp ao ano, por 1 ano = 10%
+    st.bankRate = 0.07; // pagamento único: +5 pp do pessoal +3 pp ao ano, por 1 ano = 15%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     st = act(st, 'ana', { type: 'payLoan', amount: 100 });
     expect(creditOf(pl(st, 'ana'))).toBe(500);
@@ -498,7 +500,7 @@ describe('score de crédito', () => {
     expect(creditOf(pl(st, 'ana'))).toBe(510);
     st = act(st, 'ana', { type: 'payLoan', amount: 500 });
     expect(creditOf(pl(st, 'ana'))).toBe(510);
-    st = act(st, 'ana', { type: 'payLoan', amount: 1100 });
+    st = act(st, 'ana', { type: 'payLoan', amount: 1200 });
     expect(st.loans!.ana).toBeUndefined();
     expect(creditOf(pl(st, 'ana'))).toBe(590);
     expect(pl(st, 'ana').creditLog![0]).toEqual({ delta: 80, reason: 'Empréstimo quitado antes do vencimento', round: 1 });
@@ -587,11 +589,11 @@ describe('Taxa Selic sorteada por semestre', () => {
 
   it('a taxa trava ao pegar; empréstimos existentes não mudam com a rodada', () => {
     let st = game();
-    st.bankRate = 0.09; // pagamento único: +3 pp ao ano, por 1 ano = 12%
+    st.bankRate = 0.09; // pagamento único: +5 pp do pessoal +3 pp ao ano, por 1 ano = 17%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
-    expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
+    expect(st.loans!.ana).toMatchObject({ rate: 0.17, interest: 340 });
     for (let k = 0; k < 4; k++) st = pass(st);
-    expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
+    expect(st.loans!.ana).toMatchObject({ rate: 0.17, interest: 340 });
   });
 
   it('a mudança da Selic vira aviso para todos', () => {
@@ -660,7 +662,8 @@ describe('salas antigas', () => {
     expect(rentOf(st, NOVE_JULHO)).toBe(60);
     expect(lotPrice(st, BRASIL)).toBe(750);
     expect(bankRate(st)).toBe(0.1);
-    expect(loanRateFor(st, 'ana')).toBe(0.1);
+    expect(loanRateFor(st, 'ana')).toBe(0.15); // 10% + 5 pp do empréstimo pessoal
+    expect(loanRateFor(st, 'ana', undefined, 'aurora', 'fin')).toBe(0.1);
     expect(loanLimit(st, 'ana')).toBe(13000);
     // a primeira rodada nova sorteia a taxa a partir do próprio estado
     const next = pass(pass(st));

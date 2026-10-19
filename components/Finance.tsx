@@ -170,7 +170,7 @@ export function FinanceChooser({
         </div>
       </div>
       <span className="muted" style={{ fontSize: 13 }}>
-        Mesmos planos e taxas do empréstimo, sem usar o seu limite: {PARCEL_RULE}. {RATE_RULE}. Enquanto não quitar, o imóvel fica alienado ao banco: não dá
+        Mesmos planos do empréstimo, sem usar o seu limite e sem os +{Math.round(LOAN.personalSpread * 100)} pp do empréstimo pessoal (o dinheiro vai direto para o imóvel): {PARCEL_RULE}. {RATE_RULE}. Enquanto não quitar, o imóvel fica alienado ao banco: não dá
         para negociar nem hipotecar. Se uma parcela não for paga, o banco retoma este imóvel.
       </span>
       {none ? (

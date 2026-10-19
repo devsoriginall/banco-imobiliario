@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { COMPANY_IDX, IR } from '@/lib/game/data';
 import { fmtTime, money } from '@/lib/game/format';
-import { creditOf, debtOf, equity, finDebtOf, findPlayer, incomeOf, irTax, pname, savingsOf, sharesOf, yearOf, yearRounds } from '@/lib/game/rules';
+import { cdbTotal, creditOf, debtOf, equity, finDebtOf, findPlayer, incomeOf, irTax, pname, savingsOf, sharesOf, yearOf, yearRounds } from '@/lib/game/rules';
 import type { GameState } from '@/lib/game/types';
 import { CreditPill } from './Credit';
 import { Avatar } from './ui';
@@ -110,6 +110,12 @@ export function ScoreView({ state }: { state: GameState }) {
                         {' '}
                         · poupança <span className="savings">{money(savingsOf(p))}</span>
                       </>
+                    ) : null}
+                    {cdbTotal(p) > 0 ? (
+                      <>
+                        {' '}
+                        · CDB <span className="savings">{money(cdbTotal(p))}</span>
+                      </>
                     ) : null}{' '}
                     · {props} imóveis · {cotas} cotas
                     {d > 0 ? ` · dívida ${money(d)}` : ''}
@@ -123,7 +129,7 @@ export function ScoreView({ state }: { state: GameState }) {
         })}
       </div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Patrimônio: dinheiro + poupança + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas pela cotação da Bolsa, menos a dívida com o banco (empréstimo e financiamentos).
+        Patrimônio: dinheiro + poupança + CDB (com carência também) + imóveis pelo preço da casa (menos a hipoteca) + casas pelo custo + cotas pela cotação da Bolsa, menos a dívida com o banco (empréstimo e financiamentos).
       </p>
     </div>
   );
