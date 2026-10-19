@@ -1,7 +1,7 @@
 // Bancos concorrentes: Aurora, Órbita e Horizonte no empréstimo e no financiamento, juros ao ano pelo prazo,
 // manchetes que mexem na taxa de um banco e o lucro do Banco Aurora no dividendo.
 import { describe, expect, it } from 'vitest';
-import { AURORA, BANKS, HEADLINES, SHARES } from './data';
+import { AURORA, BANK_RATES, BANKS, HEADLINES, SHARES } from './data';
 import {
   applyAction,
   auroraExtraPerShare,
@@ -20,6 +20,7 @@ import {
   loanRate,
   loanRateFor,
   newRoom,
+  savingsAnnualRate,
 } from './rules';
 import type { Action, GameState } from './types';
 
@@ -314,5 +315,20 @@ describe('financiamento com o banco escolhido', () => {
     st = act(st, 'ana', { type: 'endTurn', again: false });
     st = toAna(st, 4);
     expect(st.auroraProfit).toBe(40);
+  });
+});
+
+describe('pegar emprestado para aplicar na poupança não compensa', () => {
+  it('em qualquer Selic, banco e score, a taxa do empréstimo fica pelo menos 1 ponto acima da poupança', () => {
+    const st = game();
+    for (const selic of BANK_RATES.options) {
+      st.bankRate = selic;
+      for (const score of [100, 500, 700, 1000]) {
+        st.players[0].credit = score;
+        for (const bank of ['aurora', 'orbita', 'horizonte'] as const) {
+          expect(loanRateFor(st, 'ana', 'x2', bank)).toBeGreaterThanOrEqual(Math.round((savingsAnnualRate(st) + 0.01) * 10000) / 10000);
+        }
+      }
+    }
   });
 });

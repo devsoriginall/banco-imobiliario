@@ -790,12 +790,14 @@ export const bankSpread = (st: GameState, id: BankId) => round4(bankInfo(id).spr
 export const bankModTexts = (st: GameState, id: BankId) => bankModsOf(st, id).map((m) => `${m.why}: ${signed(m.pp)} ponto${Math.abs(m.pp) === 1 ? '' : 's'} ${untilText(st, m.until)}`);
 
 /**
- * Taxa ao ano de um empréstimo novo agora: Taxa Selic + spread do banco + ajuste do score, nunca abaixo do mínimo;
+ * Taxa ao ano de um empréstimo novo agora: Taxa Selic + spread do banco + ajuste do score, nunca abaixo do mínimo
+ * nem da poupança ao ano + BANK_RATES.overSavings;
  * pagamento único: + LOAN.unicoAddOn. Sem plano: a taxa dos parcelados (a "sua taxa" da aba Banco).
  */
 export function loanRateFor(st: GameState, pid: string, plan?: LoanPlanId, bank: BankId = 'aurora'): number {
   const band = creditBand(creditOf(findPlayer(st, pid)));
-  const base = Math.max(BANK_RATES.minLoanRate, round4(bankRate(st) + bankSpread(st, bank) + band.rateOffset));
+  const floor = Math.max(BANK_RATES.minLoanRate, round4(savingsAnnualRate(st) + BANK_RATES.overSavings));
+  const base = Math.max(floor, round4(bankRate(st) + bankSpread(st, bank) + band.rateOffset));
   return plan === 'unico' ? round4(base + LOAN.unicoAddOn) : base;
 }
 /** Prazo do plano em anos: semestres ÷ 2 (2x = 1 ano, 5x = 2,5 anos; único = LOAN.unicoSemesters semestres). */

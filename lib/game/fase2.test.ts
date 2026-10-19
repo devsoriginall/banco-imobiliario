@@ -474,7 +474,7 @@ describe('score de crédito', () => {
     expect(() => act(ruim, 'ana', { type: 'takeLoan', amount: 1000 })).toThrow(/score de crédito \(150\)/);
   });
 
-  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), mínimo 2%', () => {
+  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), nunca abaixo da poupança + 1 ponto', () => {
     const st = game();
     st.bankRate = 0.12;
     const rate = (score: number) => {
@@ -483,7 +483,9 @@ describe('score de crédito', () => {
     };
     expect([rate(250), rate(500), rate(700), rate(900)]).toEqual([0.17, 0.12, 0.1, 0.08]);
     st.bankRate = 0.05;
-    expect(rate(900)).toBe(BANK_RATES.minLoanRate);
+    // 5 − 4 = 1%, mas a poupança rende 3,5% ao ano (70% da Selic): o mínimo é 4,5%
+    expect(rate(900)).toBe(0.045);
+    expect(rate(900)).toBeGreaterThan(BANK_RATES.minLoanRate);
   });
 
   it('quitar o empréstimo +80; pagamento parcial +10 (uma vez por rodada, a partir de $ 500)', () => {

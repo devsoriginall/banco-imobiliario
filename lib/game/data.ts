@@ -227,7 +227,12 @@ export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name:
 ];
 
 /** Taxa Selic sorteada no início de cada semestre do calendário (sorteio uniforme) e a menor taxa possível de um empréstimo. */
-export const BANK_RATES = { options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2], minLoanRate: 0.02 };
+export const BANK_RATES = {
+  options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2],
+  minLoanRate: 0.02,
+  /** o empréstimo nunca cobra menos que a poupança ao ano + esta margem (pegar emprestado para aplicar não compensa) */
+  overSavings: 0.01,
+};
 
 // ---------- Jornal da Cidade e Bolsa ----------
 

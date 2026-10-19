@@ -1,6 +1,6 @@
 // Empréstimo com planos: parcelado em 2x a 5x (uma parcela por semestre do calendário) ou pagamento único no 2º semestre.
 import { describe, expect, it } from 'vitest';
-import { BANK_RATES, CALENDAR, CREDIT, LOAN_PLANS } from './data';
+import { CALENDAR, CREDIT, LOAN_PLANS } from './data';
 import {
   applyAction,
   calendarText,
@@ -92,15 +92,15 @@ describe('taxas dos planos', () => {
     expect(loanRateFor(st, 'ana')).toBe(0.1);
   });
 
-  it('o ajuste do score vale em cima do plano, com mínimo de 2%', () => {
+  it('o ajuste do score vale em cima do plano, nunca abaixo da poupança + 1 ponto', () => {
     const st = game();
     st.players[0].credit = 250; // Ruim: +5 pp
     expect(loanRateFor(st, 'ana', 'x4')).toBe(0.15);
     st.players[0].credit = 900; // Excelente: −4 pp
     st.bankRate = 0.05;
-    expect(loanRateFor(st, 'ana', 'x2')).toBe(BANK_RATES.minLoanRate); // 5 + 0 − 4 = 1% → 2%
-    expect(loanRateFor(st, 'ana', 'x3')).toBe(BANK_RATES.minLoanRate);
-    expect(loanRateFor(st, 'ana', 'unico')).toBe(0.05); // mínimo de 2% + 3 pp do único
+    expect(loanRateFor(st, 'ana', 'x2')).toBe(0.045); // 5 + 0 − 4 = 1% → poupança 3,5% + 1 ponto
+    expect(loanRateFor(st, 'ana', 'x3')).toBe(0.045);
+    expect(loanRateFor(st, 'ana', 'unico')).toBe(0.075); // mínimo de 4,5% + 3 pp do único
   });
 
   it('simulação das 5 opções para $ 2.000: juros pelo prazo (2x = 1 ano, 5x = 2,5 anos)', () => {
