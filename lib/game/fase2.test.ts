@@ -195,7 +195,7 @@ describe('terreno na compra e três padrões de casa na construção', () => {
 
   it('penhora vende casas pela metade do custo do padrão e o terreno volta ao banco sem casa', () => {
     let st = give(game(), 'ana', [NOVE_JULHO], 'alto', 1);
-    st.bankRate = 0.02; // pagamento único: +8 pp = 10%
+    st.bankRate = 0.07; // pagamento único: +3 pp ao ano, por 1 ano = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(st.round === 6 && st.turn === 1)) st = pass(st); // vence na rodada 7
     st.players[0].balance = 500; // 500 + 325 da casa + 500 do terreno cobre os 1.100
@@ -474,7 +474,7 @@ describe('score de crédito', () => {
     expect(() => act(ruim, 'ana', { type: 'takeLoan', amount: 1000 })).toThrow(/score de crédito \(150\)/);
   });
 
-  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), mínimo 2%', () => {
+  it('taxa do empréstimo = Taxa Selic + ajuste do score (Ruim +5, Bom −2, Excelente −4), nunca abaixo da poupança + 1 ponto', () => {
     const st = game();
     st.bankRate = 0.12;
     const rate = (score: number) => {
@@ -483,12 +483,14 @@ describe('score de crédito', () => {
     };
     expect([rate(250), rate(500), rate(700), rate(900)]).toEqual([0.17, 0.12, 0.1, 0.08]);
     st.bankRate = 0.05;
-    expect(rate(900)).toBe(BANK_RATES.minLoanRate);
+    // 5 − 4 = 1%, mas a poupança rende 3,5% ao ano (70% da Selic): o mínimo é 4,5%
+    expect(rate(900)).toBe(0.045);
+    expect(rate(900)).toBeGreaterThan(BANK_RATES.minLoanRate);
   });
 
   it('quitar o empréstimo +80; pagamento parcial +10 (uma vez por rodada, a partir de $ 500)', () => {
     let st = game();
-    st.bankRate = 0.02; // pagamento único: +8 pp = 10%
+    st.bankRate = 0.07; // pagamento único: +3 pp ao ano, por 1 ano = 10%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     st = act(st, 'ana', { type: 'payLoan', amount: 100 });
     expect(creditOf(pl(st, 'ana'))).toBe(500);
@@ -509,7 +511,7 @@ describe('score de crédito', () => {
     expect(creditOf(pl(ok, 'ana'))).toBe(580);
 
     let bad = give(game(), 'ana', [PAULISTA]);
-    bad.bankRate = 0.02;
+    bad.bankRate = 0.07;
     bad = act(bad, 'ana', { type: 'takeLoan', amount: 1000 });
     while (!(bad.round === 6 && bad.turn === 1)) bad = pass(bad);
     bad.players[0].balance = 500;
@@ -585,7 +587,7 @@ describe('Taxa Selic sorteada por semestre', () => {
 
   it('a taxa trava ao pegar; empréstimos existentes não mudam com a rodada', () => {
     let st = game();
-    st.bankRate = 0.04; // pagamento único: +8 pp = 12%
+    st.bankRate = 0.09; // pagamento único: +3 pp ao ano, por 1 ano = 12%
     st = act(st, 'ana', { type: 'takeLoan', amount: 2000 });
     expect(st.loans!.ana).toMatchObject({ rate: 0.12, interest: 240 });
     for (let k = 0; k < 4; k++) st = pass(st);

@@ -1,6 +1,6 @@
 // Empréstimo com planos: parcelado em 2x a 5x (uma parcela por semestre do calendário) ou pagamento único no 2º semestre.
 import { describe, expect, it } from 'vitest';
-import { BANK_RATES, CALENDAR, CREDIT, LOAN_PLANS } from './data';
+import { CALENDAR, CREDIT, LOAN_PLANS } from './data';
 import {
   applyAction,
   calendarText,
@@ -85,32 +85,32 @@ describe('calendário da partida', () => {
 });
 
 describe('taxas dos planos', () => {
-  it('Taxa Selic + adicional do plano (2x +0, 3x +2, 4x +4, 5x +6, único +8 pp)', () => {
+  it('taxa ao ano = Taxa Selic + spread do banco; o pagamento único soma 3 pp de risco', () => {
     const st = game();
-    expect(LOAN_PLANS.map((p) => loanRateFor(st, 'ana', p.id))).toEqual([0.1, 0.12, 0.14, 0.16, 0.18]);
+    expect(LOAN_PLANS.map((p) => loanRateFor(st, 'ana', p.id))).toEqual([0.1, 0.1, 0.1, 0.1, 0.13]);
     // sem plano: a "sua taxa" da aba Banco, igual ao 2x
     expect(loanRateFor(st, 'ana')).toBe(0.1);
   });
 
-  it('o ajuste do score vale em cima do plano, com mínimo de 2%', () => {
+  it('o ajuste do score vale em cima do plano, nunca abaixo da poupança + 1 ponto', () => {
     const st = game();
     st.players[0].credit = 250; // Ruim: +5 pp
-    expect(loanRateFor(st, 'ana', 'x4')).toBe(0.19);
+    expect(loanRateFor(st, 'ana', 'x4')).toBe(0.15);
     st.players[0].credit = 900; // Excelente: −4 pp
     st.bankRate = 0.05;
-    expect(loanRateFor(st, 'ana', 'x2')).toBe(BANK_RATES.minLoanRate); // 5 + 0 − 4 = 1% → 2%
-    expect(loanRateFor(st, 'ana', 'x3')).toBe(0.03);
-    expect(loanRateFor(st, 'ana', 'unico')).toBe(0.09);
+    expect(loanRateFor(st, 'ana', 'x2')).toBe(0.045); // 5 + 0 − 4 = 1% → poupança 3,5% + 1 ponto
+    expect(loanRateFor(st, 'ana', 'x3')).toBe(0.045);
+    expect(loanRateFor(st, 'ana', 'unico')).toBe(0.075); // mínimo de 4,5% + 3 pp do único
   });
 
-  it('simulação das 5 opções para $ 2.000', () => {
+  it('simulação das 5 opções para $ 2.000: juros pelo prazo (2x = 1 ano, 5x = 2,5 anos)', () => {
     const sim = loanOptions(game(), 'ana', 2000);
     expect(sim.map((o) => [o.plan, o.rate, o.parcels, o.total, o.rounds])).toEqual([
       ['x2', 0.1, [1100, 1100], 2200, [4, 7]],
-      ['x3', 0.12, [750, 750, 740], 2240, [4, 7, 10]],
-      ['x4', 0.14, [570, 570, 570, 570], 2280, [4, 7, 10, 13]],
-      ['x5', 0.16, [460, 460, 460, 460, 480], 2320, [4, 7, 10, 13, 16]],
-      ['unico', 0.18, [2360], 2360, [7]],
+      ['x3', 0.1, [770, 770, 760], 2300, [4, 7, 10]],
+      ['x4', 0.1, [600, 600, 600, 600], 2400, [4, 7, 10, 13]],
+      ['x5', 0.1, [500, 500, 500, 500, 500], 2500, [4, 7, 10, 13, 16]],
+      ['unico', 0.13, [2260], 2260, [7]],
     ]);
     expect(sim.map((o) => o.dueRound)).toEqual([7, 10, 13, 16, 7]);
   });
@@ -131,10 +131,10 @@ describe('parcelas', () => {
 
   it('pega em 4x: guarda o plano, as parcelas e a taxa travada', () => {
     const st = act(game(), 'ana', { type: 'takeLoan', amount: 2000, plan: 'x4' });
-    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 280, paid: 0, takenRound: 1, dueRound: 13, firstRound: 4, rate: 0.14, plan: 'x4', parcels: [570, 570, 570, 570], parcelsPaid: 0 });
+    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 400, paid: 0, takenRound: 1, dueRound: 13, firstRound: 4, rate: 0.1, plan: 'x4', parcels: [600, 600, 600, 600], parcelsPaid: 0, bank: 'aurora' });
     expect(bal(st, 'ana')).toBe(27000);
-    expect(nextParcel(st.loans!.ana)).toEqual({ n: 1, of: 4, amount: 570, round: 4 });
-    expect(n(st.tx[0].reason)).toBe('Empréstimo do banco em 4x a 14%: 4 parcelas semestrais de $ 570, rodadas 4 a 13 (total $ 2.280)');
+    expect(nextParcel(st.loans!.ana)).toEqual({ n: 1, of: 4, amount: 600, round: 4 });
+    expect(n(st.tx[0].reason)).toBe('Empréstimo do Banco Aurora em 4x a 10% ao ano: 4 parcelas semestrais de $ 600, rodadas 4 a 13 (juros $ 400, total $ 2.400)');
     expect(() => act(game(), 'ana', { type: 'takeLoan', amount: 2000, plan: 'x9' as never })).toThrow(/Plano/);
   });
 
@@ -166,10 +166,10 @@ describe('parcelas', () => {
     expect(st.loans!.ana.parcelsPaid).toBe(0);
     st = pass(st); // vez da Ana na rodada 4 (início do 2º semestre do ano 1): parcela 1
     expect(st.round).toBe(4);
-    expect(bal(st, 'ana')).toBe(27000 - 750);
-    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 750, kind: 'loanpay', reason: 'Parcela 1/3 do empréstimo' });
-    expect(st.feed.find((f) => n(f.text) === 'Parcela 1/3 do empréstimo de Ana: $ 750')).toMatchObject({ important: true });
-    expect(debtOf(st, 'ana')).toBe(1490);
+    expect(bal(st, 'ana')).toBe(27000 - 770);
+    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 770, kind: 'loanpay', reason: 'Parcela 1/3 do empréstimo · Banco Aurora' });
+    expect(st.feed.find((f) => n(f.text) === 'Parcela 1/3 do empréstimo de Ana: $ 770')).toMatchObject({ important: true });
+    expect(debtOf(st, 'ana')).toBe(1530);
     // a parcela não é cobrada de novo na mesma rodada (dupla não chama a próxima vez)
     st = act(act(st, 'ana', { type: 'land', idx: FERIADO }), 'ana', { type: 'endTurn', again: true });
     expect(st.loans!.ana.parcelsPaid).toBe(1);
@@ -180,8 +180,8 @@ describe('parcelas', () => {
     expect(st.loans!.ana.parcelsPaid).toBe(2);
     st = toAna(st, 10);
     expect(st.loans!.ana).toBeUndefined();
-    expect(st.tx[0]).toMatchObject({ amount: 740, reason: 'Parcela 3/3 do empréstimo' });
-    expect(bal(st, 'ana')).toBe(27000 - 2240);
+    expect(st.tx[0]).toMatchObject({ amount: 760, reason: 'Parcela 3/3 do empréstimo · Banco Aurora' });
+    expect(bal(st, 'ana')).toBe(27000 - 2300);
     expect(st.tx.filter((t) => t.kind === 'loanpay')).toHaveLength(3);
   });
 
@@ -211,7 +211,7 @@ describe('parcelas', () => {
     expect(st.props[NOVE_JULHO]).toMatchObject({ owner: 'ana', houses: 0 });
     expect(st.props[PAULISTA]).toMatchObject({ owner: 'ana', houses: 0 });
     expect(bal(st, 'ana')).toBe(400);
-    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 1100, reason: 'Parcela 1/2 do empréstimo' });
+    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 1100, reason: 'Parcela 1/2 do empréstimo · Banco Aurora' });
     expect(st.loans!.ana).toMatchObject({ parcelsPaid: 1, paid: 1100, penhora: true });
     expect(creditOf(pl(st, 'ana'))).toBe(400);
     expect(pl(st, 'ana').creditLog![0].reason).toBe('Parcela 1/2 do empréstimo com penhora');
@@ -232,7 +232,7 @@ describe('parcelas', () => {
     expect(st.loans!.ana).toBeUndefined();
     expect(st.props[BEIRA_MAR]).toBeUndefined();
     expect(st.winner).toBe('beto');
-    expect(st.tx.find((t) => t.kind === 'loanpay')).toMatchObject({ amount: 600, reason: 'Parcela 1/2 do empréstimo' });
+    expect(st.tx.find((t) => t.kind === 'loanpay')).toMatchObject({ amount: 600, reason: 'Parcela 1/2 do empréstimo · Banco Aurora' });
   });
 
   it('com 3 jogadores, quem faliu na parcela perde a vez e o jogo segue', () => {
@@ -248,12 +248,12 @@ describe('parcelas', () => {
   it('quitação antecipada: paga todo o saldo restante, sem desconto de juros, +30', () => {
     let st = act(game(), 'ana', { type: 'takeLoan', amount: 2000, plan: 'x4' });
     st = toAna(st, 4);
-    expect(debtOf(st, 'ana')).toBe(1710);
-    expect(() => act(st, 'ana', { type: 'payLoan', amount: 570 })).toThrow(/não há pagamento parcial/);
-    st = act(st, 'ana', { type: 'payLoan', amount: 1710 });
+    expect(debtOf(st, 'ana')).toBe(1800);
+    expect(() => act(st, 'ana', { type: 'payLoan', amount: 600 })).toThrow(/não há pagamento parcial/);
+    st = act(st, 'ana', { type: 'payLoan', amount: 1800 });
     expect(st.loans!.ana).toBeUndefined();
-    expect(bal(st, 'ana')).toBe(27000 - 2280);
-    expect(st.tx[0]).toMatchObject({ amount: 1710, kind: 'loanpay', reason: 'Quitação antecipada do empréstimo em 4x (3 parcelas restantes)' });
+    expect(bal(st, 'ana')).toBe(27000 - 2400);
+    expect(st.tx[0]).toMatchObject({ amount: 1800, kind: 'loanpay', reason: 'Quitação antecipada do empréstimo em 4x (3 parcelas restantes) · Banco Aurora' });
     expect(creditOf(pl(st, 'ana'))).toBe(500 + 10 + 30);
   });
 
@@ -271,15 +271,15 @@ describe('parcelas', () => {
 describe('pagamento único', () => {
   it('sem plano na ação é pagamento único: tudo no 2º início de semestre (rodada 7), pagamento parcial continua valendo', () => {
     let st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
-    expect(st.loans!.ana).toMatchObject({ plan: 'unico', rate: 0.18, interest: 360, firstRound: 4, dueRound: 7 });
+    expect(st.loans!.ana).toMatchObject({ plan: 'unico', rate: 0.13, interest: 260, firstRound: 4, dueRound: 7 });
     expect(isParcelado(st.loans!.ana)).toBe(false);
     expect(nextParcel(st.loans!.ana)).toBeNull();
     st = act(st, 'ana', { type: 'payLoan', amount: 500 });
-    expect(debtOf(st, 'ana')).toBe(1860);
+    expect(debtOf(st, 'ana')).toBe(1760);
     st = toAna(st, 4);
-    expect(debtOf(st, 'ana')).toBe(1860); // o 1º início de semestre não cobra nada
+    expect(debtOf(st, 'ana')).toBe(1760); // o 1º início de semestre não cobra nada
     st = toAna(st, 6);
-    expect(debtOf(st, 'ana')).toBe(1860);
+    expect(debtOf(st, 'ana')).toBe(1760);
     st = toAna(st, 7);
     expect(st.loans!.ana).toBeUndefined();
     expect(pl(st, 'ana').creditLog![0]).toMatchObject({ delta: CREDIT.loanPaid, reason: 'Empréstimo pago no vencimento' });

@@ -309,6 +309,15 @@ a{color:inherit}
 .loan-sim-row[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .loan-sim-row .plan{display:flex;flex-direction:column}
 .loan-sim-row small{display:block;font-size:11px;color:var(--muted);font-weight:400}
+.bank-pick{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.bank-opt{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;min-height:76px;padding:8px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);color:var(--fg);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.bank-opt b{font-size:14px}
+.bank-opt .num{font-weight:600}
+.bank-opt small{font-size:11px;color:var(--muted);line-height:1.25}
+.bank-opt[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.bank-opt:disabled{opacity:.55;cursor:not-allowed}
+.bank-opt .promo{color:var(--money)}
+.bank-opt .alta{color:var(--bad)}
 .parcel-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px}
 .parcel-list li{display:flex;justify-content:space-between;gap:12px;padding:6px 10px;border-radius:10px;background:var(--surface-2)}
 .parcel-list li span{color:var(--muted)}

@@ -297,37 +297,37 @@ describe('financiamento na compra', () => {
     const opts = financeOptions(st, 'ana', 1000);
     expect(opts.map((o) => o.plan)).toEqual(['x2', 'x3', 'x4', 'x5', 'unico']);
     const x4 = opts.find((o) => o.plan === 'x4')!;
-    expect(x4.rate).toBe(0.14);
-    expect(x4.total).toBe(800 + 112);
+    expect(x4.rate).toBe(0.1);
+    expect(x4.total).toBe(800 + 160); // 10% ao ano por 2 anos
     const pix = transfersFor(st, { type: 'buy', finance: 'x4' }, 'ana');
     expect(pix).toHaveLength(1);
     expect(pix[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 200, kind: 'financiamento', space: NOVE_JULHO });
-    expect(n(pix[0].reason)).toContain('financia $ 800 a 14%');
+    expect(n(pix[0].reason)).toContain('Banco Aurora financia $ 800 a 10% ao ano (juros $ 160)');
     st = act(st, 'ana', { type: 'buy', finance: 'x4' });
     expect(bal(st, 'ana')).toBe(24800);
     expect(st.props[NOVE_JULHO].owner).toBe('ana');
     const f = finOf(st, NOVE_JULHO)!;
-    expect(f).toMatchObject({ owner: 'ana', what: 'terreno', price: 1000, entrada: 200, principal: 800, interest: 112, plan: 'x4', parcels: [230, 230, 230, 222], parcelsPaid: 0 });
-    expect(finBadge(f)).toBe('Financiado · faltam 4 parcelas');
+    expect(f).toMatchObject({ owner: 'ana', what: 'terreno', price: 1000, entrada: 200, principal: 800, interest: 160, plan: 'x4', parcels: [240, 240, 240, 240], parcelsPaid: 0, bank: 'aurora' });
+    expect(finBadge(f)).toBe('Financiado · Aurora · faltam 4 parcelas');
     // a dívida sai do patrimônio líquido; o empréstimo continua disponível ao mesmo tempo
-    expect(finDebtOf(st, 'ana')).toBe(912);
-    expect(equity(st, pl(st, 'ana'))).toBe(24800 + 1000 - 912);
+    expect(finDebtOf(st, 'ana')).toBe(960);
+    expect(equity(st, pl(st, 'ana'))).toBe(24800 + 1000 - 960);
     expect(f).toMatchObject({ takenRound: 1, firstRound: 4, dueRound: 13 });
-    expect(n(pix[0].reason)).toContain('4 parcelas semestrais (3 de $ 230 e 1 de $ 222), rodadas 4 a 13');
+    expect(n(pix[0].reason)).toContain('4 parcelas semestrais de $ 240, rodadas 4 a 13');
     st = act(st, 'ana', { type: 'endTurn', again: false });
     st = toAna(st, 3); // nada nas rodadas 2 e 3: a 1ª parcela é no semestre seguinte
     expect(bal(st, 'ana')).toBe(24800);
     st = toAna(st, 4); // rodada 4: parcela 1
-    expect(bal(st, 'ana')).toBe(24800 - 230);
+    expect(bal(st, 'ana')).toBe(24800 - 240);
     expect(finOf(st, NOVE_JULHO)!.parcelsPaid).toBe(1);
-    expect(st.tx.some((t) => t.reason === 'Parcela 1/4 do financiamento da Av. 9 de Julho' && t.amount === 230)).toBe(true);
+    expect(st.tx.some((t) => t.reason === 'Parcela 1/4 do financiamento da Av. 9 de Julho · Banco Aurora' && t.amount === 240)).toBe(true);
     expect(creditOf(pl(st, 'ana'))).toBe(CREDIT.start + CREDIT.parcelPaid);
     // até a última: quitado e o imóvel deixa de estar alienado
     st = toAna(st, 10);
     expect(finOf(st, NOVE_JULHO)!.parcelsPaid).toBe(3);
     st = toAna(st, 13);
     expect(finOf(st, NOVE_JULHO)).toBeNull();
-    expect(bal(st, 'ana')).toBe(24800 - 912);
+    expect(bal(st, 'ana')).toBe(24800 - 960);
     expect(st.props[NOVE_JULHO].owner).toBe('ana');
     expect(creditOf(pl(st, 'ana'))).toBe(CREDIT.start + 4 * CREDIT.parcelPaid + CREDIT.parcelLoanPaid);
   });
@@ -368,7 +368,7 @@ describe('financiamento na compra', () => {
     const f = finOf(st, NOVE_JULHO)!;
     expect(f).toMatchObject({ what: 'casa', price: 400, entrada: 80, principal: 320, plan: 'unico', firstRound: 4, dueRound: 7 });
     expect(f.parcels).toBeUndefined();
-    expect(finBadge(f)).toBe('Financiado · falta 1 parcela');
+    expect(finBadge(f)).toBe('Financiado · Aurora · falta 1 parcela');
     expect(bal(st, 'ana')).toBe(24920);
   });
 

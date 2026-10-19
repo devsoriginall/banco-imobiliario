@@ -119,6 +119,8 @@ check(entrada === Math.round((lotPrice * 0.2) / 10) * 10, 'entrada de 20% do pre
 await finBtn.click();
 await ana.getByTestId('finance-chooser').waitFor();
 check((await text(ana.getByTestId('finance-entrada'))) === brl(entrada), 'entrada no simulador');
+// escolhe o banco (Banco Aurora) e depois o plano
+await ana.locator('[data-testid="finance-banks"] [data-bank="aurora"]').click();
 await ana.locator('[data-testid="finance-sim"] .loan-sim-row[data-plan="x4"]').click();
 await ana.getByTestId('finance-summary').waitFor();
 const finSummary = await text(ana.getByTestId('finance-summary'));
@@ -152,7 +154,7 @@ const premium = num((await insureBtn.textContent()).replace('Contratar seguro', 
 console.log('Prêmio do seguro:', brl(premium));
 check(premium === Math.round((lotPrice * 0.05) / 10) * 10, 'prêmio de 5% do valor');
 check((await ana.getByRole('button', { name: /^Hipotecar/ }).count()) === 0, 'imóvel financiado sem hipoteca');
-check((await text(ana.getByTestId(`financed-${NOVE_JULHO}`))) === 'Financiado · faltam 4 parcelas', 'selo do financiamento');
+check((await text(ana.getByTestId(`financed-${NOVE_JULHO}`))) === 'Financiado · Aurora · faltam 4 parcelas', 'selo do financiamento');
 const beforeIns = await wallet(ana);
 await insureBtn.click();
 await ana.locator('.sheet').getByText('Contratar seguro').first().waitFor();

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { GROUPS, MAX_DOUBLES, NEWS, SPACES, TIER_IDS } from '@/lib/game/data';
+import { BANK_IDS, GROUPS, MAX_DOUBLES, NEWS, SPACES, TIER_IDS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import { houseListing, listingFacts } from '@/lib/game/listings';
 import {
@@ -557,7 +557,7 @@ function LandedView({ ui }: { ui: GameUi }) {
             </span>
             {mine ? (
               financing ? (
-                <FinanceChooser ui={ui} price={price} what={`o terreno da ${s.name}`} action={(plan) => ({ type: 'buy', finance: plan })} onCancel={() => setFinancing(false)} />
+                <FinanceChooser ui={ui} price={price} what={`o terreno da ${s.name}`} action={(plan, bank) => ({ type: 'buy', finance: plan, bank })} onCancel={() => setFinancing(false)} />
               ) : (
                 <>
                   <div className="row">
@@ -571,7 +571,7 @@ function LandedView({ ui }: { ui: GameUi }) {
                       Não comprar
                     </button>
                   </div>
-                  {p.balance < price && <div className="banner warn">Saldo insuficiente para o terreno à vista.{financeBlock(state, me, price) ? '' : ' Dá para financiar com 20% de entrada.'}</div>}
+                  {p.balance < price && <div className="banner warn">Saldo insuficiente para o terreno à vista.{BANK_IDS.every((b) => financeBlock(state, me, price, undefined, b)) ? '' : ' Dá para financiar com 20% de entrada.'}</div>}
                 </>
               )
             ) : (
@@ -967,7 +967,7 @@ function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
           />
         )}
         {pick && financing && !block ? (
-          <FinanceChooser ui={ui} price={price} idx={i} what={`a casa ${tierName(pick)}`} action={(plan) => ({ type: 'build', idx: i, tier: pick, finance: plan })} onCancel={() => setFinancing(false)} />
+          <FinanceChooser ui={ui} price={price} idx={i} what={`a casa ${tierName(pick)}`} action={(plan, bank) => ({ type: 'build', idx: i, tier: pick, finance: plan, bank })} onCancel={() => setFinancing(false)} />
         ) : (
           <div className="row">
             <button className="btn primary" disabled={!!block || !pick || p.balance < price} onClick={() => pick && ui.pix({ type: 'build', idx: i, tier: pick }, `Construir casa ${tierName(pick)}`)}>
@@ -1007,7 +1007,7 @@ function BuildOffer({ ui, i }: { ui: GameUi; i: number }) {
         </div>
       </div>
       {financing && !block ? (
-        <FinanceChooser ui={ui} price={price} idx={i} what={h === 4 ? 'o hotel' : 'a casa'} action={(plan) => ({ type: 'build', idx: i, finance: plan })} onCancel={() => setFinancing(false)} />
+        <FinanceChooser ui={ui} price={price} idx={i} what={h === 4 ? 'o hotel' : 'a casa'} action={(plan, bank) => ({ type: 'build', idx: i, finance: plan, bank })} onCancel={() => setFinancing(false)} />
       ) : (
         <div className="row">
           <button className="btn primary" disabled={!!block} onClick={() => ui.pix({ type: 'build', idx: i }, h === 4 ? 'Construir hotel' : 'Construir casa')}>

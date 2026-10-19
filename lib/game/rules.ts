@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { BANK_RATES, CALENDAR, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JAIL_STORIES, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
-import type { Action, ActionContext, CompanySpace, DecisionId, Edition, Financing, JornalNote, JornalSection, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
+import { AURORA, BANK_IDS, BANK_RATES, BANKS, CALENDAR, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JAIL_STORIES, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SEMESTERS_PER_YEAR, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
+import type { Action, ActionContext, BankId, CompanySpace, DecisionId, Edition, Financing, JornalNote, JornalSection, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -296,7 +296,7 @@ export const nextDividendRound = (round: number) => semesterStartFrom(round + 1)
 /** Esta rodada paga dividendos (início de semestre, a partir da rodada 4)? */
 export const paysDividends = (round: number) => round > 1 && isSemesterStart(round);
 /** Dividendo anunciado nesta rodada para o pagamento da próxima ("data com"), ou null se não há anúncio. */
-export function announcedDividend(st: GameState, i: number): { round: number; perShare: number } | null {
+export function announcedDividend(st: GameState, i: number): { round: number; perShare: number; fromLoans?: number } | null {
   const a = stockOf(st, i).divAnnounced;
   return a && a.round === st.round + 1 ? a : null;
 }
@@ -348,7 +348,7 @@ export function manageBlock(st: GameState, i: number, actor: string): string | n
 export function editionsAbout(st: GameState, i: number): Edition[] {
   return (st.jornal ?? []).filter((e) => {
     const h = HEADLINES[e.h];
-    return !!h && h.effects.some((x) => ('co' in x && x.co === i) || x.k === 'stockAll' || (x.k === 'yield' && x.co === undefined));
+    return !!h && h.effects.some((x) => ('co' in x && x.co === i) || x.k === 'stockAll' || (x.k === 'yield' && x.co === undefined) || (x.k === 'bank' && x.bank === 'aurora' && i === AURORA.idx));
   });
 }
 
@@ -435,6 +435,11 @@ function applyHeadlineEffect(st: GameState, h: Headline, e: HeadlineEffect, stoc
       st.bankRate = after;
       return `Taxa Selic nesta rodada: ${pct(after)} (era ${pct(before)})`;
     }
+    case 'bank': {
+      const until = untilOf(e.rounds);
+      st.bankMods = [...(st.bankMods ?? []), { bank: e.bank, pp: e.pp, from: r, until, why: h.tag }];
+      return `Taxa do ${bankInfo(e.bank).name} ${signed(e.pp)} ponto${Math.abs(e.pp) === 1 ? '' : 's'} ao ano ${untilText(st, until)}`;
+    }
   }
 }
 
@@ -508,6 +513,11 @@ function marketRound(st: GameState, now: Date, first = false) {
   // 1. efeitos vencidos
   for (const m of (st.hoodMods ?? []).filter((x) => x.until < r)) log(st, `Acabou o efeito no bairro ${GROUPS[m.group].name.toLowerCase()}: ${m.why}`, now);
   st.hoodMods = (st.hoodMods ?? []).filter((x) => x.until >= r);
+  for (const m of (st.bankMods ?? []).filter((x) => x.until < r)) log(st, `Acabou o efeito na taxa do ${bankInfo(m.bank).name}: ${m.why}`, now);
+  if (st.bankMods) {
+    st.bankMods = st.bankMods.filter((x) => x.until >= r);
+    if (!st.bankMods.length) delete st.bankMods;
+  }
   for (const i of COMPANY_IDX) {
     const sk = ensureStock(st, i);
     if (sk.yieldMods) sk.yieldMods = sk.yieldMods.filter((m) => m.until >= r);
@@ -529,6 +539,10 @@ function marketRound(st: GameState, now: Date, first = false) {
     const one = e.k === 'hood';
     const verb = e.pct > 0 ? (one ? 'valoriza' : 'valorizam') : one ? 'desvaloriza' : 'desvalorizam';
     note(st, 'imoveis', `${one ? `Bairro ${GROUPS[e.group].name.toLowerCase()}` : 'Todos os bairros'} ${verb} ${Math.abs(e.pct)}%`, effects[k]);
+  });
+  h.effects.forEach((e, k) => {
+    if (e.k !== 'bank') return;
+    note(st, 'economia', `${bankInfo(e.bank).name} ${e.pp < 0 ? 'baixa' : 'sobe'} os juros`, `${effects[k]}. Vale para empréstimos e financiamentos novos.`);
   });
   for (const { i, before } of insured) {
     const lost = before - propValue(st, i);
@@ -603,12 +617,17 @@ function marketRound(st: GameState, now: Date, first = false) {
   // 5. anúncio ("data com"): na rodada antes do pagamento, guarda o dividendo por cota pela cotação de agora
   if (paysDividends(r + 1)) {
     const ann: string[] = [];
+    // o Banco Aurora soma ao dividendo uma parte dos juros que recebeu de empréstimos e financiamentos
+    const fromLoans = auroraExtraPerShare(st);
+    delete st.auroraProfit;
     for (const i of COMPANY_IDX) {
       const sk = ensureStock(st, i);
-      sk.divAnnounced = { round: r + 1, perShare: dividendPerShare(st, i, r + 1) };
+      const extra = i === AURORA.idx ? fromLoans : 0;
+      sk.divAnnounced = { round: r + 1, perShare: dividendPerShare(st, i, r + 1) + extra, ...(extra > 0 ? { fromLoans: extra } : {}) };
       if (sk.divAnnounced.perShare > 0) ann.push(`${company(i).name} ${money(sk.divAnnounced.perShare)}`);
     }
     if (ann.length) note(st, 'bolsa', `Dividendos anunciados para a rodada ${r + 1}`, `Por cota, a quem tiver cotas no começo dela: ${ann.join(' · ')}.`);
+    if (fromLoans > 0) note(st, 'bolsa', `${company(AURORA.idx).name} lucra com os juros`, `O dividendo inclui ${money(fromLoans)} por cota dos juros recebidos de empréstimos e financiamentos.`);
   }
   // sobe e desce da rodada: até 3 maiores variações (começo desta rodada contra o da anterior)
   if (!first) {
@@ -730,21 +749,22 @@ export const finLeft = (f: Financing) => (isParcelado(f) ? f.parcels!.length - (
 export const financeEntrada = (price: number) => round10(price * FINANCE.entrada);
 /** O que for financiado de um preço: preço − entrada. */
 export const financeAmount = (price: number) => price - financeEntrada(price);
-/** Simulação dos planos para financiar `price` agora (mesma taxa e parcelas do empréstimo, sobre preço − entrada). */
-export const financeOptions = (st: GameState, pid: string, price: number) => loanOptions(st, pid, financeAmount(price));
-/** Por que `pid` não pode financiar `price` agora (null = pode). `idx`: imóvel que já tem financiamento não aceita outro. */
-export function financeBlock(st: GameState, pid: string, price: number, idx?: number): string | null {
+/** Simulação dos planos para financiar `price` agora no banco (mesma taxa e parcelas do empréstimo, sobre preço − entrada). */
+export const financeOptions = (st: GameState, pid: string, price: number, bank: BankId = 'aurora') => loanOptions(st, pid, financeAmount(price), bank);
+/** Por que `pid` não pode financiar `price` agora no banco (null = pode). `idx`: imóvel que já tem financiamento não aceita outro. */
+export function financeBlock(st: GameState, pid: string, price: number, idx?: number, bank: BankId = 'aurora'): string | null {
   const p = findPlayer(st, pid);
   if (!p || p.out) return 'Você não está jogando';
-  if (creditOf(p) < FINANCE.minScore) return `Score ${creditOf(p)} abaixo de ${FINANCE.minScore} (faixa Regular): o banco não financia`;
+  const min = bankInfo(bank).finMinScore;
+  if (creditOf(p) < min) return bank === 'aurora' ? `Score ${creditOf(p)} abaixo de ${min} (faixa Regular): o banco não financia` : `Score mínimo ${min}`;
   if (idx !== undefined && finOf(st, idx)) return 'Este imóvel já tem um financiamento: quite antes de financiar outra construção';
   if (p.balance < financeEntrada(price)) return `Saldo insuficiente para a entrada de ${money(financeEntrada(price))}`;
   return null;
 }
-/** Selo do imóvel financiado, ex.: "Financiado · faltam 3 parcelas". */
+/** Selo do imóvel financiado, ex.: "Financiado · Órbita · faltam 3 parcelas" (salas antigas, sem banco: sem o nome). */
 export function finBadge(f: Financing): string {
   const n = finLeft(f);
-  return `Financiado · falta${n === 1 ? '' : 'm'} ${n} parcela${n === 1 ? '' : 's'}`;
+  return `Financiado${f.bank ? ` · ${bankInfo(f.bank).short}` : ''} · falta${n === 1 ? '' : 'm'} ${n} parcela${n === 1 ? '' : 's'}`;
 }
 // ---------- Score de crédito e juros ----------
 
@@ -753,15 +773,80 @@ export const creditOf = (p: Player | undefined) => p?.credit ?? CREDIT.start;
 export const creditBand = (score: number) => [...CREDIT_BANDS].reverse().find((b) => score >= b.from) ?? CREDIT_BANDS[0];
 /** Taxa do banco nesta rodada: a Selic do semestre, ± a manchete de juros da rodada (salas antigas, antes do primeiro sorteio: LOAN.interest). */
 export const bankRate = (st: GameState) => st.bankRate ?? LOAN.interest;
+
+// ---------- Bancos ----------
+
+/** Dados do banco (ausente ou desconhecido: Banco Aurora). */
+export const bankInfo = (id?: BankId) => BANKS.find((b) => b.id === id) ?? BANKS[0];
+/** Banco do empréstimo ou financiamento (salas antigas: Banco Aurora). */
+export const loanBank = (l: Loan): BankId => l.bank ?? 'aurora';
+/** Empréstimo com taxa ao ano (pego com a escolha do banco); salas antigas: juros cobrados uma vez. */
+export const isAnnual = (l: Loan) => l.bank !== undefined;
+/** Ajustes ativos de manchete na taxa do banco nesta rodada. */
+export const bankModsOf = (st: GameState, id: BankId) => (st.bankMods ?? []).filter((m) => m.bank === id && activeIn(m, st.round));
+/** Spread do banco agora (fração ao ano): o do banco + manchetes ativas. */
+export const bankSpread = (st: GameState, id: BankId) => round4(bankInfo(id).spread + bankModsOf(st, id).reduce((a, m) => a + m.pp, 0) / 100);
+/** Efeitos ativos do Jornal na taxa do banco, ex.: "Promoção Órbita: −2 pontos até a rodada 5". */
+export const bankModTexts = (st: GameState, id: BankId) => bankModsOf(st, id).map((m) => `${m.why}: ${signed(m.pp)} ponto${Math.abs(m.pp) === 1 ? '' : 's'} ${untilText(st, m.until)}`);
+
 /**
- * Taxa de um empréstimo novo agora: taxa da rodada + adicional do plano + ajuste do score, nunca abaixo do mínimo.
- * Sem plano: só taxa da rodada + score (a "sua taxa" da aba Banco, igual ao parcelado em 2x).
+ * Taxa ao ano de um empréstimo novo agora: Taxa Selic + spread do banco + ajuste do score, nunca abaixo do mínimo
+ * nem da poupança ao ano + BANK_RATES.overSavings;
+ * pagamento único: + LOAN.unicoAddOn. Sem plano: a taxa dos parcelados (a "sua taxa" da aba Banco).
  */
-export function loanRateFor(st: GameState, pid: string, plan?: LoanPlanId): number {
+export function loanRateFor(st: GameState, pid: string, plan?: LoanPlanId, bank: BankId = 'aurora'): number {
   const band = creditBand(creditOf(findPlayer(st, pid)));
-  const add = plan ? planInfo(plan).addOn : 0;
-  return Math.max(BANK_RATES.minLoanRate, round4(bankRate(st) + add + band.rateOffset));
+  const floor = Math.max(BANK_RATES.minLoanRate, round4(savingsAnnualRate(st) + BANK_RATES.overSavings));
+  const base = Math.max(floor, round4(bankRate(st) + bankSpread(st, bank) + band.rateOffset));
+  return plan === 'unico' ? round4(base + LOAN.unicoAddOn) : base;
 }
+/** Prazo do plano em anos: semestres ÷ 2 (2x = 1 ano, 5x = 2,5 anos; único = LOAN.unicoSemesters semestres). */
+export const planYears = (plan: LoanPlanId) => (plan === 'unico' ? LOAN.unicoSemesters : planInfo(plan).parcels) / SEMESTERS_PER_YEAR;
+/** Juros totais: principal × taxa ao ano × prazo em anos, a $ 1. */
+export const planInterest = (principal: number, rate: number, plan: LoanPlanId) => Math.round(principal * rate * planYears(plan));
+
+/** Por que `pid` não pode pegar empréstimo neste banco agora pelo score (null = pode). */
+export function bankLoanBlock(st: GameState, pid: string, bank: BankId): string | null {
+  const b = bankInfo(bank);
+  const score = creditOf(findPlayer(st, pid));
+  return score < b.minScore ? `Score mínimo ${b.minScore}` : null;
+}
+/** Oferta de um banco para o jogador agora: taxa ao ano (parcelado), limite do empréstimo e se atende. */
+export interface BankOffer {
+  id: BankId;
+  name: string;
+  short: string;
+  description: string;
+  rate: number;
+  /** limite do empréstimo (0 no financiamento, que não usa limite) */
+  limit: number;
+  /** score mínimo deste banco (empréstimo ou financiamento) */
+  minScore: number;
+  /** motivo de não atender agora (null = atende) */
+  block: string | null;
+}
+/** Ofertas dos 3 bancos: para o empréstimo, ou para financiar `price` (no imóvel `idx`). */
+export function bankOffers(st: GameState, pid: string, kind: 'loan' | 'fin' = 'loan', price = 0, idx?: number): BankOffer[] {
+  return BANKS.map((b) => {
+    const minScore = kind === 'loan' ? b.minScore : b.finMinScore;
+    const limit = kind === 'loan' ? loanLimit(st, pid, b.id) : 0;
+    const block = kind === 'loan' ? (bankLoanBlock(st, pid, b.id) ?? (limit === 0 ? 'Sem limite agora' : null)) : financeBlock(st, pid, price, idx, b.id);
+    return { id: b.id, name: b.name, short: b.short, description: b.description, rate: loanRateFor(st, pid, undefined, b.id), limit, minScore, block };
+  });
+}
+
+/** Parte de juros de um pagamento ao banco: valor × juros ÷ (principal + juros). */
+export const interestPart = (l: Loan, amount: number) => {
+  const total = l.principal + l.interest;
+  return total > 0 ? (amount * l.interest) / total : 0;
+};
+/** Guarda os juros que o Banco Aurora recebeu de um pagamento (viram dividendo extra no próximo anúncio). */
+function bankReceived(st: GameState, l: Loan, amount: number) {
+  if (!marketOn(st) || loanBank(l) !== 'aurora' || amount <= 0) return;
+  st.auroraProfit = Math.round((st.auroraProfit ?? 0) + interestPart(l, amount));
+}
+/** Dividendo extra por cota do Banco Aurora pelos juros recebidos: AURORA.profitShare × juros ÷ cotas, a $ 10. */
+export const auroraExtraPerShare = (st: GameState) => round10(((st.auroraProfit ?? 0) * AURORA.profitShare) / SHARES);
 
 // ---------- Planos do empréstimo (parcelado 2x a 5x ou pagamento único) ----------
 
@@ -794,11 +879,11 @@ export interface LoanOption {
   /** rodada do último pagamento (última parcela ou vencimento do pagamento único) */
   dueRound: number;
 }
-/** Simulação das 5 opções para pedir `amount` agora (taxa, parcela e total de cada plano). */
-export function loanOptions(st: GameState, pid: string, amount: number): LoanOption[] {
+/** Simulação das 5 opções para pedir `amount` agora no banco (taxa ao ano, juros pelo prazo, parcela e total de cada plano). */
+export function loanOptions(st: GameState, pid: string, amount: number, bank: BankId = 'aurora'): LoanOption[] {
   return LOAN_PLANS.map((p) => {
-    const rate = loanRateFor(st, pid, p.id);
-    const interest = loanInterest(amount, rate);
+    const rate = loanRateFor(st, pid, p.id, bank);
+    const interest = planInterest(amount, rate, p.id);
     const total = amount + interest;
     const unico = p.id === 'unico';
     const s = loanSchedule(st.round, p.id);
@@ -824,7 +909,7 @@ export function nextParcel(l: Loan): { n: number; of: number; amount: number; ro
 }
 /** Rodada da próxima cobrança (parcela ou pagamento único). */
 export const nextChargeRound = (l: Loan) => nextParcel(l)?.round ?? l.dueRound;
-/** Taxa travada no empréstimo (salas antigas: juros ÷ principal). */
+/** Taxa travada no empréstimo: ao ano se `isAnnual`; salas antigas: a taxa cobrada uma vez (juros ÷ principal). */
 export const loanRate = (l: Loan) => l.rate ?? (l.principal ? round4(l.interest / l.principal) : LOAN.interest);
 export const loanInterest = (principal: number, rate: number = LOAN.interest) => Math.round(principal * rate);
 export const pct = (r: number) => `${Math.round(r * 1000) / 10}%`.replace('.', ',');
@@ -835,13 +920,14 @@ export const loanRoundsLeft = (st: GameState, pid: string) => {
   const l = loanOf(st, pid);
   return l ? l.dueRound - st.round : null;
 };
-/** Maior empréstimo possível agora: fração do patrimônio líquido, em múltiplos do passo; 0 se não pode pedir. */
-export function loanLimit(st: GameState, pid: string): number {
+/** Maior empréstimo possível agora no banco: fração do patrimônio líquido (faixa do score × fator do banco), em múltiplos do passo; 0 se não pode pedir. */
+export function loanLimit(st: GameState, pid: string, bank: BankId = 'aurora'): number {
   const p = findPlayer(st, pid);
   if (!p || p.out || loanOf(st, pid)) return 0;
   const score = creditOf(p);
-  if (score < CREDIT.noLoanBelow) return 0;
-  const raw = Math.floor((equity(st, p) * creditBand(score).limitRate) / LOAN.step) * LOAN.step;
+  const b = bankInfo(bank);
+  if (score < b.minScore) return 0;
+  const raw = Math.floor((equity(st, p) * creditBand(score).limitRate * b.limit) / LOAN.step) * LOAN.step;
   return raw >= LOAN.min ? raw : 0;
 }
 
@@ -1021,7 +1107,7 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
     case 'buy': {
       const s = street(landed ?? -1);
       const price = lotPrice(st, landed!);
-      if (action.finance) return [finEntradaTransfer(st, p.id, price, action.finance, `do terreno da ${s.name}`, landed!)];
+      if (action.finance) return [finEntradaTransfer(st, p.id, price, action.finance, `do terreno da ${s.name}`, landed!, action.bank)];
       return [{ from: p.id, to: BANK, amount: price, reason: `Compra do terreno da ${s.name}`, kind: 'buy', space: landed! }];
     }
     case 'payRent': {
@@ -1080,7 +1166,7 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       const h = houses(st, action.idx);
       const what = `${h === 4 ? 'Hotel' : h === 0 ? 'Primeira casa' : 'Casa'} ${tierName(tier)} na ${s.name}`;
       const price = buildPrice(st, action.idx, tier);
-      if (action.finance) return [{ ...finEntradaTransfer(st, actor, price, action.finance, `${h === 4 ? 'do hotel' : h === 0 ? 'da primeira casa' : 'da casa'} ${tierName(tier)} na ${s.name}`, action.idx), tier }];
+      if (action.finance) return [{ ...finEntradaTransfer(st, actor, price, action.finance, `${h === 4 ? 'do hotel' : h === 0 ? 'da primeira casa' : 'da casa'} ${tierName(tier)} na ${s.name}`, action.idx, action.bank), tier }];
       return [{ from: actor, to: BANK, amount: price, reason: what, kind: 'build', space: action.idx, tier }];
     }
     case 'sellHouse': {
@@ -1104,11 +1190,12 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
     case 'payLoan': {
       const owed = debtOf(st, actor);
       const l = loanOf(st, actor);
+      const tag = l ? bankTag(l) : '';
       if (l && isParcelado(l)) {
         const left = l.parcels!.length - (l.parcelsPaid ?? 0);
-        return [{ from: actor, to: BANK, amount: action.amount, reason: `Quitação antecipada do empréstimo em ${l.parcels!.length}x (${left} parcela${left === 1 ? '' : 's'} restante${left === 1 ? '' : 's'})`, kind: 'loanpay' }];
+        return [{ from: actor, to: BANK, amount: action.amount, reason: `Quitação antecipada do empréstimo em ${l.parcels!.length}x (${left} parcela${left === 1 ? '' : 's'} restante${left === 1 ? '' : 's'})${tag}`, kind: 'loanpay' }];
       }
-      return [{ from: actor, to: BANK, amount: action.amount, reason: action.amount >= owed ? 'Quitação do empréstimo' : `Pagamento parcial do empréstimo (resta ${money(owed - action.amount)})`, kind: 'loanpay' }];
+      return [{ from: actor, to: BANK, amount: action.amount, reason: (action.amount >= owed ? 'Quitação do empréstimo' : `Pagamento parcial do empréstimo (resta ${money(owed - action.amount)})`) + tag, kind: 'loanpay' }];
     }
     case 'deposit':
       return [{ from: actor, to: BANK, amount: action.amount, reason: 'Depósito na poupança', kind: 'poupanca' }];
@@ -1123,7 +1210,7 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       const f = finOf(st, action.idx);
       if (!f) return [];
       const left = finLeft(f);
-      return [{ from: actor, to: BANK, amount: loanOwed(f), reason: `Quitação do financiamento da ${street(f.idx).name} (${left} parcela${left === 1 ? '' : 's'} restante${left === 1 ? '' : 's'})`, kind: 'financiamento', space: f.idx }];
+      return [{ from: actor, to: BANK, amount: loanOwed(f), reason: `Quitação do financiamento da ${street(f.idx).name} (${left} parcela${left === 1 ? '' : 's'} restante${left === 1 ? '' : 's'})${bankTag(f)}`, kind: 'financiamento', space: f.idx }];
     }
     default:
       return [];
@@ -1141,14 +1228,18 @@ export function parcelText(o: Pick<LoanOption, 'plan' | 'total' | 'parcels' | 'f
   return `${each}, rodadas ${o.firstRound} a ${o.dueRound}`;
 }
 
-function finEntradaTransfer(st: GameState, pid: string, price: number, plan: LoanPlanId, what: string, space: number): Transfer {
-  const o = financeOptions(st, pid, price).find((x) => x.plan === plan) ?? financeOptions(st, pid, price)[0];
+/** Nome do banco no fim do motivo do extrato, ex.: " · Banco Órbita" (salas antigas, sem banco: nada). */
+const bankTag = (l: Loan) => (l.bank ? ` · ${bankInfo(l.bank).name}` : '');
+
+function finEntradaTransfer(st: GameState, pid: string, price: number, plan: LoanPlanId, what: string, space: number, bank: BankId = 'aurora'): Transfer {
+  const opts = financeOptions(st, pid, price, bank);
+  const o = opts.find((x) => x.plan === plan) ?? opts[0];
   const amt = financeAmount(price);
   return {
     from: pid,
     to: BANK,
     amount: financeEntrada(price),
-    reason: `Entrada (${Math.round(FINANCE.entrada * 100)}%) ${what}: financia ${money(amt)} a ${pct(o.rate)}: ${parcelText(o)}`,
+    reason: `Entrada (${Math.round(FINANCE.entrada * 100)}%) ${what}: ${bankInfo(bank).name} financia ${money(amt)} a ${pct(o.rate)} ao ano (juros ${money(o.interest)}): ${parcelText(o)}`,
     kind: 'financiamento',
     space,
   };
@@ -1338,10 +1429,10 @@ function collectFins(st: GameState, p: Player, now: Date) {
       const np = nextParcel(f);
       if (np) {
         if (st.round < np.round) break;
-        collectFin(st, p, f, np.amount, `Parcela ${np.n}/${np.of} do financiamento da ${street(f.idx).name}`, np.n, now);
+        collectFin(st, p, f, np.amount, `Parcela ${np.n}/${np.of} do financiamento da ${street(f.idx).name}${bankTag(f)}`, np.n, now);
       } else {
         if (st.round < f.dueRound) break;
-        collectFin(st, p, f, loanOwed(f), `Vencimento do financiamento da ${street(f.idx).name}`, 1, now);
+        collectFin(st, p, f, loanOwed(f), `Vencimento do financiamento da ${street(f.idx).name}${bankTag(f)}`, 1, now);
       }
     }
     if (p.out) return;
@@ -1365,6 +1456,7 @@ function collectFin(st: GameState, p: Player, f: Financing, amount: number, tag:
     return;
   }
   applyTransfers(st, [{ from: p.id, to: BANK, amount, reason: tag, kind: 'financiamento', space: f.idx }], now);
+  bankReceived(st, f, amount);
   f.paid += amount;
   if (isParcelado(f)) {
     f.parcelsPaid = n;
@@ -1448,7 +1540,8 @@ function collectLoan(st: GameState, p: Player, now: Date) {
   const l = loanOf(st, p.id)!;
   const owed = loanOwed(l);
   log(st, `Vencimento: o banco cobra ${money(owed)} do empréstimo de ${p.name}`, now, undefined, true, p.id);
-  const { paid, penhora } = collectDebt(st, p, owed, 'Cobrança do empréstimo vencido', now);
+  const { paid, penhora } = collectDebt(st, p, owed, `Cobrança do empréstimo vencido${bankTag(l)}`, now);
+  bankReceived(st, l, paid);
   if (penhora) changeCredit(st, p, CREDIT.penhora, 'Empréstimo vencido com penhora');
   else changeCredit(st, p, CREDIT.loanPaid, 'Empréstimo pago no vencimento');
   if (paid >= owed) {
@@ -1465,7 +1558,8 @@ function collectLoan(st: GameState, p: Player, now: Date) {
 function collectParcel(st: GameState, p: Player, l: Loan, np: NonNullable<ReturnType<typeof nextParcel>>, now: Date) {
   const tag = `Parcela ${np.n}/${np.of} do empréstimo`;
   log(st, `${tag} de ${p.name}: ${money(np.amount)}`, now, undefined, true, p.id);
-  const { paid, penhora } = collectDebt(st, p, np.amount, tag, now);
+  const { paid, penhora } = collectDebt(st, p, np.amount, `${tag}${bankTag(l)}`, now);
+  bankReceived(st, l, paid);
   l.paid += paid;
   if (paid < np.amount) {
     changeCredit(st, p, CREDIT.parcelPenhora, `${tag} com penhora`);
@@ -1727,15 +1821,15 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       need(s.type === 'street' && !ownedBy(st, ti.landed!), 'Este imóvel não está à venda.');
       need(!ti.resolved, 'Esta casa já foi resolvida.');
       const price = lotPrice(state, ti.landed!);
-      if (action.finance) checkFinance(state, actor, price, action.finance);
+      if (action.finance) checkFinance(state, actor, price, action.finance, undefined, action.bank);
       const list = transfersFor(state, action, actor);
       pay(st, list, now);
       st.props[ti.landed!] = { owner: p.id, houses: 0, mortgaged: false, round: st.round };
       if (st.lots) delete st.lots[ti.landed!];
       ti.resolved = true;
       if (action.finance) {
-        const f = startFinance(state, st, actor, ti.landed!, 'terreno', price, action.finance);
-        log(st, `${p.name} comprou o terreno da ${s.name} financiado: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)}`, now, actor);
+        const f = startFinance(state, st, actor, ti.landed!, 'terreno', price, action.finance, action.bank);
+        log(st, `${p.name} comprou o terreno da ${s.name} financiado no ${bankInfo(f.bank).name}: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)} ao ano`, now, actor);
       } else log(st, `${p.name} comprou o terreno da ${s.name} por ${money(list[0].amount)}`, now, actor);
       note(st, 'imoveis', `${p.name} compra a ${s.name}`, `Terreno de tabela ${money(price)}.`);
       break;
@@ -1953,7 +2047,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       need(!current || !action.tier || action.tier === current, `As casas deste imóvel são ${tierName(current ?? DEFAULT_TIER)}: as próximas seguem o mesmo padrão.`);
       const tier = buildTier(state, action.idx, action.tier);
       const price = buildPrice(state, action.idx, tier);
-      if (action.finance) checkFinance(state, actor, price, action.finance, action.idx);
+      if (action.finance) checkFinance(state, actor, price, action.finance, action.idx, action.bank);
       pay(st, transfersFor(state, action, actor), now);
       me.builtRound = st.round;
       const pr = st.props[action.idx];
@@ -1961,8 +2055,8 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       pr.tier = tier;
       const what = pr.houses === 5 ? 'um hotel' : pr.houses === 1 ? `a primeira casa (${tierName(tier)})` : 'uma casa';
       if (action.finance) {
-        const f = startFinance(state, st, actor, action.idx, 'casa', price, action.finance);
-        log(st, `${me.name} construiu ${what} na ${s.name} financiada: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)}`, now, actor);
+        const f = startFinance(state, st, actor, action.idx, 'casa', price, action.finance, action.bank);
+        log(st, `${me.name} construiu ${what} na ${s.name} financiada no ${bankInfo(f.bank).name}: entrada de ${money(f.entrada)} e ${money(f.principal)} em ${planInfo(action.finance).short.toLowerCase()} a ${pct(f.rate!)} ao ano`, now, actor);
       } else log(st, `${me.name} construiu ${what} na ${s.name}`, now, actor);
       note(st, 'imoveis', `${me.name} constrói na ${s.name}`, `${what.charAt(0).toUpperCase()}${what.slice(1)}${pr.houses !== 1 && pr.tier ? `, padrão ${tierName(pr.tier)}` : ''}.`);
       break;
@@ -2094,29 +2188,32 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       turnOnly();
       need(!loanOf(st, actor), 'Você já tem um empréstimo ativo. Quite antes de pedir outro.');
       const amt = action.amount;
-      const limit = loanLimit(st, actor);
-      need(creditOf(me) >= CREDIT.noLoanBelow, `Seu score de crédito (${creditOf(me)}) está abaixo de ${CREDIT.noLoanBelow}: o banco não empresta.`);
-      need(limit > 0, `Seu patrimônio não permite empréstimo agora (mínimo ${money(LOAN.min)}).`);
+      need(action.bank === undefined || BANK_IDS.includes(action.bank), 'Banco inválido.');
+      const bank = action.bank ?? 'aurora';
+      const b = bankInfo(bank);
+      const limit = loanLimit(st, actor, bank);
+      need(creditOf(me) >= b.minScore, `Seu score de crédito (${creditOf(me)}) está abaixo de ${b.minScore}: o ${b.name} não empresta.`);
+      need(limit > 0, `Seu patrimônio não permite empréstimo no ${b.name} agora (mínimo ${money(LOAN.min)}).`);
       need(Number.isInteger(amt) && amt >= LOAN.min && amt % LOAN.step === 0, `Peça a partir de ${money(LOAN.min)}, em múltiplos de ${money(LOAN.step)}.`);
       need(action.plan === undefined || LOAN_PLANS.some((x) => x.id === action.plan), 'Plano de pagamento inválido.');
-      need(amt <= limit, `Seu limite é ${money(limit)}.`);
+      need(amt <= limit, `Seu limite é ${money(limit)} no ${b.name}.`);
       const plan = action.plan ?? 'unico';
       const info = planInfo(plan);
-      const rate = loanRateFor(st, actor, plan);
-      const interest = loanInterest(amt, rate);
+      const rate = loanRateFor(st, actor, plan, bank);
+      const interest = planInterest(amt, rate, plan);
       const total = amt + interest;
       const sched = loanSchedule(st.round, plan);
       if (plan === 'unico') {
         const due = sched.dueRound;
-        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, firstRound: sched.firstRound, rate, plan } };
-        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco a ${pct(rate)}: devolver ${money(total)} na rodada ${due} (${semesterText(due)})`, kind: 'loan' }], now);
-        log(st, `${me.name} pegou ${money(amt)} emprestado no banco a ${pct(rate)} (pagamento único)`, now, actor, false, actor);
+        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: due, firstRound: sched.firstRound, rate, plan, bank } };
+        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do ${b.name} a ${pct(rate)} ao ano: devolver ${money(total)} na rodada ${due} (${semesterText(due)})`, kind: 'loan' }], now);
+        log(st, `${me.name} pegou ${money(amt)} emprestado no ${b.name} a ${pct(rate)} ao ano (pagamento único)`, now, actor, false, actor);
       } else {
         const parcels = parcelSchedule(total, info.parcels);
-        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: sched.dueRound, firstRound: sched.firstRound, rate, plan, parcels, parcelsPaid: 0 } };
+        st.loans = { ...(st.loans || {}), [actor]: { principal: amt, interest, paid: 0, takenRound: st.round, dueRound: sched.dueRound, firstRound: sched.firstRound, rate, plan, parcels, parcelsPaid: 0, bank } };
         const each = parcelText({ plan, total, parcels, firstRound: sched.firstRound, dueRound: sched.dueRound });
-        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do banco em ${info.short} a ${pct(rate)}: ${each} (total ${money(total)})`, kind: 'loan' }], now);
-        log(st, `${me.name} pegou ${money(amt)} emprestado no banco em ${info.short} a ${pct(rate)}`, now, actor, false, actor);
+        applyTransfers(st, [{ from: BANK, to: actor, amount: amt, reason: `Empréstimo do ${b.name} em ${info.short} a ${pct(rate)} ao ano: ${each} (juros ${money(interest)}, total ${money(total)})`, kind: 'loan' }], now);
+        log(st, `${me.name} pegou ${money(amt)} emprestado no ${b.name} em ${info.short} a ${pct(rate)} ao ano`, now, actor, false, actor);
       }
       break;
     }
@@ -2132,6 +2229,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       need(!parcelado || amt === owed, `No parcelado não há pagamento parcial: as parcelas são cobradas sozinhas, ou quite o saldo todo (${money(owed)}).`);
       const full = amt === owed;
       pay(st, transfersFor(state, action, actor), now);
+      bankReceived(st, l, amt);
       if (full) {
         delete st.loans![actor];
         if (parcelado) {
@@ -2244,6 +2342,7 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       const f = finOf(st, action.idx);
       need(f && f.owner === actor, 'Este imóvel não tem financiamento seu.');
       pay(st, transfersFor(state, action, actor), now);
+      bankReceived(st, f, loanOwed(f));
       delete st.fin![action.idx];
       changeCredit(st, me, isParcelado(f) ? CREDIT.parcelLoanPaid : CREDIT.loanPaid, `Financiamento da ${street(f.idx).name} quitado antes do fim`);
       log(st, `${me.name} quitou o financiamento da ${street(f.idx).name}`, now, actor);
@@ -2270,17 +2369,18 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
 }
 
 /** Valida um pedido de financiamento (plano, score, entrada) contra o estado antes da ação. */
-function checkFinance(st: GameState, pid: string, price: number, plan: LoanPlanId, idx?: number) {
+function checkFinance(st: GameState, pid: string, price: number, plan: LoanPlanId, idx?: number, bank?: BankId) {
   need(LOAN_PLANS.some((x) => x.id === plan), 'Plano de pagamento inválido.');
-  const block = financeBlock(st, pid, price, idx);
+  need(bank === undefined || BANK_IDS.includes(bank), 'Banco inválido.');
+  const block = financeBlock(st, pid, price, idx, bank);
   need(!block, `Não dá para financiar: ${block?.charAt(0).toLowerCase()}${block?.slice(1)}.`);
 }
 
-/** Cria o financiamento de `price` − entrada no plano (mesmas taxa e parcelas do empréstimo, travadas agora). */
-function startFinance(before: GameState, st: GameState, pid: string, idx: number, what: Financing['what'], price: number, plan: LoanPlanId): Financing {
-  const o = financeOptions(before, pid, price).find((x) => x.plan === plan)!;
+/** Cria o financiamento de `price` − entrada no plano e banco (mesmas taxa e parcelas do empréstimo, travadas agora). */
+function startFinance(before: GameState, st: GameState, pid: string, idx: number, what: Financing['what'], price: number, plan: LoanPlanId, bank: BankId = 'aurora'): Financing & { bank: BankId } {
+  const o = financeOptions(before, pid, price, bank).find((x) => x.plan === plan)!;
   const principal = financeAmount(price);
-  const f: Financing = {
+  const f: Financing & { bank: BankId } = {
     owner: pid,
     idx,
     what,
@@ -2295,6 +2395,7 @@ function startFinance(before: GameState, st: GameState, pid: string, idx: number
     rate: o.rate,
     plan,
     ...(plan === 'unico' ? {} : { parcels: o.parcels, parcelsPaid: 0 }),
+    bank,
   };
   st.fin = { ...(st.fin || {}), [idx]: f };
   return f;

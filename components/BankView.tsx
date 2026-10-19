@@ -1,11 +1,11 @@
 'use client';
 import { useState } from 'react';
-import { BANK_RATES, CREDIT, CREDIT_BANDS, FINANCE, LOAN, LOAN_PLANS, SAVINGS } from '@/lib/game/data';
+import { BANK_RATES, BANKS, CREDIT, CREDIT_BANDS, LOAN, SAVINGS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isParcelado, loanLimit, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, pct2, planInfo, savingsAnnualRate, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
-import type { Financing, Loan, LoanPlanId } from '@/lib/game/types';
+import { bankInfo, bankModTexts, bankOffers, bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isAnnual, isParcelado, loanBank, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, pct2, planInfo, savingsAnnualRate, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
+import type { BankId, Financing, Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
-import { PARCEL_RULE, planSummary, PlanTable } from './Finance';
+import { BankPicker, PARCEL_RULE, planSummary, PlanTable, RATE_RULE } from './Finance';
 import type { GameUi } from './Game';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
@@ -139,7 +139,7 @@ function FinancingCard({ ui }: { ui: GameUi }) {
         <h2>Financiamentos de imóveis</h2>
       </span>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Separados do empréstimo e fora do seu limite. Cada imóvel financiado fica alienado ao banco até quitar: sem negociar e sem hipotecar. Se uma parcela não for paga (nem com a poupança), o banco retoma o imóvel e cancela o financiamento. Score mínimo para financiar: {FINANCE.minScore}.
+        Separados do empréstimo e fora do seu limite. Cada imóvel financiado fica alienado ao banco até quitar: sem negociar e sem hipotecar. Se uma parcela não for paga (nem com a poupança), o banco retoma o imóvel e cancela o financiamento. Score mínimo para financiar: {BANKS.map((b) => `${b.short} ${b.finMinScore}`).join(', ')}.
       </p>
       {fins.map((f) => (
         <FinancingItem key={f.idx} ui={ui} f={f} myTurn={myTurn} />
@@ -161,6 +161,7 @@ function FinancingItem({ ui, f, myTurn }: { ui: GameUi; f: Financing; myTurn: bo
       <div className="row between">
         <b>
           {name} · {f.what === 'terreno' ? 'terreno' : 'casa'}
+          {f.bank ? ` · ${bankInfo(f.bank).name}` : ''}
         </b>
         <span className={`pill ${short ? 'bad' : 'warn'}`}>
           Falta{left === 1 ? '' : 'm'} {left} parcela{left === 1 ? '' : 's'}
@@ -176,6 +177,7 @@ function FinancingItem({ ui, f, myTurn }: { ui: GameUi; f: Financing; myTurn: bo
         <div>
           <span>
             {planInfo(loanPlan(f)).name} a {pct(loanRate(f))}
+            {isAnnual(f) ? ' ao ano' : ''} · juros {money(f.interest)}
           </span>
           <span className="num">{money(f.principal + f.interest)}</span>
         </div>
@@ -219,8 +221,14 @@ function RateCard({ ui }: { ui: GameUi }) {
       </div>
       <span className="lbl">
         Sorteada no início de cada semestre (rodadas 1, 4, 7…) entre {BANK_RATES.options.map((r) => pct(r)).join(', ')} e fixa nas 3 rodadas
-        {bump ? `; só nesta rodada, a manchete do Jornal levou os juros a ${pct(bankRate(state))}` : ''}. O empréstimo e o financiamento travam a taxa do dia em que foram pegos.
+        {bump ? `; só nesta rodada, a manchete do Jornal levou os juros a ${pct(bankRate(state))}` : ''}. Cada banco soma a sua margem à Selic. O empréstimo e o financiamento travam a taxa ao ano do dia em que foram pegos.
       </span>
+      {BANKS.some((b) => bankModTexts(state, b.id).length) && (
+        <span className="lbl" data-testid="bank-mods">
+          Jornal:{' '}
+          {BANKS.flatMap((b) => bankModTexts(state, b.id).map((t) => `${b.name}, ${t}`)).join(' · ')}
+        </span>
+      )}
     </div>
   );
 }
@@ -243,16 +251,16 @@ function CreditCard({ ui }: { ui: GameUi }) {
       <div className="kv">
         <div>
           <span>Limite</span>
-          <span className="num">{score < CREDIT.noLoanBelow ? 'Bloqueado' : `${Math.round(band.limitRate * 100)}% do patrimônio`}</span>
+          <span className="num">{score < Math.min(...BANKS.map((b) => b.minScore)) ? 'Bloqueado' : `${Math.round(band.limitRate * 100)}% do patrimônio`}</span>
         </div>
         <div>
           <span>Ajuste da taxa</span>
           <span className="num">{pp(band.rateOffset)}</span>
         </div>
         <div>
-          <span>Sua taxa agora</span>
+          <span>Sua taxa no Banco Aurora</span>
           <span className="num" data-testid="my-rate">
-            {pct(loanRateFor(state, me))}
+            {pct(loanRateFor(state, me))} ao ano
           </span>
         </div>
       </div>
@@ -276,8 +284,8 @@ function CreditCard({ ui }: { ui: GameUi }) {
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
           Parcela paga com o saldo +{CREDIT.parcelPaid} · parcelado quitado +{CREDIT.parcelLoanPaid} (se nenhuma parcela precisou de penhora) · parcela com penhora {CREDIT.parcelPenhora} · pagamento único quitado em dia ou
           antes +{CREDIT.loanPaid} · pagamento parcial do único +{CREDIT.partialPay} (uma vez por rodada, a partir de {money(LOAN.step)}) · pagamento único vencido com penhora {CREDIT.penhora} · declarar o IR +
-          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. Planos: {LOAN_PLANS.map((x) => `${x.short} ${pp(x.addOn)}`).join(', ')} sobre a Taxa Selic. Faixas:{' '}
-          {CREDIT_BANDS.map((b) => `${b.name} (${b.from}+: ${Math.round(b.limitRate * 100)}%, ${pp(b.rateOffset)})`).join(' · ')}. Abaixo de {CREDIT.noLoanBelow}, o banco não empresta.
+          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. O score é um só para os 3 bancos. Taxa ao ano = Selic + margem do banco ({BANKS.map((b) => `${b.short} ${pp(b.spread)}`).join(', ')}) + ajuste do score; pagamento único {pp(LOAN.unicoAddOn)}. Faixas:{' '}
+          {CREDIT_BANDS.map((b) => `${b.name} (${b.from}+: ${Math.round(b.limitRate * 100)}%, ${pp(b.rateOffset)})`).join(' · ')}. Score mínimo: {BANKS.map((b) => `${b.short} ${b.minScore}`).join(', ')}.
         </p>
       </details>
     </div>
@@ -289,10 +297,10 @@ function LoanCard({ ui }: { ui: GameUi }) {
   const p = findPlayer(state, me)!;
   const myTurn = currentPlayer(state)?.id === me && !state.winner;
   const loan = loanOf(state, me);
-  const limit = loanLimit(state, me);
   const [amount, setAmount] = useState(LOAN.min);
   const [part, setPart] = useState(LOAN.step);
   const [plan, setPlan] = useState<LoanPlanId | null>(null);
+  const [bank, setBank] = useState<BankId | null>(null);
 
   if (loan && isParcelado(loan)) return <ParcelLoanCard ui={ui} loan={loan} myTurn={myTurn} />;
 
@@ -313,8 +321,8 @@ function LoanCard({ ui }: { ui: GameUi }) {
           <span className={`pill ${left <= 1 ? 'bad' : 'warn'}`}>{left <= 1 ? 'Vence na próxima rodada' : `Vence em ${rodadas(left)}`}</span>
         </div>
         <div>
-          <div className="muted" style={{ fontSize: 13 }}>
-            Pagamento único · você deve
+          <div className="muted" style={{ fontSize: 13 }} data-testid="loan-bank">
+            {bankInfo(loanBank(loan)).name} · pagamento único · você deve
           </div>
           <div className="amt num" style={{ fontSize: 30 }} data-testid="loan-owed">
             {money(owed)}
@@ -326,7 +334,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
             <span className="num">{money(loan.principal)}</span>
           </div>
           <div>
-            <span>Juros ({pct(loanRate(loan))}, travados)</span>
+            <span>Juros ({pct(loanRate(loan))}{isAnnual(loan) ? ' ao ano' : ''}, travados)</span>
             <span className="num">{money(loan.interest)}</span>
           </div>
           <div>
@@ -368,11 +376,15 @@ function LoanCard({ ui }: { ui: GameUi }) {
     );
   }
 
-  const q = Math.max(LOAN.min, Math.min(amount, limit));
   const score = creditOf(p);
   const band = creditBand(score);
-  const options = loanOptions(state, me, q);
+  const offers = bankOffers(state, me, 'loan');
+  const offer = offers.find((o) => o.id === bank && !o.block) ?? null;
+  const limit = offer?.limit ?? Math.max(0, ...offers.map((o) => o.limit));
+  const q = Math.max(LOAN.min, Math.min(amount, limit));
+  const options = offer ? loanOptions(state, me, q, offer.id) : [];
   const chosen = options.find((o) => o.plan === plan) ?? null;
+  const minScore = Math.min(...offers.map((o) => o.minScore));
   return (
     <div className="card" data-testid="loan-card">
       <span className="row" style={{ gap: 10 }}>
@@ -382,9 +394,9 @@ function LoanCard({ ui }: { ui: GameUi }) {
         <h2>Pedir empréstimo</h2>
       </span>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido, a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Escolha o valor e depois o plano: parcelado em 2x a 5x
-        ({PARCEL_RULE}) ou pagamento único no {LOAN.unicoSemesters}º semestre. Cada plano tem a sua taxa (Taxa Selic {pct(bankRate(state))} + adicional do plano
-        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''}), juros sobre o valor, travados ao pegar. Um empréstimo por vez.
+        Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido (o Órbita empresta menos), a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Escolha o banco, o valor e o plano:
+        parcelado em 2x a 5x ({PARCEL_RULE}) ou pagamento único no {LOAN.unicoSemesters}º semestre ({pp(LOAN.unicoAddOn)}). Taxa = Selic {pct(bankRate(state))} + margem do banco
+        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''}. {RATE_RULE}. Um empréstimo por vez.
       </p>
       <div className="kv">
         <div>
@@ -392,7 +404,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
           <span className="num">{money(equity(state, p))}</span>
         </div>
         <div>
-          <span>Seu limite</span>
+          <span>Seu limite{offer ? ` no ${offer.short}` : ''}</span>
           <span className="num" data-testid="loan-limit">
             {money(limit)}
           </span>
@@ -402,15 +414,21 @@ function LoanCard({ ui }: { ui: GameUi }) {
           <span className="num">{pct(bankRate(state))}</span>
         </div>
       </div>
-      {score < CREDIT.noLoanBelow ? (
-        <div className="banner bad">Seu score está abaixo de {CREDIT.noLoanBelow}: o banco não empresta. Pague o que deve e declare o IR para subir.</div>
-      ) : limit === 0 ? (
+      {score < minScore ? (
+        <div className="banner bad">Seu score está abaixo de {minScore}: nenhum banco empresta. Pague o que deve e declare o IR para subir.</div>
+      ) : offers.every((o) => o.block) ? (
         <div className="banner warn">Seu patrimônio não permite empréstimo agora.</div>
       ) : myTurn ? (
         <div className="stack" style={{ gap: 10 }}>
+          <span className="muted" style={{ fontSize: 13 }}>
+            1. Escolha o banco
+          </span>
+          <BankPicker state={state} offers={offers} bank={offer?.id ?? null} onPick={setBank} kind="loan" testId="loan-banks" />
+          {offer && (
+          <>
           <div className="row between">
             <span className="muted" style={{ fontSize: 13 }}>
-              1. Valor
+              2. Valor
             </span>
             <div className="stepper">
               <button aria-label={`Menos ${money(LOAN.step)} no empréstimo`} onClick={() => setAmount(Math.max(LOAN.min, q - LOAN.step))}>
@@ -425,16 +443,18 @@ function LoanCard({ ui }: { ui: GameUi }) {
             </div>
           </div>
           <span className="muted" style={{ fontSize: 13 }}>
-            2. Escolha como pagar
+            3. Escolha como pagar
           </span>
           <PlanTable options={options} plan={plan} onPick={setPlan} label="Simulação do empréstimo" testId="loan-sim" />
           {chosen && (
             <p className="muted" style={{ margin: 0, fontSize: 13 }} data-testid="loan-plan-summary">
-              {planSummary(chosen, chosen.plan === 'unico' ? 'Dá para pagar antes, inteiro ou em partes.' : 'Dá para quitar o saldo antes, sem desconto de juros.')}
+              {offer.name}: {planSummary(chosen, chosen.plan === 'unico' ? 'Dá para pagar antes, inteiro ou em partes.' : 'Dá para quitar o saldo antes, sem desconto de juros.')}
             </p>
           )}
-          <button className="btn primary" disabled={!chosen} onClick={() => chosen && ui.runWithReceipt({ type: 'takeLoan', amount: q, plan: chosen.plan }, 'Empréstimo liberado')}>
-            {chosen ? `Pegar ${money(q)} ${chosen.plan === 'unico' ? 'em pagamento único' : `em ${chosen.short}`}` : 'Escolha um plano'}
+          </>
+          )}
+          <button className="btn primary" disabled={!offer || !chosen} onClick={() => offer && chosen && ui.runWithReceipt({ type: 'takeLoan', amount: q, plan: chosen.plan, bank: offer.id }, 'Empréstimo liberado')}>
+            {!offer ? 'Escolha um banco' : chosen ? `Pegar ${money(q)} ${chosen.plan === 'unico' ? 'em pagamento único' : `em ${chosen.short}`}` : 'Escolha um plano'}
           </button>
         </div>
       ) : (
@@ -468,8 +488,8 @@ function ParcelLoanCard({ ui, loan, myTurn }: { ui: GameUi; loan: Loan; myTurn: 
         </span>
       </div>
       <div>
-        <div className="muted" style={{ fontSize: 13 }}>
-          {info.name} · saldo devedor
+        <div className="muted" style={{ fontSize: 13 }} data-testid="loan-bank">
+          {bankInfo(loanBank(loan)).name} · {info.name.toLowerCase()} · saldo devedor
         </div>
         <div className="amt num" style={{ fontSize: 30 }} data-testid="loan-owed">
           {money(owed)}
@@ -489,7 +509,7 @@ function ParcelLoanCard({ ui, loan, myTurn }: { ui: GameUi; loan: Loan; myTurn: 
           <span className="num">{money(loan.principal)}</span>
         </div>
         <div>
-          <span>Juros ({pct(loanRate(loan))}, travados)</span>
+          <span>Juros ({pct(loanRate(loan))}{isAnnual(loan) ? ' ao ano' : ''}, travados)</span>
           <span className="num">{money(loan.interest)}</span>
         </div>
         <div>

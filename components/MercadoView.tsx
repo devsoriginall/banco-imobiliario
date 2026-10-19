@@ -1,9 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { CALENDAR, COMPANY_IDX, DECISION_IDS, DECISIONS, HEADLINES, SHARES, STOCK } from '@/lib/game/data';
+import { AURORA, CALENDAR, COMPANY_IDX, DECISION_IDS, DECISIONS, HEADLINES, SHARES, STOCK } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import {
   announcedDividend,
+  auroraExtraPerShare,
   bankShares,
   company,
   controller,
@@ -549,6 +550,16 @@ function StockDetail({ ui, i, onBack }: { ui: GameUi; i: number; onBack: () => v
               <span>Até o fim da rodada {ann.round - 1}: quem tiver cotas no começo da rodada {ann.round} recebe</span>
             </div>
           )}
+          {i === AURORA.idx && (ann?.fromLoans || (!ann && auroraExtraPerShare(state) > 0)) ? (
+            <div data-testid="stock-loan-profit">
+              <span style={{ whiteSpace: 'nowrap' }}>Juros</span>
+              <span>
+                {ann?.fromLoans
+                  ? `Inclui ${money(ann.fromLoans)} por cota dos juros recebidos de empréstimos e financiamentos`
+                  : `Juros recebidos de empréstimos e financiamentos até agora: + ${money(auroraExtraPerShare(state))} por cota no próximo anúncio`}
+              </span>
+            </div>
+          ) : null}
           <div>
             <span>Taxa da casa {i}</span>
             <span>

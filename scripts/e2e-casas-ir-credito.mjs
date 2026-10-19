@@ -303,7 +303,7 @@ console.log('Banco:', JSON.stringify(bank));
 if (!/^Taxa Selic do semestre: (5|8|10|12|15|20)% \(até a rodada 9\)$/.test(bank.taxa)) fail(`Taxa Selic: ${bank.taxa}`);
 expectEq(bank.score, '520', 'score depois de declarar');
 expectEq(bank.faixa, 'Regular', 'faixa do score');
-expectEq(bank.sua, bank.taxa.split(': ')[1].split(' ')[0], 'taxa do empréstimo com score Regular');
+expectEq(bank.sua, `${bank.taxa.split(': ')[1].split(' ')[0]} ao ano`, 'taxa do empréstimo com score Regular (Banco Aurora, ao ano)');
 await noToasts(ana);
 await ana.getByTestId('bank-rate-card').scrollIntoViewIfNeeded();
 await ana.evaluate(() => document.querySelector('[data-testid="bank-rate-card"]').scrollIntoView({ block: 'start' }));

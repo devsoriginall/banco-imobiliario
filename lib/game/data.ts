@@ -1,6 +1,6 @@
 // Dados do jogo, portados do Banco Imobiliário da Mesa (tabuleiro Super Banco Imobiliário,
 // marcas trocadas por empresas fictícias).
-import type { CompanySpace, DecisionId, GroupId, Headline, LoanPlanId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
+import type { BankId, CompanySpace, DecisionId, GroupId, Headline, LoanPlanId, NewsCard, Settings, Space, StreetSpace, TierId } from './types';
 
 export const GROUPS: Record<GroupId, { name: string; c: string }> = {
   verde: { name: 'Verde', c: '--g-verde' },
@@ -123,8 +123,10 @@ export const LOAN = {
   min: 1000,
   /** valores em múltiplos de */
   step: 500,
-  /** juros simples sobre o principal, cobrados uma vez */
+  /** taxa de salas antigas, antes do primeiro sorteio da Selic */
   interest: 0.1,
+  /** pagamento único: adicional de risco na taxa ao ano */
+  unicoAddOn: 0.03,
   /** pagamento único: vence no início do semestre de número `unicoSemesters` contado pela regra da 1ª parcela */
   unicoSemesters: 2,
   /** a 1ª cobrança é no primeiro início de semestre pelo menos esta quantidade de rodadas depois de pegar */
@@ -134,18 +136,23 @@ export const LOAN = {
 };
 
 /**
- * Planos de pagamento do empréstimo. Taxa = Taxa Selic + `addOn` + ajuste do score (mínimo BANK_RATES.minLoanRate),
- * juros simples sobre o principal, travada ao pegar. Parcelado: total ÷ parcelas, uma por semestre do calendário
- * (CALENDAR), no início da vez do jogador na rodada que abre o semestre; a 1ª no primeiro início de semestre pelo
- * menos LOAN.graceRounds rodadas depois de pegar. Pagamento único: tudo no LOAN.unicoSemesters-ésimo início de semestre.
+ * Planos de pagamento do empréstimo. Taxa ao ano = Taxa Selic + spread do banco (BANKS, com manchete) + ajuste do score
+ * (mínimo BANK_RATES.minLoanRate); pagamento único: + LOAN.unicoAddOn. Juros simples sobre o principal pelo prazo:
+ * taxa ao ano × anos (2 semestres por ano: 2x = 1 ano, 5x = 2,5 anos; único = LOAN.unicoSemesters semestres),
+ * travados ao pegar. Parcelado: total ÷ parcelas, uma por semestre do calendário (CALENDAR), no início da vez do
+ * jogador na rodada que abre o semestre; a 1ª no primeiro início de semestre pelo menos LOAN.graceRounds rodadas
+ * depois de pegar. Pagamento único: tudo no LOAN.unicoSemesters-ésimo início de semestre.
  */
-export const LOAN_PLANS: { id: LoanPlanId; name: string; short: string; parcels: number; addOn: number }[] = [
-  { id: 'x2', name: 'Parcelado em 2x', short: '2x', parcels: 2, addOn: 0 },
-  { id: 'x3', name: 'Parcelado em 3x', short: '3x', parcels: 3, addOn: 0.02 },
-  { id: 'x4', name: 'Parcelado em 4x', short: '4x', parcels: 4, addOn: 0.04 },
-  { id: 'x5', name: 'Parcelado em 5x', short: '5x', parcels: 5, addOn: 0.06 },
-  { id: 'unico', name: 'Pagamento único', short: 'Único', parcels: 1, addOn: 0.08 },
+export const LOAN_PLANS: { id: LoanPlanId; name: string; short: string; parcels: number }[] = [
+  { id: 'x2', name: 'Parcelado em 2x', short: '2x', parcels: 2 },
+  { id: 'x3', name: 'Parcelado em 3x', short: '3x', parcels: 3 },
+  { id: 'x4', name: 'Parcelado em 4x', short: '4x', parcels: 4 },
+  { id: 'x5', name: 'Parcelado em 5x', short: '5x', parcels: 5 },
+  { id: 'unico', name: 'Pagamento único', short: 'Único', parcels: 1 },
 ];
+
+/** Semestres por ano (prazo do empréstimo em anos = semestres ÷ isto). */
+export const SEMESTERS_PER_YEAR = 2;
 
 // ---------- Fase 2: casas, valorização, IR, score de crédito e juros por rodada ----------
 
@@ -220,7 +227,12 @@ export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name:
 ];
 
 /** Taxa Selic sorteada no início de cada semestre do calendário (sorteio uniforme) e a menor taxa possível de um empréstimo. */
-export const BANK_RATES = { options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2], minLoanRate: 0.02 };
+export const BANK_RATES = {
+  options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2],
+  minLoanRate: 0.02,
+  /** o empréstimo nunca cobra menos que a poupança ao ano + esta margem (pegar emprestado para aplicar não compensa) */
+  overSavings: 0.01,
+};
 
 // ---------- Jornal da Cidade e Bolsa ----------
 
@@ -290,7 +302,7 @@ const BC = 22; // Bella Cosméticos
 const VX = 29; // Vox Telecom
 const MA = 36; // Motora Automóveis
 
-/** 36 manchetes do Jornal da Cidade (uma por rodada, sem repetir até acabar o baralho). */
+/** 39 manchetes do Jornal da Cidade (uma por rodada, sem repetir até acabar o baralho). */
 export const HEADLINES: Headline[] = [
   // ----- Bairros -----
   {
@@ -510,6 +522,27 @@ export const HEADLINES: Headline[] = [
   },
   {
     cat: 'economia',
+    tag: 'Promoção Órbita',
+    title: 'Banco Órbita faz promoção de crédito pelo aplicativo',
+    body: 'O banco digital corta a taxa para ganhar clientes. A oferta vale por duas rodadas, só para quem tem score Bom.',
+    effects: [{ k: 'bank', bank: 'orbita', pp: -2, rounds: 2 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Horizonte aperta',
+    title: 'Banco Horizonte aperta o crédito',
+    body: 'Com medo do calote, o banco pequeno sobe a taxa por duas rodadas.',
+    effects: [{ k: 'bank', bank: 'horizonte', pp: 3, rounds: 2 }],
+  },
+  {
+    cat: 'economia',
+    tag: 'Crédito imobiliário',
+    title: 'Banco Aurora lança crédito imobiliário barato',
+    body: 'O maior banco da cidade baixa a taxa de empréstimos e financiamentos por duas rodadas.',
+    effects: [{ k: 'bank', bank: 'aurora', pp: -1, rounds: 2 }],
+  },
+  {
+    cat: 'economia',
     tag: 'Mercado em alta',
     title: 'Bolsa dispara com otimismo dos investidores',
     body: 'O índice tem a maior alta do ano e todas as empresas da cidade sobem juntas.',
@@ -586,3 +619,21 @@ export const FINANCE = {
   /** score mínimo: início da faixa Regular */
   minScore: CREDIT_BANDS.find((b) => b.id === 'regular')!.from,
 };
+
+// ---------- Bancos concorrentes ----------
+
+/**
+ * Bancos que emprestam e financiam (o score é um só para todos).
+ * `spread`: soma à Taxa Selic (ao ano); `minScore`: score mínimo para o empréstimo; `finMinScore`: para o financiamento;
+ * `limit`: fator sobre o limite do empréstimo (fração do patrimônio líquido da faixa do score).
+ */
+export const BANKS: { id: BankId; name: string; short: string; description: string; spread: number; minScore: number; finMinScore: number; limit: number }[] = [
+  { id: 'aurora', name: 'Banco Aurora', short: 'Aurora', description: 'O grande banco da cidade, com cotas na Bolsa.', spread: 0, minScore: CREDIT.noLoanBelow, finMinScore: FINANCE.minScore, limit: 1 },
+  { id: 'orbita', name: 'Banco Órbita', short: 'Órbita', description: 'Banco digital: o mais barato, só para score Bom.', spread: -0.01, minScore: 600, finMinScore: 600, limit: 0.8 },
+  { id: 'horizonte', name: 'Banco Horizonte', short: 'Horizonte', description: 'Banco pequeno: o mais caro, empresta até com score baixo.', spread: 0.04, minScore: 100, finMinScore: 200, limit: 1 },
+];
+export const BANK_IDS: BankId[] = BANKS.map((b) => b.id);
+export const DEFAULT_BANK: BankId = 'aurora';
+
+/** Lucro do Banco Aurora: parte dos juros recebidos no semestre que vira dividendo extra por cota. */
+export const AURORA = { profitShare: 0.3, idx: SPACES.findIndex((s) => s.type === 'company' && s.short === 'BA') };

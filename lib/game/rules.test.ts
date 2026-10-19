@@ -27,9 +27,9 @@ function game(): GameState {
   // regras clássicas: sem Jornal e Bolsa (cotas a $ 200, sem manchetes nem dividendos)
   st = act(st, 'ana', { type: 'setMercado', on: false });
   st = act(st, 'ana', { type: 'start' });
-  // os testes antigos do empréstimo (pagamento único, taxa da rodada + 8 pp) contam com juros de 10%:
-  // fixa a taxa sorteada da rodada em 2%
-  st.bankRate = 0.02;
+  // os testes antigos do empréstimo (pagamento único: taxa da rodada + 3 pp ao ano, por 1 ano) contam com juros de 10%:
+  // fixa a taxa sorteada da rodada em 7%
+  st.bankRate = 0.07;
   return st;
 }
 
@@ -626,7 +626,7 @@ describe('empréstimo do banco', () => {
   it('pega o empréstimo na própria vez, com 10% de juros e vencimento no 2º semestre (rodada 7)', () => {
     const st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
     expect(bal(st, 'ana')).toBe(27000);
-    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 7, firstRound: 4, rate: 0.1, plan: 'unico' });
+    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 7, firstRound: 4, rate: 0.1, plan: 'unico', bank: 'aurora' });
     expect(debtOf(st, 'ana')).toBe(2200);
     expect(equity(st, pl(st, 'ana'))).toBe(24800);
     expect(loanRoundsLeft(st, 'ana')).toBe(6);
@@ -656,7 +656,7 @@ describe('empréstimo do banco', () => {
     st = act(st, 'ana', { type: 'payLoan', amount: 1200 });
     expect(st.loans!.ana).toBeUndefined();
     expect(bal(st, 'ana')).toBe(27000 - 2200);
-    expect(st.tx[0].reason).toBe('Quitação do empréstimo');
+    expect(st.tx[0].reason).toBe('Quitação do empréstimo · Banco Aurora');
   });
 
   it('no vencimento, o banco cobra do dinheiro no início da vez', () => {
