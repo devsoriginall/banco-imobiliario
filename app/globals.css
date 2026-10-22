@@ -345,7 +345,10 @@ a{color:inherit}
 .hs-dots i.on{background:#fff}
 .hs-dots i.play{width:0;height:0;border-radius:0;background:none;border-left:7px solid rgba(255,255,255,.55);border-top:4px solid transparent;border-bottom:4px solid transparent}
 .hs-dots i.play.on{border-left-color:#fff}
-.hs-video{width:100%;height:100%;object-fit:contain;background:#000}
+.hs-video{position:absolute;inset:0;z-index:1;width:100%;height:100%;object-fit:contain;background:#000}
+.hs-slide{opacity:0;transition:opacity .2s ease}
+.hs-slide.on{opacity:1;z-index:1}
+.hs-close,.hs-arrow,.hs-tour,.hs-dots{z-index:2}
 .hs-tour{position:absolute;left:12px;top:12px;border:none;background:rgba(10,14,18,.6);color:#fff;border-radius:999px;padding:8px 12px;font:600 13px/1 var(--font-dm-sans),sans-serif;cursor:pointer}
 .hs-body{padding:16px;display:flex;flex-direction:column;gap:12px}
 .hs-title{margin:0;font-size:22px;line-height:1.2}
