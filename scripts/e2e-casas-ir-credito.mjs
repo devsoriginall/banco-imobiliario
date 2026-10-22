@@ -303,7 +303,18 @@ console.log('Banco:', JSON.stringify(bank));
 if (!/^Taxa Selic do semestre: (5|8|10|12|15|20)% \(até a rodada 9\)$/.test(bank.taxa)) fail(`Taxa Selic: ${bank.taxa}`);
 expectEq(bank.score, '520', 'score depois de declarar');
 expectEq(bank.faixa, 'Regular', 'faixa do score');
-expectEq(bank.sua, `${bank.taxa.split(': ')[1].split(' ')[0]} ao ano`, 'taxa do empréstimo com score Regular (Banco Aurora, ao ano)');
+{
+  // empréstimo pessoal com score Regular no Aurora: Selic (nunca abaixo da poupança + 1 ponto) + 5 pp,
+  // e nunca abaixo do melhor CDB (Horizonte com carência, 125% do CDI) em um ano, sem o IR, + 1 ponto
+  const r4 = (x) => Math.round(x * 10000) / 10000;
+  const selic = Number(bank.taxa.split(': ')[1].split('%')[0].replace(',', '.')) / 100;
+  const sav = selic > 0.085 ? 0.0617 : selic * 0.7;
+  const base = r4(Math.max(Math.max(0.02, r4(sav + 0.01)), selic) + 0.05);
+  const cdb = r4(r4(selic - 0.001) * 1.25);
+  const floor = Math.ceil((Math.max(sav, (Math.pow(1 + cdb / 6, 6) - 1) * 0.85) + 0.01) * 10000) / 10000;
+  const rate = Math.max(base, floor);
+  expectEq(bank.sua, `${`${Math.round(rate * 1000) / 10}`.replace('.', ',')}% ao ano`, 'taxa do empréstimo com score Regular (Banco Aurora, ao ano)');
+}
 await noToasts(ana);
 await ana.getByTestId('bank-rate-card').scrollIntoViewIfNeeded();
 await ana.evaluate(() => document.querySelector('[data-testid="bank-rate-card"]').scrollIntoView({ block: 'start' }));

@@ -127,6 +127,11 @@ export const LOAN = {
   interest: 0.1,
   /** pagamento único: adicional de risco na taxa ao ano */
   unicoAddOn: 0.03,
+  /**
+   * empréstimo pessoal: spread extra ao ano sobre a taxa do banco (o dinheiro fica livre e poderia ser aplicado);
+   * o financiamento de imóvel não paga este spread (o dinheiro vai direto para o imóvel)
+   */
+  personalSpread: 0.05,
   /** pagamento único: vence no início do semestre de número `unicoSemesters` contado pela regra da 1ª parcela */
   unicoSemesters: 2,
   /** a 1ª cobrança é no primeiro início de semestre pelo menos esta quantidade de rodadas depois de pegar */
@@ -230,7 +235,10 @@ export const CREDIT_BANDS: { id: 'ruim' | 'regular' | 'bom' | 'excelente'; name:
 export const BANK_RATES = {
   options: [0.05, 0.08, 0.1, 0.12, 0.15, 0.2],
   minLoanRate: 0.02,
-  /** o empréstimo nunca cobra menos que a poupança ao ano + esta margem (pegar emprestado para aplicar não compensa) */
+  /**
+   * o empréstimo nunca cobra menos que a poupança ao ano + esta margem; o empréstimo pessoal também nunca cobra menos
+   * que o melhor CDB (com carência, rendendo a cada vez, já sem o IR) + esta margem: pegar emprestado para aplicar não compensa
+   */
   overSavings: 0.01,
 };
 
@@ -634,6 +642,30 @@ export const BANKS: { id: BankId; name: string; short: string; description: stri
 ];
 export const BANK_IDS: BankId[] = BANKS.map((b) => b.id);
 export const DEFAULT_BANK: BankId = 'aurora';
+
+/**
+ * CDB de cada banco: rende `cdi` × o CDI ao ano (CDI = taxa do banco − CDB_RULES.cdiBelow), a cada vez do jogador
+ * (taxa por vez = anual ÷ CALENDAR.roundsPerYear). Conta como renda para o IR.
+ */
+export const CDB: Record<BankId, { cdi: number }> = {
+  aurora: { cdi: 0.9 },
+  orbita: { cdi: 1 },
+  horizonte: { cdi: 1.15 },
+};
+/** Regras do CDB: depósito só na sua vez (múltiplos de SAVINGS.step); com carência rende mais e fica preso um semestre. */
+export const CDB_RULES = {
+  /** CDI ao ano = taxa do banco − isto */
+  cdiBelow: 0.001,
+  /** com carência: + esta fração do CDI */
+  lockBonus: 0.1,
+  /** com carência: só pode resgatar esta quantidade de rodadas depois do depósito (1 semestre) */
+  lockRounds: CALENDAR.roundsPerSemester,
+  /**
+   * piso do pagamento único do empréstimo pessoal: o melhor CDB rendendo esta quantidade de vezes (o único vence até
+   * 7 rodadas depois de pegar; os parcelados usam um ano, CALENDAR.roundsPerYear vezes)
+   */
+  unicoFloorTurns: CALENDAR.roundsPerYear + 1,
+};
 
 /** Lucro do Banco Aurora: parte dos juros recebidos no semestre que vira dividendo extra por cota. */
 export const AURORA = { profitShare: 0.3, idx: SPACES.findIndex((s) => s.type === 'company' && s.short === 'BA') };

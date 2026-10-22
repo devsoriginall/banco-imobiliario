@@ -40,7 +40,8 @@ function game(players = ['Ana', 'Beto']): GameState {
   for (const p of players.slice(1)) st = act(st, p.toLowerCase(), { type: 'join', name: p });
   st = act(st, 'ana', { type: 'setMercado', on: false }); // sem Jornal e Bolsa
   st = act(st, 'ana', { type: 'start' });
-  st.bankRate = 0.1;
+  // Selic 5% + 5 pp do empréstimo pessoal = 10% ao ano no Banco Aurora com score 500
+  st.bankRate = 0.05;
   return st;
 }
 function give(st: GameState, owner: string, idxs: number[], houses = 0): GameState {
@@ -85,7 +86,7 @@ describe('calendário da partida', () => {
 });
 
 describe('taxas dos planos', () => {
-  it('taxa ao ano = Taxa Selic + spread do banco; o pagamento único soma 3 pp de risco', () => {
+  it('taxa ao ano = Taxa Selic + spread do banco + 5 pp do empréstimo pessoal; o pagamento único soma 3 pp de risco', () => {
     const st = game();
     expect(LOAN_PLANS.map((p) => loanRateFor(st, 'ana', p.id))).toEqual([0.1, 0.1, 0.1, 0.1, 0.13]);
     // sem plano: a "sua taxa" da aba Banco, igual ao 2x
@@ -97,10 +98,10 @@ describe('taxas dos planos', () => {
     st.players[0].credit = 250; // Ruim: +5 pp
     expect(loanRateFor(st, 'ana', 'x4')).toBe(0.15);
     st.players[0].credit = 900; // Excelente: −4 pp
-    st.bankRate = 0.05;
-    expect(loanRateFor(st, 'ana', 'x2')).toBe(0.045); // 5 + 0 − 4 = 1% → poupança 3,5% + 1 ponto
-    expect(loanRateFor(st, 'ana', 'x3')).toBe(0.045);
-    expect(loanRateFor(st, 'ana', 'unico')).toBe(0.075); // mínimo de 4,5% + 3 pp do único
+    expect(loanRateFor(st, 'ana', 'x2')).toBe(0.095); // 5 + 0 − 4 = 1% → poupança 3,5% + 1 ponto = 4,5%, + 5 pp do pessoal
+    expect(loanRateFor(st, 'ana', 'x3')).toBe(0.095);
+    expect(loanRateFor(st, 'ana', 'unico')).toBe(0.125); // + 3 pp do único
+    expect(loanRateFor(st, 'ana', 'x2', 'aurora', 'fin')).toBe(0.045); // o financiamento fica no mínimo, sem o pessoal
   });
 
   it('simulação das 5 opções para $ 2.000: juros pelo prazo (2x = 1 ano, 5x = 2,5 anos)', () => {

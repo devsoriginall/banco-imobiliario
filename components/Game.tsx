@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { money } from '@/lib/game/format';
-import { calendarText, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf, yearOf } from '@/lib/game/rules';
+import { calendarText, cdbTotal, currentPlayer, equity, findPlayer, finsOf, incomeOf, loanOf, loanOwed, loanRoundsLeft, nextChargeRound, nextParcel, savingsOf, yearOf } from '@/lib/game/rules';
 import type { Action, GameState, IrResult, Tx } from '@/lib/game/types';
 import { needItems, NeedsYou, RoundSummarySheet, useRoundSummary } from './Avisos';
 import { BankView } from './BankView';
@@ -283,18 +283,24 @@ export function Game({ state, me, run, pushed, onPushedClose }: { state: GameSta
   );
 }
 
-/** Linha extra da carteira, só quando há o que mostrar: poupança e dívida com o banco (empréstimo e financiamentos). */
+/** Linha extra da carteira, só quando há o que mostrar: poupança, CDB e dívida com o banco (empréstimo e financiamentos). */
 function WalletChips({ state, me }: { state: GameState; me: string }) {
   const p = findPlayer(state, me);
   const savings = p ? savingsOf(p) : 0;
+  const cdb = cdbTotal(p);
   const loan = <LoanLine state={state} me={me} />;
   const fin = <FinLine state={state} me={me} />;
-  if (!savings && !loanOf(state, me) && !finsOf(state, me).length) return null;
+  if (!savings && !cdb && !loanOf(state, me) && !finsOf(state, me).length) return null;
   return (
     <div className="wallet-chips">
       {savings > 0 && (
         <span className="chip" data-testid="wallet-savings">
           Poupança {money(savings)}
+        </span>
+      )}
+      {cdb > 0 && (
+        <span className="chip" data-testid="wallet-cdb">
+          CDB {money(cdb)}
         </span>
       )}
       {loan}

@@ -1,8 +1,8 @@
 // Regras do jogo como funções puras: (estado, ação, contexto) → novo estado.
 // Nada aqui toca rede, DOM ou relógio global (o relógio e o sorteio vêm do contexto),
 // então a mesma ação pode ser reaplicada sobre um estado mais novo quando dá conflito de versão.
-import { AURORA, BANK_IDS, BANK_RATES, BANKS, CALENDAR, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JAIL_STORIES, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SEMESTERS_PER_YEAR, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
-import type { Action, ActionContext, BankId, CompanySpace, DecisionId, Edition, Financing, JornalNote, JornalSection, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
+import { AURORA, BANK_IDS, BANK_RATES, BANKS, CALENDAR, CDB, CDB_RULES, COMPANY_IDX, COMPANY_RATE, CONTROL, CREDIT, CREDIT_BANDS, DECISIONS, DEFAULT_TIER, DEFAULTS, FINANCE, GROUPS, HEADLINES, HOOD, INSURANCE, IR, JAIL_POS, JAIL_STORIES, JORNAL, LOAN, LOAN_PLANS, MAX_DOUBLES, MAX_PLAYERS, NEWS, PLAYER_COLORS, SAVINGS, SEMESTERS_PER_YEAR, SHARE_PRICE, SHARES, SPACES, STOCK, TIERS } from './data';
+import type { Action, ActionContext, BankId, CdbPosition, CompanySpace, DecisionId, Edition, Financing, JornalNote, JornalSection, GameState, GroupId, Headline, HeadlineEffect, HoodMod, Loan, LoanPlanId, Player, Stock, StreetSpace, TierId, TimedMod, Trade, TradeSide, Transfer, TurnInfo, TxKind } from './types';
 import { money } from './format';
 
 export class RuleError extends Error {
@@ -240,7 +240,7 @@ export function rentOf(st: GameState, i: number): number {
 }
 
 export function netWorth(st: GameState, p: Player): number {
-  let w = p.balance + savingsOf(p);
+  let w = p.balance + savingsOf(p) + cdbTotal(p);
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== p.id) continue;
     const i = Number(k);
@@ -712,6 +712,48 @@ export const savingsYield = (st: GameState, p: Player) => round10(savingsOf(p) *
 /** Taxa da poupança por vez (fração). */
 export const savingsRate = (st: GameState) => round4(savingsTurnRate(st));
 
+// ---------- CDB ----------
+
+/** CDI ao ano: a taxa do banco − CDB_RULES.cdiBelow. */
+export const cdiRate = (st: GameState) => Math.max(0, round4(bankRate(st) - CDB_RULES.cdiBelow));
+/** Fração do CDI que o CDB do banco paga (com carência: + CDB_RULES.lockBonus). */
+export const cdbCdiShare = (bank: BankId, lock = false) => round4(CDB[bank].cdi + (lock ? CDB_RULES.lockBonus : 0));
+/** Taxa anual do CDB do banco agora (segue o CDI de cada rodada). */
+export const cdbAnnualRate = (st: GameState, bank: BankId, lock = false) => round4(cdiRate(st) * cdbCdiShare(bank, lock));
+/** Taxa do CDB por vez (fração): a anual ÷ rodadas do ano. */
+export const cdbTurnRate = (st: GameState, bank: BankId, lock = false) => round4(cdbAnnualRate(st, bank, lock) / CALENDAR.roundsPerYear);
+/** Maior taxa anual de CDB disponível agora (com carência). */
+export const bestCdbAnnual = (st: GameState) => Math.max(...BANK_IDS.map((b) => cdbAnnualRate(st, b, true)));
+/**
+ * Quanto o melhor CDB de agora rende em `turns` vezes (juros sobre juros), já sem o IR (fração; com `turns` = um ano,
+ * é a taxa efetiva ao ano). Piso do empréstimo pessoal: isto + BANK_RATES.overSavings.
+ */
+export const bestCdbNet = (st: GameState, turns = CALENDAR.roundsPerYear) => {
+  const r = bestCdbAnnual(st) / CALENDAR.roundsPerYear;
+  return (Math.pow(1 + r, turns) - 1) * (1 - IR.rate);
+};
+/** Piso do empréstimo pessoal: o maior entre a poupança e o melhor CDB líquido em `turns` vezes, + a margem, arredondado para cima. */
+const personalFloor = (st: GameState, turns: number) => Math.ceil((Math.max(savingsAnnualRate(st), bestCdbNet(st, turns)) + BANK_RATES.overSavings) * 10000) / 10000;
+
+/** CDB do jogador no banco (salas antigas: vazio). */
+export const cdbOf = (p: Player | undefined, bank: BankId): CdbPosition => p?.cdb?.[bank] ?? { free: 0 };
+/** Depósitos com carência ainda presos na rodada `round`. */
+export const cdbLocks = (p: Player | undefined, bank: BankId, round: number) => (cdbOf(p, bank).locked ?? []).filter((d) => d.until > round);
+/** Saldo do CDB que pode ser resgatado agora (livre + carências vencidas). */
+export const cdbFree = (p: Player | undefined, bank: BankId, round: number) =>
+  cdbOf(p, bank).free + (cdbOf(p, bank).locked ?? []).filter((d) => d.until <= round).reduce((a, d) => a + d.amount, 0);
+/** Saldo total do CDB no banco (livre + com carência). */
+export const cdbBalance = (p: Player | undefined, bank: BankId) => {
+  const c = cdbOf(p, bank);
+  return c.free + (c.locked ?? []).reduce((a, d) => a + d.amount, 0);
+};
+/** Soma de todos os CDBs do jogador (entra no patrimônio). */
+export const cdbTotal = (p: Player | undefined) => BANK_IDS.reduce((a, b) => a + cdbBalance(p, b), 0);
+/** Soma do CDB que pode ser resgatado agora em todos os bancos. */
+export const cdbFreeTotal = (p: Player | undefined, round: number) => BANK_IDS.reduce((a, b) => a + cdbFree(p, b, round), 0);
+/** Rendimento de um saldo do CDB numa vez: saldo × taxa anual ÷ rodadas do ano, a $ 10. */
+export const cdbYieldOf = (st: GameState, amount: number, bank: BankId, lock = false) => round10((amount * cdbAnnualRate(st, bank, lock)) / CALENDAR.roundsPerYear);
+
 // ---------- Seguro do imóvel ----------
 
 /** Valor atual do imóvel: terreno + construções, no preço do bairro agora. */
@@ -749,8 +791,8 @@ export const finLeft = (f: Financing) => (isParcelado(f) ? f.parcels!.length - (
 export const financeEntrada = (price: number) => round10(price * FINANCE.entrada);
 /** O que for financiado de um preço: preço − entrada. */
 export const financeAmount = (price: number) => price - financeEntrada(price);
-/** Simulação dos planos para financiar `price` agora no banco (mesma taxa e parcelas do empréstimo, sobre preço − entrada). */
-export const financeOptions = (st: GameState, pid: string, price: number, bank: BankId = 'aurora') => loanOptions(st, pid, financeAmount(price), bank);
+/** Simulação dos planos para financiar `price` agora no banco (parcelas do empréstimo, sem o spread do empréstimo pessoal, sobre preço − entrada). */
+export const financeOptions = (st: GameState, pid: string, price: number, bank: BankId = 'aurora') => loanOptions(st, pid, financeAmount(price), bank, 'fin');
 /** Por que `pid` não pode financiar `price` agora no banco (null = pode). `idx`: imóvel que já tem financiamento não aceita outro. */
 export function financeBlock(st: GameState, pid: string, price: number, idx?: number, bank: BankId = 'aurora'): string | null {
   const p = findPlayer(st, pid);
@@ -790,14 +832,22 @@ export const bankSpread = (st: GameState, id: BankId) => round4(bankInfo(id).spr
 export const bankModTexts = (st: GameState, id: BankId) => bankModsOf(st, id).map((m) => `${m.why}: ${signed(m.pp)} ponto${Math.abs(m.pp) === 1 ? '' : 's'} ${untilText(st, m.until)}`);
 
 /**
- * Taxa ao ano de um empréstimo novo agora: Taxa Selic + spread do banco + ajuste do score, nunca abaixo do mínimo
- * nem da poupança ao ano + BANK_RATES.overSavings;
- * pagamento único: + LOAN.unicoAddOn. Sem plano: a taxa dos parcelados (a "sua taxa" da aba Banco).
+ * Taxa ao ano de um empréstimo (`kind` 'loan') ou financiamento ('fin') novo agora: Taxa Selic + spread do banco +
+ * ajuste do score, nunca abaixo do mínimo nem da poupança ao ano + BANK_RATES.overSavings. O empréstimo pessoal soma
+ * LOAN.personalSpread e nunca fica abaixo do melhor CDB líquido (bestCdbNet, em um ano; o único, no prazo dele) +
+ * BANK_RATES.overSavings.
+ * Pagamento único: + LOAN.unicoAddOn. Sem plano: a taxa dos parcelados (a "sua taxa" da aba Banco).
  */
-export function loanRateFor(st: GameState, pid: string, plan?: LoanPlanId, bank: BankId = 'aurora'): number {
+export function loanRateFor(st: GameState, pid: string, plan?: LoanPlanId, bank: BankId = 'aurora', kind: 'loan' | 'fin' = 'loan'): number {
   const band = creditBand(creditOf(findPlayer(st, pid)));
   const floor = Math.max(BANK_RATES.minLoanRate, round4(savingsAnnualRate(st) + BANK_RATES.overSavings));
-  const base = Math.max(floor, round4(bankRate(st) + bankSpread(st, bank) + band.rateOffset));
+  let base = Math.max(floor, round4(bankRate(st) + bankSpread(st, bank) + band.rateOffset));
+  if (kind === 'loan') {
+    // empréstimo pessoal: + LOAN.personalSpread, e nunca abaixo do melhor CDB líquido de um ano + a margem;
+    // o pagamento único também nunca abaixo do CDB líquido no prazo mais longo dele (CDB_RULES.unicoFloorTurns vezes)
+    base = Math.max(personalFloor(st, CALENDAR.roundsPerYear), round4(base + LOAN.personalSpread));
+    if (plan === 'unico') return Math.max(personalFloor(st, CDB_RULES.unicoFloorTurns), round4(base + LOAN.unicoAddOn));
+  }
   return plan === 'unico' ? round4(base + LOAN.unicoAddOn) : base;
 }
 /** Prazo do plano em anos: semestres ÷ 2 (2x = 1 ano, 5x = 2,5 anos; único = LOAN.unicoSemesters semestres). */
@@ -831,7 +881,7 @@ export function bankOffers(st: GameState, pid: string, kind: 'loan' | 'fin' = 'l
     const minScore = kind === 'loan' ? b.minScore : b.finMinScore;
     const limit = kind === 'loan' ? loanLimit(st, pid, b.id) : 0;
     const block = kind === 'loan' ? (bankLoanBlock(st, pid, b.id) ?? (limit === 0 ? 'Sem limite agora' : null)) : financeBlock(st, pid, price, idx, b.id);
-    return { id: b.id, name: b.name, short: b.short, description: b.description, rate: loanRateFor(st, pid, undefined, b.id), limit, minScore, block };
+    return { id: b.id, name: b.name, short: b.short, description: b.description, rate: loanRateFor(st, pid, undefined, b.id, kind), limit, minScore, block };
   });
 }
 
@@ -880,9 +930,9 @@ export interface LoanOption {
   dueRound: number;
 }
 /** Simulação das 5 opções para pedir `amount` agora no banco (taxa ao ano, juros pelo prazo, parcela e total de cada plano). */
-export function loanOptions(st: GameState, pid: string, amount: number, bank: BankId = 'aurora'): LoanOption[] {
+export function loanOptions(st: GameState, pid: string, amount: number, bank: BankId = 'aurora', kind: 'loan' | 'fin' = 'loan'): LoanOption[] {
   return LOAN_PLANS.map((p) => {
-    const rate = loanRateFor(st, pid, p.id, bank);
+    const rate = loanRateFor(st, pid, p.id, bank, kind);
     const interest = planInterest(amount, rate, p.id);
     const total = amount + interest;
     const unico = p.id === 'unico';
@@ -1010,8 +1060,8 @@ const irReason = (year: number, income: number) => `Imposto de renda do ano ${ye
 const malhaReason = (year: number, partial: boolean) => `Malha fina: IR ${partial ? 'que faltou ' : ''}do ano ${year} + multa de ${Math.round(IR.fine * 100)}%`;
 /** Renda tributável do ano do calendário em curso. */
 export const incomeOf = (p: Player | undefined) => p?.income ?? 0;
-/** Tipos de transação que contam como renda para o IR (o rendimento da poupança é isento). */
-const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend']);
+/** Tipos de transação que contam como renda para o IR (o rendimento do CDB conta; o da poupança é isento). */
+const INCOME_KINDS = new Set<TxKind>(['rent', 'fee', 'news', 'dividend', 'cdb']);
 export const isIncome = (kind: TxKind) => INCOME_KINDS.has(kind) || (IR.salaryIsIncome && kind === 'salary');
 
 const isMyTurn = (st: GameState, actor: string) => st.phase === 'playing' && !st.winner && currentPlayer(st)?.id === actor;
@@ -1201,6 +1251,10 @@ export function transfersFor(st: GameState, action: Action, actor: string): Tran
       return [{ from: actor, to: BANK, amount: action.amount, reason: 'Depósito na poupança', kind: 'poupanca' }];
     case 'withdraw':
       return [{ from: BANK, to: actor, amount: action.amount, reason: 'Resgate da poupança', kind: 'poupanca' }];
+    case 'cdbDeposit':
+      return [{ from: actor, to: BANK, amount: action.amount, reason: `Aplicação no CDB${action.lock ? ' com carência' : ''} · ${bankInfo(action.bank).name}`, kind: 'cdbmov' }];
+    case 'cdbWithdraw':
+      return [{ from: BANK, to: actor, amount: action.amount, reason: `Resgate do CDB · ${bankInfo(action.bank).name}`, kind: 'cdbmov' }];
     case 'insure': {
       const s = street(action.idx);
       const until = insureUntilNew(st, action.idx);
@@ -1382,6 +1436,7 @@ function passTurn(st: GameState, now: Date) {
   // as parcelas do empréstimo e dos financiamentos são cobradas antes de qualquer jogada
   const p = st.players[i];
   savingsTurn(st, p, now);
+  cdbTurn(st, p, now);
   openIR(st, p, now);
   collectFins(st, p, now);
   if (p.out) {
@@ -1406,11 +1461,85 @@ function passTurn(st: GameState, now: Date) {
 function savingsTurn(st: GameState, p: Player, now: Date) {
   const y = savingsYield(st, p);
   if (y <= 0) return;
-  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct2(savingsRate(st))} de ${money(savingsOf(p))} (${pct2(savingsAnnualRate(st))} ao ano)`, kind: 'rendimento' }], now);
+  applyTransfers(st, [{ from: BANK, to: p.id, amount: y, reason: `Rendimento da poupança: ${pct2(savingsRate(st))} na vez (${pct2(savingsAnnualRate(st))} ao ano)`, kind: 'rendimento' }], now);
   // o rendimento entra na poupança, não na carteira
   p.balance -= y;
   p.savings = savingsOf(p) + y;
   log(st, `Poupança de ${p.name} rendeu ${money(y)}`, now, p.id, false, p.id);
+}
+
+/**
+ * Rendimento dos CDBs no início da vez do jogador (conta como renda para o IR; fica no CDB): o saldo livre e cada
+ * depósito com carência rendem pela taxa de agora; depois, as carências vencidas viram saldo livre.
+ */
+function cdbTurn(st: GameState, p: Player, now: Date) {
+  if (!p.cdb) return;
+  let total = 0;
+  for (const bank of BANK_IDS) {
+    const c = p.cdb[bank];
+    if (!c) continue;
+    const name = bankInfo(bank).name;
+    const yf = cdbYieldOf(st, c.free, bank);
+    if (yf > 0) {
+      applyTransfers(st, [{ from: BANK, to: p.id, amount: yf, reason: `Rendimento do CDB · ${name}: ${pct2(cdbTurnRate(st, bank))} na vez (${pct(cdbCdiShare(bank))} do CDI)`, kind: 'cdb' }], now);
+      p.balance -= yf;
+      c.free += yf;
+      total += yf;
+    }
+    const locks = c.locked ?? [];
+    const base = locks.reduce((a, d) => a + d.amount, 0);
+    let yl = 0;
+    for (const d of locks) {
+      const y = cdbYieldOf(st, d.amount, bank, true);
+      d.amount += y;
+      yl += y;
+    }
+    if (yl > 0) {
+      applyTransfers(st, [{ from: BANK, to: p.id, amount: yl, reason: `Rendimento do CDB com carência · ${name}: ${pct2(cdbTurnRate(st, bank, true))} na vez (${pct(cdbCdiShare(bank, true))} do CDI)`, kind: 'cdb' }], now);
+      p.balance -= yl;
+      total += yl;
+    }
+  }
+  settleCdb(st, p);
+  if (total > 0) log(st, `CDB de ${p.name} rendeu ${money(total)}`, now, p.id, false, p.id);
+}
+
+/** Carências vencidas (rodada atual ≥ `until`) viram saldo livre; posições vazias somem. */
+function settleCdb(st: GameState, p: Player) {
+  if (!p.cdb) return;
+  for (const bank of BANK_IDS) {
+    const c = p.cdb[bank];
+    if (!c) continue;
+    const done = (c.locked ?? []).filter((d) => d.until <= st.round);
+    if (done.length) {
+      c.free += done.reduce((a, d) => a + d.amount, 0);
+      c.locked = c.locked!.filter((d) => d.until > st.round);
+    }
+    if (c.locked && !c.locked.length) delete c.locked;
+    if (!c.free && !c.locked) delete p.cdb[bank];
+  }
+  if (!Object.keys(p.cdb).length) delete p.cdb;
+}
+
+/** Resgata `amount` do saldo livre do CDB no banco para a carteira, com a linha no extrato. */
+function fromCdb(st: GameState, p: Player, bank: BankId, amount: number, reason: string, now: Date) {
+  if (amount <= 0) return;
+  settleCdb(st, p);
+  const c = p.cdb?.[bank];
+  if (!c) return;
+  applyTransfers(st, [{ from: BANK, to: p.id, amount, reason, kind: 'cdbmov' }], now);
+  c.free -= amount;
+  settleCdb(st, p);
+}
+
+/** Cobrança do banco: resgata dos CDBs livres (do que rende menos para o que rende mais) até a carteira ter `owed`. */
+function drainCdb(st: GameState, p: Player, owed: number, why: string, now: Date) {
+  settleCdb(st, p);
+  for (const bank of BANK_IDS) {
+    if (p.balance >= owed) return;
+    const take = Math.min(cdbFree(p, bank, st.round), owed - p.balance);
+    fromCdb(st, p, bank, take, `Cobrança do banco: resgate do CDB · ${bankInfo(bank).name} (${why})`, now);
+  }
 }
 
 /** Tira `amount` da poupança para a carteira (resgate), com a linha no extrato. */
@@ -1440,7 +1569,7 @@ function collectFins(st: GameState, p: Player, now: Date) {
 }
 
 /**
- * Cobra uma parcela (ou o pagamento único) do financiamento: carteira, depois poupança. Se ainda faltar, o banco
+ * Cobra uma parcela (ou o pagamento único) do financiamento: carteira, poupança, depois CDB livre. Se ainda faltar, o banco
  * toma o próprio imóvel financiado (as construções nele são vendidas pela metade do custo para o jogador), o
  * financiamento é cancelado e nada mais é cobrado dele.
  */
@@ -1448,6 +1577,7 @@ function collectFin(st: GameState, p: Player, f: Financing, amount: number, tag:
   const name = street(f.idx).name;
   log(st, `${tag} de ${p.name}: ${money(amount)}`, now, undefined, true, p.id);
   if (p.balance < amount) fromSavings(st, p, Math.min(savingsOf(p), amount - p.balance), `Cobrança do banco: resgate da poupança para ${tag.toLowerCase()}`, now);
+  if (p.balance < amount) drainCdb(st, p, amount, tag.toLowerCase(), now);
   if (p.balance < amount) {
     repossess(st, p, f.idx, now);
     changeCredit(st, p, CREDIT.parcelPenhora, `${tag} sem saldo: imóvel retomado`);
@@ -1481,7 +1611,7 @@ function repossess(st: GameState, p: Player, i: number, now: Date) {
 }
 
 /**
- * Cobra `owed` do jogador para o banco: primeiro o dinheiro e a poupança; se faltar, PENHORA:
+ * Cobra `owed` do jogador para o banco: primeiro o dinheiro, a poupança e o CDB livre; se faltar, PENHORA:
  * vende as construções ao banco pela metade do custo (sempre do imóvel com mais construções; empate, o mais barato),
  * depois toma os imóveis do mais barato para o mais caro, cada um pelo valor de hipoteca (já hipotecado vale 0).
  * A penhora para assim que o saldo cobre `owed`; o que sobrar do valor dos imóveis fica com o jogador.
@@ -1494,6 +1624,8 @@ function collectDebt(st: GameState, p: Player, owed: number, reason: string, now
       .filter((i) => st.props[i].owner === p.id);
   // a poupança é dinheiro: resgata antes de penhorar
   if (p.balance < owed) fromSavings(st, p, Math.min(savingsOf(p), owed - p.balance), `Cobrança do banco: resgate da poupança (${reason.toLowerCase()})`, now);
+  // o CDB livre também: depois da poupança, antes da penhora (com carência, só depois de liberar)
+  if (p.balance < owed) drainCdb(st, p, owed, reason.toLowerCase(), now);
   let sold = 0;
   while (p.balance < owed) {
     const built = mine().filter((i) => houses(st, i) > 0);
@@ -1583,6 +1715,13 @@ function collectParcel(st: GameState, p: Player, l: Loan, np: NonNullable<Return
 function goBankrupt(st: GameState, d: Player, creditor: string, now: Date, by: string | undefined) {
   // a poupança vai junto com o saldo
   fromSavings(st, d, savingsOf(d), `Falência de ${d.name}: resgate da poupança`, now);
+  // os CDBs também, inclusive os com carência
+  for (const bank of BANK_IDS) {
+    const all = cdbBalance(d, bank);
+    if (all <= 0) continue;
+    applyTransfers(st, [{ from: BANK, to: d.id, amount: all, reason: `Falência de ${d.name}: resgate do CDB · ${bankInfo(bank).name}`, kind: 'cdbmov' }], now);
+  }
+  delete d.cdb;
   for (const [k, pr] of Object.entries(st.props)) {
     if (pr.owner !== d.id) continue;
     // financiado (alienado ao banco) volta ao banco e o financiamento é cancelado
@@ -2326,6 +2465,31 @@ export function applyAction(state0: GameState, action: Action, ctx: ActionContex
       need(amt === have || amt % SAVINGS.step === 0, `Resgate em múltiplos de ${money(SAVINGS.step)}, ou tudo.`);
       fromSavings(st, me, amt, 'Resgate da poupança', now);
       log(st, `${me.name} resgatou ${money(amt)} da poupança`, now, actor);
+      break;
+    }
+    case 'cdbDeposit': {
+      turnOnly();
+      need(BANK_IDS.includes(action.bank), 'Banco inválido.');
+      const amt = action.amount;
+      need(Number.isInteger(amt) && amt >= SAVINGS.step && amt % SAVINGS.step === 0, `Aplique em múltiplos de ${money(SAVINGS.step)}.`);
+      pay(st, transfersFor(state, action, actor), now);
+      const c = { ...cdbOf(me, action.bank) };
+      if (action.lock) c.locked = [...(c.locked ?? []), { amount: amt, until: st.round + CDB_RULES.lockRounds }];
+      else c.free += amt;
+      me.cdb = { ...(me.cdb ?? {}), [action.bank]: c };
+      log(st, `${me.name} aplicou ${money(amt)} no CDB do ${bankInfo(action.bank).name}${action.lock ? ' com carência' : ''}`, now, actor);
+      break;
+    }
+    case 'cdbWithdraw': {
+      need(BANK_IDS.includes(action.bank), 'Banco inválido.');
+      const amt = action.amount;
+      const have = cdbFree(me, action.bank, st.round);
+      const name = bankInfo(action.bank).name;
+      need(have > 0, cdbBalance(me, action.bank) > 0 ? `Seu CDB no ${name} ainda está na carência.` : `Você não tem CDB no ${name}.`);
+      need(Number.isInteger(amt) && amt > 0 && amt <= have, `Você pode resgatar até ${money(have)} do CDB no ${name}.`);
+      need(amt === have || amt % SAVINGS.step === 0, `Resgate em múltiplos de ${money(SAVINGS.step)}, ou tudo.`);
+      fromCdb(st, me, action.bank, amt, `Resgate do CDB · ${name}`, now);
+      log(st, `${me.name} resgatou ${money(amt)} do CDB do ${name}`, now, actor);
       break;
     }
     case 'insure': {

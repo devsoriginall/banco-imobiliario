@@ -39,15 +39,17 @@ const H = (tag: string) => {
 };
 const QUIET = H('Calçadão novo');
 
-/** Sala com Ana e Beto; `mercado` liga o Jornal e a Bolsa. Taxa da rodada fixa em 12%. */
-function game(mercado = false): GameState {
+/** Sala com Ana e Beto; `mercado` liga o Jornal e a Bolsa. Taxa da rodada fixa em 12% (ou `rate`). */
+function game(mercado = false, rate = 0.12): GameState {
   let st = newRoom('ABCDE', { id: 'ana', name: 'Ana' }, now);
   st = act(st, 'beto', { type: 'join', name: 'Beto' });
   if (!mercado) st = act(st, 'ana', { type: 'setMercado', on: false });
   st = act(st, 'ana', { type: 'start' });
-  st.bankRate = 0.12;
+  st.bankRate = rate;
   return st;
 }
+/** Taxa de 7%: o empréstimo pessoal (+5 pp) fica em 12% no Aurora com score 500. */
+const loanGame = () => game(false, 0.07);
 /** A próxima manchete do baralho será `hi`. */
 function force(st: GameState, hi: number): GameState {
   const s = structuredClone(st);
@@ -67,8 +69,8 @@ function toAna(st: GameState, round: number): GameState {
 }
 
 describe('taxa por banco e score mínimo', () => {
-  it('score 500 (Regular): Aurora na Selic, Horizonte +4 pp, Órbita só a partir de 600', () => {
-    const st = game();
+  it('score 500 (Regular): Aurora na Selic + 5 pp do pessoal, Horizonte +4 pp, Órbita só a partir de 600', () => {
+    const st = loanGame();
     expect(loanRateFor(st, 'ana', 'x2', 'aurora')).toBe(0.12);
     expect(loanRateFor(st, 'ana', 'x2', 'horizonte')).toBe(0.16);
     expect(loanRateFor(st, 'ana', 'unico', 'aurora')).toBe(0.15);
@@ -86,23 +88,26 @@ describe('taxa por banco e score mínimo', () => {
   });
 
   it('score 700 (Bom): Órbita é o mais barato, com limite menor (fator 0,8)', () => {
-    const st = game();
+    const st = game(); // Selic 12%, Bom −2 pp
     pl(st, 'ana').credit = 700;
-    expect(['aurora', 'orbita', 'horizonte'].map((b) => loanRateFor(st, 'ana', 'x2', b as never))).toEqual([0.1, 0.09, 0.14]);
+    // financiamento: Selic + margem do banco + score
+    expect(['aurora', 'orbita', 'horizonte'].map((b) => loanRateFor(st, 'ana', 'x2', b as never, 'fin'))).toEqual([0.1, 0.09, 0.14]);
+    // empréstimo pessoal: + 5 pp; o Órbita (14%) bate no piso do melhor CDB líquido + 1 ponto (14,46%)
+    expect(['aurora', 'orbita', 'horizonte'].map((b) => loanRateFor(st, 'ana', 'x2', b as never))).toEqual([0.15, 0.1446, 0.19]);
     const eq = equity(st, pl(st, 'ana'));
     expect(loanLimit(st, 'ana', 'aurora')).toBe(Math.floor((eq * 0.7) / 500) * 500);
     expect(loanLimit(st, 'ana', 'orbita')).toBe(Math.floor((eq * 0.7 * 0.8) / 500) * 500);
     const lim = loanLimit(st, 'ana', 'orbita');
     expect(() => act(st, 'ana', { type: 'takeLoan', amount: lim + 500, plan: 'x2', bank: 'orbita' })).toThrow(/limite é .* no Banco Órbita/);
     const taken = act(st, 'ana', { type: 'takeLoan', amount: 4000, plan: 'x2', bank: 'orbita' });
-    expect(taken.loans!.ana).toMatchObject({ bank: 'orbita', rate: 0.09, interest: 360, parcels: [2180, 2180] });
-    expect(taken.tx[0].reason).toContain('Empréstimo do Banco Órbita em 2x a 9% ao ano');
+    expect(taken.loans!.ana).toMatchObject({ bank: 'orbita', rate: 0.1446, interest: 578, parcels: [2290, 2288] });
+    expect(taken.tx[0].reason).toContain('Empréstimo do Banco Órbita em 2x a 14,5% ao ano');
     // um empréstimo por vez, em qualquer banco
     expect(() => act(taken, 'ana', { type: 'takeLoan', amount: 1000, bank: 'horizonte' })).toThrow(/já tem/);
   });
 
   it('score 150: só o Horizonte empresta (Ruim +5 pp, limite 25%)', () => {
-    const st = game();
+    const st = loanGame();
     pl(st, 'ana').credit = 150;
     expect(bankOffers(st, 'ana').map((o) => o.block)).toEqual(['Score mínimo 200', 'Score mínimo 600', null]);
     expect(loanRateFor(st, 'ana', 'x2', 'horizonte')).toBe(0.21);
@@ -123,7 +128,7 @@ describe('taxa por banco e score mínimo', () => {
 
 describe('juros ao ano pelo prazo', () => {
   it('na mesma taxa, os juros do 5x são 2,5 vezes os do 2x (1 ano contra 2,5 anos)', () => {
-    const st = game();
+    const st = loanGame();
     const sim = loanOptions(st, 'ana', 10000, 'aurora');
     const by = Object.fromEntries(sim.map((o) => [o.plan, o]));
     expect(by.x2.rate).toBe(by.x5.rate);
@@ -137,7 +142,7 @@ describe('juros ao ano pelo prazo', () => {
   });
 
   it('a taxa ao ano fica travada no empréstimo (o campo rate guarda a taxa ao ano)', () => {
-    let st = act(game(), 'ana', { type: 'takeLoan', amount: 2000, plan: 'x5', bank: 'horizonte' });
+    let st = act(loanGame(), 'ana', { type: 'takeLoan', amount: 2000, plan: 'x5', bank: 'horizonte' });
     expect(st.loans!.ana).toMatchObject({ rate: 0.16, interest: 800 });
     expect(isAnnual(st.loans!.ana)).toBe(true);
     st.bankRate = 0.2;
@@ -206,7 +211,10 @@ describe('Jornal mexe na taxa de um banco', () => {
     expect(st.bankMods).toEqual([{ bank: 'orbita', pp: -2, from: 2, until: 3, why: 'Promoção Órbita' }]);
     expect(bankSpread(st, 'orbita')).toBe(-0.03);
     expect(bankSpread(st, 'aurora')).toBe(0);
-    expect(loanRateFor(st, 'ana', 'x2', 'orbita')).toBe(Math.round((bankRate(st) - 0.03 - 0.02) * 10000) / 10000);
+    expect(loanRateFor(st, 'ana', 'x2', 'orbita', 'fin')).toBe(Math.round((bankRate(st) - 0.03 - 0.02) * 10000) / 10000);
+    pl(st, 'ana').credit = 250; // Ruim (+5 pp), longe do piso do CDB: o empréstimo pessoal soma +5 pp
+    expect(loanRateFor(st, 'ana', 'x2', 'orbita')).toBe(Math.round((bankRate(st) - 0.03 + 0.05 + 0.05) * 10000) / 10000);
+    pl(st, 'ana').credit = 700;
     expect(st.jornal![0].effects).toEqual(['Taxa do Banco Órbita −2 pontos ao ano até a rodada 3']);
     expect(st.jornal![0].notes!.some((n) => n.sec === 'economia' && n.title === 'Banco Órbita baixa os juros')).toBe(true);
     st = pass(pass(st)); // rodada 3: ainda vale
@@ -230,7 +238,7 @@ describe('Jornal mexe na taxa de um banco', () => {
 describe('lucro do Banco Aurora no dividendo', () => {
   it('os juros das parcelas pagas ao Aurora entram no dividendo anunciado e o acumulado zera', () => {
     let st = game(true);
-    st.bankRate = 0.1;
+    st.bankRate = 0.05; // + 5 pp do pessoal = 10% ao ano
     st = act(st, 'ana', { type: 'takeLoan', amount: 10000, plan: 'x2', bank: 'aurora' });
     const l = st.loans!.ana;
     expect(l).toMatchObject({ interest: 1000, parcels: [5500, 5500] });
@@ -259,13 +267,13 @@ describe('lucro do Banco Aurora no dividendo', () => {
 
   it('juros pagos a outro banco não contam; quitação antecipada conta só a parte de juros', () => {
     let st = game(true);
-    st.bankRate = 0.1;
+    st.bankRate = 0.05; // + 5 pp do pessoal = 10% ao ano
     st = act(st, 'ana', { type: 'takeLoan', amount: 10000, plan: 'x2', bank: 'horizonte' });
     st = toAna(st, 4);
     expect(st.auroraProfit ?? 0).toBe(0);
 
     let q = game(true);
-    q.bankRate = 0.1;
+    q.bankRate = 0.05;
     q = act(q, 'ana', { type: 'takeLoan', amount: 4000, plan: 'x4', bank: 'aurora' }); // 10% × 2 anos = 800 de juros
     q = act(q, 'ana', { type: 'payLoan', amount: 4800 });
     expect(q.auroraProfit).toBe(800);
@@ -307,7 +315,7 @@ describe('financiamento com o banco escolhido', () => {
 
   it('financiamento no Aurora soma os juros da parcela ao lucro do banco', () => {
     let st = game(true);
-    st.bankRate = 0.1;
+    st.bankRate = 0.1; // financiamento: sem o spread do pessoal, 10% ao ano
     st = act(st, 'ana', { type: 'land', idx: NOVE_JULHO });
     st = act(st, 'ana', { type: 'buy', finance: 'x2', bank: 'aurora' });
     const f = finOf(st, NOVE_JULHO)!;

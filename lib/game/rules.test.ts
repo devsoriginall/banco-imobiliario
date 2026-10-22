@@ -27,8 +27,8 @@ function game(): GameState {
   // regras clássicas: sem Jornal e Bolsa (cotas a $ 200, sem manchetes nem dividendos)
   st = act(st, 'ana', { type: 'setMercado', on: false });
   st = act(st, 'ana', { type: 'start' });
-  // os testes antigos do empréstimo (pagamento único: taxa da rodada + 3 pp ao ano, por 1 ano) contam com juros de 10%:
-  // fixa a taxa sorteada da rodada em 7%
+  // os testes antigos do empréstimo (pagamento único: taxa da rodada + 5 pp do pessoal + 3 pp ao ano, por 1 ano)
+  // contam com juros de 15%: fixa a taxa sorteada da rodada em 7%
   st.bankRate = 0.07;
   return st;
 }
@@ -623,12 +623,12 @@ describe('empréstimo do banco', () => {
     expect(loanLimit(poor, 'ana')).toBe(0);
   });
 
-  it('pega o empréstimo na própria vez, com 10% de juros e vencimento no 2º semestre (rodada 7)', () => {
+  it('pega o empréstimo na própria vez, com 15% de juros e vencimento no 2º semestre (rodada 7)', () => {
     const st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
     expect(bal(st, 'ana')).toBe(27000);
-    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 200, paid: 0, takenRound: 1, dueRound: 7, firstRound: 4, rate: 0.1, plan: 'unico', bank: 'aurora' });
-    expect(debtOf(st, 'ana')).toBe(2200);
-    expect(equity(st, pl(st, 'ana'))).toBe(24800);
+    expect(st.loans!.ana).toEqual({ principal: 2000, interest: 300, paid: 0, takenRound: 1, dueRound: 7, firstRound: 4, rate: 0.15, plan: 'unico', bank: 'aurora' });
+    expect(debtOf(st, 'ana')).toBe(2300);
+    expect(equity(st, pl(st, 'ana'))).toBe(24700);
     expect(loanRoundsLeft(st, 'ana')).toBe(6);
     expect(st.tx[0]).toMatchObject({ from: 'bank', to: 'ana', amount: 2000, kind: 'loan' });
     expect(loanLimit(st, 'ana')).toBe(0);
@@ -647,15 +647,15 @@ describe('empréstimo do banco', () => {
   it('pagamento parcial e quitação antecipada (principal + juros cheios)', () => {
     let st = act(game(), 'ana', { type: 'takeLoan', amount: 2000 });
     st = act(st, 'ana', { type: 'payLoan', amount: 1000 });
-    expect(debtOf(st, 'ana')).toBe(1200);
+    expect(debtOf(st, 'ana')).toBe(1300);
     expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 1000, kind: 'loanpay' });
     expect(() => act(st, 'ana', { type: 'payLoan', amount: 1500 })).toThrow(/só/);
     st = pass(st);
     expect(() => act(st, 'ana', { type: 'payLoan', amount: 100 })).toThrow(/vez de Beto/);
     st = pass(st);
-    st = act(st, 'ana', { type: 'payLoan', amount: 1200 });
+    st = act(st, 'ana', { type: 'payLoan', amount: 1300 });
     expect(st.loans!.ana).toBeUndefined();
-    expect(bal(st, 'ana')).toBe(27000 - 2200);
+    expect(bal(st, 'ana')).toBe(27000 - 2300);
     expect(st.tx[0].reason).toBe('Quitação do empréstimo · Banco Aurora');
   });
 
@@ -667,18 +667,18 @@ describe('empréstimo do banco', () => {
     st = pass(st); // começa a vez da Ana na rodada 7 (início do 1º semestre do ano 2)
     expect(st.round).toBe(7);
     expect(st.loans!.ana).toBeUndefined();
-    expect(bal(st, 'ana')).toBe(27000 - 2200);
-    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 2200, kind: 'loanpay' });
-    expect(st.feed.some((f) => f.text === 'Vencimento: o banco cobra $ 2.200 do empréstimo de Ana')).toBe(true);
+    expect(bal(st, 'ana')).toBe(27000 - 2300);
+    expect(st.tx[0]).toMatchObject({ from: 'ana', to: 'bank', amount: 2300, kind: 'loanpay' });
+    expect(st.feed.some((f) => f.text === 'Vencimento: o banco cobra $ 2.300 do empréstimo de Ana')).toBe(true);
   });
 
   it('penhora: vende construções pela metade, depois toma imóveis do mais barato, pelo valor de hipoteca', () => {
     let st = act(give(game(), 'ana', [PAULISTA]), 'ana', { type: 'takeLoan', amount: 2000 });
     st = toEve(st);
     st = give(st, 'ana', [NOVE_JULHO, BRASIL, BEIRA_MAR], 1); // verde com 1 casa cada (construção $500)
-    st.players[0].balance = 0;
+    st.players[0].balance = 100;
     st = pass(st);
-    // 3 casas × 250 = 750; Beira Mar ($600) +500, Brasil ($750) +500, 9 de Julho ($1.000) +500 = 2.250 ≥ 2.200
+    // 100 + 3 casas × 250 = 850; Beira Mar ($600) +500, Brasil ($750) +500, 9 de Julho ($1.000) +500 = 2.350 ≥ 2.300
     expect(st.props[BEIRA_MAR]).toBeUndefined();
     expect(st.props[BRASIL]).toBeUndefined();
     expect(st.props[NOVE_JULHO]).toBeUndefined();
@@ -697,9 +697,9 @@ describe('empréstimo do banco', () => {
     st = toEve(st);
     st = give(st, 'ana', [BEIRA_MAR, PAULISTA, FARIA_LIMA]);
     st.props[BEIRA_MAR].mortgaged = true;
-    st.players[0].balance = 1000;
+    st.players[0].balance = 1100;
     st = pass(st);
-    // Beira Mar (hipotecada) +0, Faria Lima ($1.400) +700 → 1.700, Paulista ($1.600) +800 → 2.500
+    // Beira Mar (hipotecada) +0, Faria Lima ($1.400) +700 → 1.800, Paulista ($1.600) +800 → 2.600 (deve 2.300)
     expect(st.props[BEIRA_MAR]).toBeUndefined();
     expect(st.props[FARIA_LIMA]).toBeUndefined();
     expect(st.props[PAULISTA]).toBeUndefined();

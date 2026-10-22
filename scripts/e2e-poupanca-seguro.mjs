@@ -252,6 +252,62 @@ await tab(ana, 'Placar');
 check((await text(ana.locator('.li[data-player="Ana"] .main'))).includes(`poupança ${brl(saved)}`), 'poupança no Placar');
 await shot(ana, 'poupanca-5-placar.png');
 
+// 9. CDB: na vez dela, Ana aplica $ 1.000 no Órbita (sem carência) e $ 2.000 no Horizonte com carência; resgata $ 100 do Órbita
+// (capturas do celular em CDB_SHOTS, se definido: só arquivos novos)
+const cdbShot = async (name) => {
+  if (!process.env.CDB_SHOTS) return;
+  const fs = await import('node:fs');
+  fs.mkdirSync(process.env.CDB_SHOTS, { recursive: true });
+  const file = path.join(process.env.CDB_SHOTS, name);
+  if (fs.existsSync(file)) throw new Error(`não sobrescreve ${file}`);
+  await ana.screenshot({ path: file });
+};
+await tab(ana, 'Banco');
+const cdb = ana.getByTestId('cdb-card');
+await cdb.waitFor();
+const cdbRound = Number((await text(ana.getByTestId('bank-rate-card'))).match(/Rodada (\d+)/)[1]);
+const beforeCdb = await wallet(ana);
+await cdb.locator('[data-bank="orbita"]').first().click();
+await cdb.getByRole('button', { name: 'Mais $ 100 na aplicação' }).waitFor();
+check((await text(ana.getByTestId('cdb-deposit-amount'))) === '$ 1.000', 'aplicação sugerida de $ 1.000');
+await ana.getByTestId('cdb-deposit').click();
+await ana.locator('.sheet').getByText('Aplicação no CDB · Banco Órbita').first().waitFor();
+await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
+await ana.getByRole('button', { name: 'Fechar' }).click();
+await ana.getByTestId('cdb-lock').click();
+await cdb.locator('[data-bank="horizonte"]').first().click();
+for (let k = 0; k < 10; k++) await cdb.getByRole('button', { name: 'Mais $ 100 na aplicação' }).click();
+check((await text(ana.getByTestId('cdb-deposit-amount'))) === '$ 2.000', 'aplicação de $ 2.000 com carência');
+await ana.getByTestId('cdb-deposit').click();
+await ana.locator('.sheet').getByText('Aplicação no CDB com carência · Banco Horizonte').first().waitFor();
+await ana.getByRole('button', { name: 'Confirmar Pix' }).click();
+await ana.getByRole('button', { name: 'Fechar' }).click();
+check((await wallet(ana)) === beforeCdb - 3000, 'carteira sem os $ 3.000 aplicados');
+check((await text(ana.getByTestId('wallet-cdb'))) === 'CDB $ 3.000', 'CDB na carteira');
+check((await text(ana.getByTestId('cdb-total'))) === '$ 3.000', 'total no CDB');
+const positions = await text(ana.getByTestId('cdb-positions'));
+check(positions.includes('Banco ÓrbitaLivre $ 1.000'), `posição livre no Órbita: ${positions}`);
+check(positions.includes(`Com carência $ 2.000 · libera na rodada ${cdbRound + 3}`), `posição com carência no Horizonte: ${positions}`);
+check((await cdb.getByTestId('cdb-withdraw').count()) === 0, 'Horizonte na carência: sem resgate');
+check((await text(cdb)).includes('O CDB do Horizonte ainda está na carência.'), 'aviso da carência');
+await calm(ana);
+await scrollTo(ana, 'cdb-card');
+await cdbShot('cdb-1-livre-e-carencia.png');
+// resgate de $ 100 do Órbita (livre)
+await cdb.locator('[data-bank="orbita"]').first().click();
+await ana.getByTestId('cdb-withdraw').click();
+await ana.locator('.sheet').getByText('Resgate do CDB · Banco Órbita').first().waitFor();
+await cdbShot('cdb-2-resgate.png');
+await ana.getByRole('button', { name: 'Fechar' }).click();
+check((await wallet(ana)) === beforeCdb - 2900, 'resgate de $ 100 do CDB na carteira');
+check((await text(ana.getByTestId('cdb-positions'))).includes('Banco ÓrbitaLivre $ 900'), 'Órbita com $ 900');
+await cdb.getByRole('radio', { name: 'Sem carência' }).click();
+await calm(ana);
+await scrollTo(ana, 'cdb-card');
+await cdbShot('cdb-3-depois-do-resgate.png');
+await tab(ana, 'Placar');
+check((await text(ana.locator('.li[data-player="Ana"] .main'))).includes('CDB $ 2.900'), 'CDB no Placar');
+
 await browser.close();
 if (failed) process.exitCode = 1;
 console.log(failed ? 'Resultado: FALHOU' : 'Resultado: OK');

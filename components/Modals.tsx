@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { fmtTime, money } from '@/lib/game/format';
 import { CREDIT, IR } from '@/lib/game/data';
 import { houseListing } from '@/lib/game/listings';
-import { currentPlayer, findPlayer, irCatchChance, irFineDue, irTax, loanLimit, pname, savingsOf, shortPayers, tierName, transfersFor, yearRounds } from '@/lib/game/rules';
+import { cdbFreeTotal, currentPlayer, findPlayer, irCatchChance, irFineDue, irTax, loanLimit, pname, savingsOf, shortPayers, tierName, transfersFor, yearRounds } from '@/lib/game/rules';
 import type { Action, GameState, IrPending, IrResult, Transfer, Tx } from '@/lib/game/types';
 import { Icon } from './Icon';
 
@@ -82,7 +82,7 @@ export function PixModal({
         <div className="banner bad">
           Saldo insuficiente: {short.map((pid) => pname(state, pid)).join(', ')}.{' '}
           {short.includes(me)
-            ? `${savingsOf(findPlayer(state, me)) > 0 ? 'Resgate da poupança na aba Banco, v' : 'V'}enda casas ou hipoteque na aba Imóveis${isTurn && loanLimit(state, me) > 0 ? ', peça um empréstimo na aba Banco' : ''}, ou declare falência.`
+            ? `${savingsOf(findPlayer(state, me)) > 0 || cdbFreeTotal(findPlayer(state, me), state.round) > 0 ? 'Resgate da poupança ou do CDB na aba Banco, v' : 'V'}enda casas ou hipoteque na aba Imóveis${isTurn && loanLimit(state, me) > 0 ? ', peça um empréstimo na aba Banco' : ''}, ou declare falência.`
             : 'Quem está sem saldo pode vender casas ou hipotecar no próprio celular.'}
         </div>
       )}

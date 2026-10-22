@@ -1,8 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { BANK_RATES, BANKS, CREDIT, CREDIT_BANDS, LOAN, SAVINGS } from '@/lib/game/data';
+import { BANK_RATES, BANKS, CDB_RULES, CREDIT, CREDIT_BANDS, IR, LOAN, SAVINGS } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
-import { bankInfo, bankModTexts, bankOffers, bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isAnnual, isParcelado, loanBank, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, pct2, planInfo, savingsAnnualRate, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
+import { bankInfo, bankModTexts, cdbAnnualRate, cdbBalance, cdbCdiShare, cdbFree, cdbLocks, cdbOf, cdbTotal, cdbYieldOf, cdiRate, bankOffers, bankRate, creditBand, creditOf, currentPlayer, equity, findPlayer, finLeft, finsOf, isAnnual, isParcelado, loanBank, loanOf, loanOptions, loanOwed, loanPlan, loanRate, loanRateFor, loanRoundsLeft, nextParcel, parcelRound, pct, pct2, planInfo, savingsAnnualRate, savingsOf, savingsRate, savingsYield, selicUntil, semesterOf, semesterText, street, tradesOf, yearOf } from '@/lib/game/rules';
 import type { BankId, Financing, Loan, LoanPlanId } from '@/lib/game/types';
 import { CreditGauge } from './Credit';
 import { BankPicker, PARCEL_RULE, planSummary, PlanTable, RATE_RULE } from './Finance';
@@ -28,6 +28,7 @@ export function BankView({ ui, onTrade }: { ui: GameUi; onTrade: (pid: string) =
     <>
       <RateCard ui={ui} />
       <SavingsCard ui={ui} />
+      <CdbCard ui={ui} />
       <CreditCard ui={ui} />
       <LoanCard ui={ui} />
       <FinancingCard ui={ui} />
@@ -119,6 +120,144 @@ function SavingsCard({ ui }: { ui: GameUi }) {
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Investimentos (CDB): os 3 bancos com a taxa de agora, carência opcional, posições, aplicação (na sua vez) e resgate. */
+function CdbCard({ ui }: { ui: GameUi }) {
+  const { state, me } = ui;
+  const p = findPlayer(state, me)!;
+  const myTurn = currentPlayer(state)?.id === me && !state.winner;
+  const [bank, setBank] = useState<BankId>('orbita');
+  const [lock, setLock] = useState(false);
+  const [dep, setDep] = useState(SAVINGS.step * 10);
+  const [out, setOut] = useState(SAVINGS.step);
+  const step = SAVINGS.step;
+  const maxDep = Math.floor(p.balance / step) * step;
+  const depQ = Math.max(Math.min(dep, maxDep), Math.min(step, maxDep));
+  const free = cdbFree(p, bank, state.round);
+  const outQ = Math.max(Math.min(out, free), Math.min(step, free));
+  const info = bankInfo(bank);
+  const lockPp = Math.round(CDB_RULES.lockBonus * 100);
+  const mine = BANKS.filter((b) => cdbOf(p, b.id).free > 0 || (cdbOf(p, b.id).locked ?? []).length > 0);
+  return (
+    <div className="card" data-testid="cdb-card">
+      <div className="row between">
+        <span className="row" style={{ gap: 10 }}>
+          <span className="bank-mark">
+            <Icon name="banco" size={20} />
+          </span>
+          <h2>Investimentos (CDB)</h2>
+        </span>
+        <span className="pill ok">CDI {pct2(cdiRate(state))} ao ano</span>
+      </div>
+      <div className="seg" role="radiogroup" aria-label="Carência">
+        <button role="radio" aria-checked={!lock} className={!lock ? 'on' : ''} onClick={() => setLock(false)}>
+          Sem carência
+        </button>
+        <button role="radio" aria-checked={lock} className={lock ? 'on' : ''} onClick={() => setLock(true)} data-testid="cdb-lock">
+          Com carência
+        </button>
+      </div>
+      <div className="bank-pick" role="radiogroup" aria-label="Escolha o banco do CDB" data-testid="cdb-banks">
+        {BANKS.map((b) => (
+          <button key={b.id} className="bank-opt" role="radio" aria-checked={bank === b.id} data-bank={b.id} onClick={() => setBank(b.id)} title={b.description}>
+            <b>{b.short}</b>
+            <span className="num">{pct(cdbAnnualRate(state, b.id, lock))} ao ano</span>
+            <small>{pct(cdbCdiShare(b.id, lock))} do CDI</small>
+          </button>
+        ))}
+      </div>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        CDI = Selic − 0,1 pp. A taxa segue o CDI de cada rodada e rende no início de cada vez sua (a anual dividida pelas 6 rodadas). Conta como renda no IR ({Math.round(IR.rate * 100)}% acima de {money(IR.exempt)} no ano). Com carência: +{lockPp}% do CDI, mas só resgata depois de 1 semestre ({CDB_RULES.lockRounds} rodadas). Se o banco cobrar uma dívida, tira do CDB livre depois da poupança, antes de penhorar.
+      </p>
+      {mine.length > 0 && (
+        <div className="list" data-testid="cdb-positions">
+          {mine.map((b) => {
+            const locks = cdbLocks(p, b.id, state.round);
+            const freeNow = cdbFree(p, b.id, state.round);
+            return (
+              <div className="li" key={b.id} data-bank={b.id}>
+                <div className="main">
+                  <b>{b.name}</b>
+                  {freeNow > 0 && <span>Livre {money(freeNow)}</span>}
+                  {locks.map((d, k) => (
+                    <span key={k}>
+                      Com carência {money(d.amount)} · libera na rodada {d.until}
+                    </span>
+                  ))}
+                </div>
+                <span className="amt num">{money(cdbBalance(p, b.id))}</span>
+              </div>
+            );
+          })}
+          <div className="li">
+            <div className="main">
+              <b>Total no CDB</b>
+            </div>
+            <span className="amt num" data-testid="cdb-total">
+              {money(cdbTotal(p))}
+            </span>
+          </div>
+        </div>
+      )}
+      <div className="stack" style={{ gap: 8 }}>
+        {myTurn ? (
+          maxDep >= step ? (
+            <>
+              <div className="row">
+                <div className="stepper">
+                  <button aria-label={`Menos ${money(step)} na aplicação`} onClick={() => setDep(Math.max(step, depQ - step))}>
+                    −
+                  </button>
+                  <span className="amt num" data-testid="cdb-deposit-amount">
+                    {money(depQ)}
+                  </span>
+                  <button aria-label={`Mais ${money(step)} na aplicação`} onClick={() => setDep(Math.min(maxDep, depQ + step))}>
+                    +
+                  </button>
+                </div>
+                <button className="btn primary" data-testid="cdb-deposit" onClick={() => ui.pix({ type: 'cdbDeposit', bank, amount: depQ, ...(lock ? { lock: true } : {}) }, `Aplicação no CDB · ${info.short}`)}>
+                  Aplicar
+                </button>
+              </div>
+              <span className="muted" style={{ fontSize: 13 }}>
+                No {info.short}{lock ? ` com carência (libera na rodada ${state.round + CDB_RULES.lockRounds})` : ''}: {money(cdbYieldOf(state, depQ, bank, lock))} por vez com a taxa de agora.
+              </span>
+            </>
+          ) : (
+            <div className="banner warn">Saldo insuficiente para aplicar.</div>
+          )
+        ) : (
+          <div className="banner info">Aplicação só na sua vez. O resgate do CDB livre vale a qualquer momento.</div>
+        )}
+        {free > 0 ? (
+          <div className="row">
+            <div className="stepper">
+              <button aria-label={`Menos ${money(step)} no resgate do CDB`} onClick={() => setOut(Math.max(step, outQ - step))}>
+                −
+              </button>
+              <span className="amt num" data-testid="cdb-withdraw-amount">
+                {money(outQ)}
+              </span>
+              <button aria-label={`Mais ${money(step)} no resgate do CDB`} onClick={() => setOut(Math.min(free, outQ + step))}>
+                +
+              </button>
+            </div>
+            <button className="btn" data-testid="cdb-withdraw" onClick={() => ui.runWithReceipt({ type: 'cdbWithdraw', bank, amount: outQ }, `Resgate do CDB · ${info.short}`)}>
+              Resgatar
+            </button>
+            {outQ !== free && (
+              <button className="btn small" onClick={() => ui.runWithReceipt({ type: 'cdbWithdraw', bank, amount: free }, `Resgate do CDB · ${info.short}`)}>
+                Tudo
+              </button>
+            )}
+          </div>
+        ) : cdbTotal(p) > 0 && cdbLocks(p, bank, state.round).length > 0 ? (
+          <div className="banner info">O CDB do {info.short} ainda está na carência.</div>
+        ) : null}
       </div>
     </div>
   );
@@ -284,7 +423,7 @@ function CreditCard({ ui }: { ui: GameUi }) {
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
           Parcela paga com o saldo +{CREDIT.parcelPaid} · parcelado quitado +{CREDIT.parcelLoanPaid} (se nenhuma parcela precisou de penhora) · parcela com penhora {CREDIT.parcelPenhora} · pagamento único quitado em dia ou
           antes +{CREDIT.loanPaid} · pagamento parcial do único +{CREDIT.partialPay} (uma vez por rodada, a partir de {money(LOAN.step)}) · pagamento único vencido com penhora {CREDIT.penhora} · declarar o IR +
-          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. O score é um só para os 3 bancos. Taxa ao ano = Selic + margem do banco ({BANKS.map((b) => `${b.short} ${pp(b.spread)}`).join(', ')}) + ajuste do score; pagamento único {pp(LOAN.unicoAddOn)}. Faixas:{' '}
+          {CREDIT.irDeclared} · ficar sem saldo para um pagamento {CREDIT.shortfall} · malha fina {CREDIT.malhaFina}. O score é um só para os 3 bancos. Taxa ao ano = Selic + margem do banco ({BANKS.map((b) => `${b.short} ${pp(b.spread)}`).join(', ')}) + ajuste do score; empréstimo pessoal {pp(LOAN.personalSpread)} (o financiamento não); pagamento único {pp(LOAN.unicoAddOn)}. Faixas:{' '}
           {CREDIT_BANDS.map((b) => `${b.name} (${b.from}+: ${Math.round(b.limitRate * 100)}%, ${pp(b.rateOffset)})`).join(' · ')}. Score mínimo: {BANKS.map((b) => `${b.short} ${b.minScore}`).join(', ')}.
         </p>
       </details>
@@ -396,7 +535,7 @@ function LoanCard({ ui }: { ui: GameUi }) {
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>
         Com score {band.name.toLowerCase()}, até {Math.round(band.limitRate * 100)}% do seu patrimônio líquido (o Órbita empresta menos), a partir de {money(LOAN.min)}, em múltiplos de {money(LOAN.step)}. Escolha o banco, o valor e o plano:
         parcelado em 2x a 5x ({PARCEL_RULE}) ou pagamento único no {LOAN.unicoSemesters}º semestre ({pp(LOAN.unicoAddOn)}). Taxa = Selic {pct(bankRate(state))} + margem do banco
-        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''}. {RATE_RULE}. Um empréstimo por vez.
+        {band.rateOffset ? ` ${pp(band.rateOffset)} pelo score` : ''} {pp(LOAN.personalSpread)} de empréstimo pessoal, e nunca abaixo do melhor CDB (já sem o IR) + {pp(BANK_RATES.overSavings)}: pegar emprestado para aplicar não compensa. {RATE_RULE}. Um empréstimo por vez.
       </p>
       <div className="kv">
         <div>
