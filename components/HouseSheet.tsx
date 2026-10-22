@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { GROUPS, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import { houseListing } from '@/lib/game/listings';
+import { PHOTO_BLUR } from '@/lib/game/photo-blur';
 import { houseMedia, housePhotos } from '@/lib/game/photos';
 import { buildPrice, tierName, tierRents } from '@/lib/game/rules';
 import type { GameState, TierId } from '@/lib/game/types';
@@ -15,6 +16,9 @@ import { HoodPills } from './ui';
 
 const LABELS = ['Terreno', '1 casa', '2 casas', '3 casas', '4 casas', 'Hotel'];
 const groupColor = (g: keyof typeof GROUPS) => `var(${GROUPS[g].c})`;
+// As fotos já ficam no tamanho do celular em public/casas: servidas direto, sem passar pelo otimizador de imagens
+// (que demora na primeira vez de cada tamanho), com a prévia borrada enquanto carregam.
+const photoProps = (src: string) => ({ unoptimized: true, ...(PHOTO_BLUR[src] ? { placeholder: 'blur' as const, blurDataURL: PHOTO_BLUR[src] } : {}) });
 
 export interface SheetAction {
   label: string;
@@ -31,7 +35,7 @@ export function HouseThumb({ i, tier, size = 104 }: { i: number; tier: TierId; s
   if (!cover) return <HouseArt kind={houseListing(i, tier).kind} tier={tier} color={groupColor(s.group)} size={size} />;
   return (
     <span className="house-thumb" style={{ width: size, height: (size * 80) / 120 }}>
-      <Image src={cover} alt={`Foto da casa ${tierName(tier)}`} fill sizes={`${size}px`} style={{ objectFit: 'cover', objectPosition: '50% 55%' }} />
+      <Image src={cover} {...photoProps(cover)} alt={`Foto da casa ${tierName(tier)}`} fill sizes={`${size}px`} style={{ objectFit: 'cover', objectPosition: '50% 55%' }} />
     </span>
   );
 }
@@ -44,10 +48,15 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
   const n = photos.length + (media?.video ? 1 : 0);
   const [k, setK] = useState(0);
   const onVideo = !!media?.video && k === photos.length;
+  // Ao abrir, monta a capa e as vizinhas; no primeiro toque para passar, monta todas (já ficam carregadas e a troca
+  // é instantânea).
+  const [all, setAll] = useState(false);
+  const mounted = (j: number) => all || j === 0 || j === 1 || j === photos.length - 1;
   const touch = useRef<number | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') setAll(true);
       if (e.key === 'ArrowRight') setK((x) => (x + 1) % Math.max(1, n));
       if (e.key === 'ArrowLeft') setK((x) => (x - 1 + n) % Math.max(1, n));
     };
@@ -57,7 +66,10 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
   if (s.type !== 'street') return null;
   const l = houseListing(i, tier);
   const rents = tierRents(state, i, tier);
-  const go = (d: number) => setK((x) => (x + d + n) % n);
+  const go = (d: number) => {
+    setAll(true);
+    setK((x) => (x + d + n) % n);
+  };
   const facts: [string, string][] = [
     ['Área', `${l.area} m²`],
     ['Quartos', String(l.rooms)],
@@ -71,7 +83,7 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
     <div className="house-sheet" role="dialog" aria-modal="true" aria-label={`Anúncio: ${l.title}`} data-testid="house-sheet">
       <div
         className="hs-photo"
-        style={{ background: groupColor(s.group) }}
+        style={{ background: photos.length ? '#1d2126' : groupColor(s.group) }}
         onTouchStart={(e) => (touch.current = e.touches[0].clientX)}
         onTouchEnd={(e) => {
           if (touch.current === null || n < 2) return;
@@ -94,8 +106,26 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
             aria-label={`Tour em vídeo: ${l.title}`}
             data-testid="hs-video"
           />
-        ) : photos.length ? (
-          <Image key={photos[k]} src={photos[k]} alt={`Foto ${k + 1} de ${photos.length}: ${l.title}`} fill sizes="(max-width: 600px) 100vw, 600px" preload style={{ objectFit: 'cover', objectPosition: '50% 55%' }} data-testid="hs-img" />
+        ) : null}
+        {photos.length ? (
+          photos.map((src, j) =>
+            mounted(j) ? (
+              <Image
+                key={src}
+                src={src}
+                {...photoProps(src)}
+                alt={`Foto ${j + 1} de ${photos.length}: ${l.title}`}
+                fill
+                sizes="(max-width: 600px) 100vw, 600px"
+                loading="eager"
+                fetchPriority={j === k ? 'high' : 'low'}
+                className={`hs-slide${j === k && !onVideo ? ' on' : ''}`}
+                style={{ objectFit: 'cover', objectPosition: '50% 55%' }}
+                aria-hidden={j !== k || onVideo}
+                data-testid={j === k ? 'hs-img' : undefined}
+              />
+            ) : null,
+          )
         ) : (
           <HouseArt kind={l.kind} tier={tier} color={groupColor(s.group)} size={300} />
         )}
