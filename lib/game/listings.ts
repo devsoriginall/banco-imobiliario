@@ -30,6 +30,7 @@ function extrasOf(kind: HouseKind, title: string, tier: TierId, perk?: string): 
   add(t.includes('quintal'), 'quintal');
   add(t.includes('jardim'), 'jardim');
   add(t.includes('churrasqueira'), 'churrasqueira');
+  add(t.includes('gourmet'), 'área gourmet');
   add(t.includes('varanda') || t.includes('sacada'), 'varanda');
   add(t.includes('terraço'), 'terraço');
   add(t.includes('edícula'), 'edícula');
@@ -53,6 +54,7 @@ interface Tpl {
 
 const t = (kind: HouseKind, title: string, rooms: number, suites: number, vagas: number, area: [number, number]): Tpl => ({ kind, title, rooms, suites, vagas, area });
 
+// Intermediária só com casas e sobrados: o anúncio usa as fotos e o tour de um sobrado (lib/game/photos.ts).
 const POOL: Record<PriceLevel, Record<TierId, Tpl[]>> = {
   popular: {
     basica: [
@@ -63,7 +65,7 @@ const POOL: Record<PriceLevel, Record<TierId, Tpl[]>> = {
     intermediaria: [
       t('sobrado', 'Sobrado 3 quartos, quintal', 3, 1, 1, [85, 105]),
       t('terrea', 'Casa térrea 3 quartos, garagem para 2 carros', 3, 1, 2, [90, 110]),
-      t('apto', 'Apartamento 3 quartos com sacada', 3, 1, 1, [72, 88]),
+      t('sobrado', 'Sobrado 3 quartos com sacada', 3, 1, 1, [80, 95]),
     ],
     alto: [
       t('piscina', 'Casa 3 suítes com piscina', 3, 3, 2, [150, 185]),
@@ -78,7 +80,7 @@ const POOL: Record<PriceLevel, Record<TierId, Tpl[]>> = {
     ],
     intermediaria: [
       t('sobrado', 'Sobrado 3 quartos, quintal e churrasqueira', 3, 1, 2, [120, 150]),
-      t('apto', 'Apartamento 3 quartos, varanda gourmet', 3, 1, 2, [95, 115]),
+      t('sobrado', 'Sobrado 3 quartos com sacada e área gourmet', 3, 1, 2, [115, 140]),
       t('sobrado', 'Casa geminada 3 quartos, terraço', 3, 1, 1, [110, 130]),
     ],
     alto: [
@@ -93,7 +95,7 @@ const POOL: Record<PriceLevel, Record<TierId, Tpl[]>> = {
     ],
     intermediaria: [
       t('terrea', 'Casa 3 suítes com jardim', 3, 3, 2, [180, 220]),
-      t('apto', 'Apartamento 4 quartos, andar alto', 4, 2, 3, [160, 190]),
+      t('sobrado', 'Sobrado 4 quartos com área gourmet', 4, 2, 3, [190, 230]),
       t('sobrado', 'Sobrado 4 quartos em rua fechada', 4, 2, 3, [200, 240]),
     ],
     alto: [
