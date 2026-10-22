@@ -255,7 +255,10 @@ describe('terreno na compra e três padrões de casa na construção', () => {
     expect(m?.photos).toHaveLength(8);
     expect(m?.photos[0]).toMatch(/fachada\.jpg$/);
     expect(m?.video).toMatch(/tour\.mp4$/);
-    for (const i of SPACES.map((s, j) => (s.type === 'street' ? j : -1)).filter((j) => j >= 0)) expect(housePhotos(i, 'intermediaria')[0]).toMatch(/fachada/);
+    for (const i of SPACES.map((s, j) => (s.type === 'street' ? j : -1)).filter((j) => j >= 0)) {
+      expect(housePhotos(i, 'intermediaria')[0]).toMatch(/fachada/);
+      expect(['sobrado', 'terrea']).toContain(houseListing(i, 'intermediaria').kind); // as fotos são de um sobrado: nada de apartamento
+    }
   });
 });
 
