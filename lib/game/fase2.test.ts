@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { BANK_RATES, CREDIT, IR, SPACES, TIERS } from './data';
 import { houseListing, listingFacts, priceLevel } from './listings';
-import { HOUSE_PHOTOS, housePhotos } from './photos';
+import { HOUSE_MEDIA, houseMedia, housePhotos } from './photos';
 import {
   applyAction,
   applyNeighbourhoodChange,
@@ -237,15 +237,25 @@ describe('terreno na compra e três padrões de casa na construção', () => {
     for (const i of streets) for (const t of ['basica', 'intermediaria', 'alto'] as TierId[]) expect(houseListing(i, t).baths).toBeGreaterThanOrEqual(1);
   });
 
-  it('fotos do anúncio: escolha determinística por imóvel e padrão; sem fotos, lista vazia (usa a ilustração)', () => {
-    const list = ['/a.jpg', '/b.jpg', '/c.jpg'];
+  it('fotos do anúncio: casa escolhida de forma determinística por imóvel e padrão, fotos na ordem; sem fotos, lista vazia (usa a ilustração)', () => {
+    const list = [{ photos: ['/a1.jpg', '/a2.jpg'] }, { photos: ['/b1.jpg', '/b2.jpg'] }, { photos: ['/c1.jpg'] }];
     const a = housePhotos(NOVE_JULHO, 'alto', list);
     expect(housePhotos(NOVE_JULHO, 'alto', list)).toEqual(a);
-    expect([...a].sort()).toEqual(list);
+    expect(list.map((m) => m.photos)).toContainEqual(a); // ordem do anúncio preservada: a capa é sempre a 1ª foto da casa
     const covers = new Set(SPACES.map((s, i) => (s.type === 'street' ? housePhotos(i, 'alto', list)[0] : null)).filter(Boolean));
-    expect(covers.size).toBeGreaterThan(1); // imóveis diferentes começam em fotos diferentes
+    expect(covers.size).toBeGreaterThan(1); // imóveis diferentes mostram casas diferentes
     expect(housePhotos(NOVE_JULHO, 'basica', [])).toEqual([]);
-    expect(housePhotos(NOVE_JULHO, 'intermediaria')).toEqual(HOUSE_PHOTOS.intermediaria);
+    expect(housePhotos(NOVE_JULHO, 'basica', [{ photos: [] }])).toEqual([]);
+    expect(houseMedia(NOVE_JULHO, 'basica', [])).toBeUndefined();
+  });
+
+  it('casa de classe média: sobrado com 8 fotos, capa na fachada e tour em vídeo', () => {
+    const m = houseMedia(NOVE_JULHO, 'intermediaria');
+    expect(m).toBe(HOUSE_MEDIA.intermediaria[0]);
+    expect(m?.photos).toHaveLength(8);
+    expect(m?.photos[0]).toMatch(/fachada\.jpg$/);
+    expect(m?.video).toMatch(/tour\.mp4$/);
+    for (const i of SPACES.map((s, j) => (s.type === 'street' ? j : -1)).filter((j) => j >= 0)) expect(housePhotos(i, 'intermediaria')[0]).toMatch(/fachada/);
   });
 });
 

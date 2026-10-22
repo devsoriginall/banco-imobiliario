@@ -3,10 +3,11 @@
 // bairro, tabela de aluguel do padrão e o botão de ação no rodapé.
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { GROUPS, SPACES } from '@/lib/game/data';
 import { money } from '@/lib/game/format';
 import { houseListing } from '@/lib/game/listings';
-import { housePhotos } from '@/lib/game/photos';
+import { houseMedia, housePhotos } from '@/lib/game/photos';
 import { buildPrice, tierName, tierRents } from '@/lib/game/rules';
 import type { GameState, TierId } from '@/lib/game/types';
 import { HouseArt } from './HouseArt';
@@ -37,22 +38,26 @@ export function HouseThumb({ i, tier, size = 104 }: { i: number; tier: TierId; s
 
 export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { state: GameState; i: number; tier: TierId; houses?: number; action?: SheetAction; onClose: () => void }) {
   const s = SPACES[i];
-  const photos = housePhotos(i, tier);
+  const media = houseMedia(i, tier);
+  const photos = media?.photos ?? [];
+  // Slides: as fotos e, se houver, o tour em vídeo por último.
+  const n = photos.length + (media?.video ? 1 : 0);
   const [k, setK] = useState(0);
+  const onVideo = !!media?.video && k === photos.length;
   const touch = useRef<number | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowRight') setK((x) => (x + 1) % Math.max(1, photos.length));
-      if (e.key === 'ArrowLeft') setK((x) => (x - 1 + photos.length) % Math.max(1, photos.length));
+      if (e.key === 'ArrowRight') setK((x) => (x + 1) % Math.max(1, n));
+      if (e.key === 'ArrowLeft') setK((x) => (x - 1 + n) % Math.max(1, n));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, photos.length]);
+  }, [onClose, n]);
   if (s.type !== 'street') return null;
   const l = houseListing(i, tier);
   const rents = tierRents(state, i, tier);
-  const go = (d: number) => setK((x) => (x + d + photos.length) % photos.length);
+  const go = (d: number) => setK((x) => (x + d + n) % n);
   const facts: [string, string][] = [
     ['Área', `${l.area} m²`],
     ['Quartos', String(l.rooms)],
@@ -60,20 +65,36 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
     ['Banheiros', String(l.baths)],
     ['Vagas', String(l.vagas)],
   ];
-  return (
+  // Portal no <body>: o cartão que abre o anúncio tem animação de entrada (transform), que prenderia o
+  // position: fixed dentro dele em vez de cobrir a tela.
+  return createPortal(
     <div className="house-sheet" role="dialog" aria-modal="true" aria-label={`Anúncio: ${l.title}`} data-testid="house-sheet">
       <div
         className="hs-photo"
         style={{ background: groupColor(s.group) }}
         onTouchStart={(e) => (touch.current = e.touches[0].clientX)}
         onTouchEnd={(e) => {
-          if (touch.current === null || photos.length < 2) return;
+          if (touch.current === null || n < 2) return;
           const dx = e.changedTouches[0].clientX - touch.current;
           if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
           touch.current = null;
         }}
       >
-        {photos.length ? (
+        {onVideo ? (
+          <video
+            key="tour"
+            className="hs-video"
+            src={media?.video}
+            poster={media?.poster}
+            autoPlay
+            muted
+            loop
+            playsInline
+            controls
+            aria-label={`Tour em vídeo: ${l.title}`}
+            data-testid="hs-video"
+          />
+        ) : photos.length ? (
           <Image key={photos[k]} src={photos[k]} alt={`Foto ${k + 1} de ${photos.length}: ${l.title}`} fill sizes="(max-width: 600px) 100vw, 600px" preload style={{ objectFit: 'cover', objectPosition: '50% 55%' }} data-testid="hs-img" />
         ) : (
           <HouseArt kind={l.kind} tier={tier} color={groupColor(s.group)} size={300} />
@@ -81,7 +102,12 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
         <button className="hs-close" aria-label="Fechar anúncio" onClick={onClose}>
           ✕
         </button>
-        {photos.length > 1 && (
+        {media?.video && !onVideo && (
+          <button className="hs-tour" onClick={() => setK(photos.length)} data-testid="hs-tour">
+            ▶ Tour em vídeo
+          </button>
+        )}
+        {n > 1 && (
           <>
             <button className="hs-arrow left" aria-label="Foto anterior" onClick={() => go(-1)}>
               ‹
@@ -90,8 +116,8 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
               ›
             </button>
             <span className="hs-dots" aria-hidden="true">
-              {photos.map((p, j) => (
-                <i key={p} className={j === k ? 'on' : ''} />
+              {Array.from({ length: n }, (_, j) => (
+                <i key={j} className={`${j === k ? 'on' : ''}${j === photos.length ? ' play' : ''}`} />
               ))}
             </span>
           </>
@@ -169,6 +195,7 @@ export function HouseSheet({ state, i, tier, houses = 0, action, onClose }: { st
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

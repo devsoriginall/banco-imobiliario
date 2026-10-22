@@ -259,6 +259,24 @@ expectEq(await text(sheet.getByTestId('hs-tier')), 'Casa Básica', 'selo do anú
 expectEq(await text(sheet.getByTestId('hs-price')), '$ 400', 'preço no anúncio');
 await shot(ana, 'casas-7-anuncio-basica.png');
 await sheet.getByRole('button', { name: 'Fechar anúncio' }).click();
+// classe média: sobrado com fotos na ordem do anúncio (capa na fachada) e o tour em vídeo no fim da galeria
+await ana.getByRole('button', { name: 'Ver anúncio da casa Intermediária' }).click();
+await sheet.getByTestId('hs-img').waitFor();
+await ana.waitForFunction(() => [...document.querySelectorAll('[data-testid="hs-img"]')].every((i) => i.complete && i.naturalWidth > 0));
+if (!(await sheet.getByTestId('hs-img').getAttribute('src')).includes('fachada')) fail('capa da casa de classe média na fachada');
+await shot(ana, 'casas-7b-anuncio-intermediaria.png');
+await sheet.getByRole('button', { name: 'Próxima foto' }).click();
+await ana.waitForFunction(() => [...document.querySelectorAll('[data-testid="hs-img"]')].every((i) => i.complete && i.naturalWidth > 0));
+await shot(ana, 'casas-7c-anuncio-intermediaria-garagem.png');
+await sheet.getByTestId('hs-tour').click();
+// o Chromium de teste não traz H.264 (os celulares trazem): aí só confere o vídeo na tela, com a capa
+await ana.waitForFunction(() => {
+  const v = document.querySelector('[data-testid="hs-video"]');
+  return v && (!v.canPlayType('video/mp4; codecs="avc1.4d401f"') || (v.readyState >= 2 && v.videoWidth > 0));
+});
+await ana.waitForTimeout(800);
+await shot(ana, 'casas-7d-anuncio-intermediaria-tour.png');
+await sheet.getByRole('button', { name: 'Fechar anúncio' }).click();
 await ana.getByRole('button', { name: 'Ver anúncio da casa Alto padrão' }).click();
 await sheet.getByTestId('hs-img').waitFor();
 await ana.waitForFunction(() => [...document.querySelectorAll('[data-testid="hs-img"]')].every((i) => i.complete && i.naturalWidth > 0));
