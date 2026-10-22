@@ -1487,7 +1487,6 @@ function cdbTurn(st: GameState, p: Player, now: Date) {
       total += yf;
     }
     const locks = c.locked ?? [];
-    const base = locks.reduce((a, d) => a + d.amount, 0);
     let yl = 0;
     for (const d of locks) {
       const y = cdbYieldOf(st, d.amount, bank, true);

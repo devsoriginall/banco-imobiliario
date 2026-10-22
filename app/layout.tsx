@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from 'next';
-import { DM_Sans, Sora } from 'next/font/google';
+import localFont from 'next/font/local';
 import { Toasts } from '@/components/Toasts';
 import './globals.css';
 
-const sora = Sora({ variable: '--font-sora', subsets: ['latin'], weight: ['500', '600', '700'] });
-const dmSans = DM_Sans({ variable: '--font-dm-sans', subsets: ['latin'], weight: ['400', '500', '600', '700'] });
+// Fontes no próprio repositório (variáveis, só latin): o build não depende de baixar do Google Fonts.
+const sora = localFont({ src: './fonts/sora.woff2', variable: '--font-sora', weight: '100 800', display: 'swap' });
+const dmSans = localFont({ src: './fonts/dm-sans.woff2', variable: '--font-dm-sans', weight: '100 1000', display: 'swap' });
 
 export const metadata: Metadata = {
   title: 'Banco Imobiliário',
