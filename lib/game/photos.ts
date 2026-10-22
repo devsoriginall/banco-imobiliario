@@ -1,11 +1,28 @@
-// Fotos reais das casas, por padrão. Coloque os arquivos em public/casas/<padrão>/ (basica | intermediaria | alto)
-// e liste aqui o caminho público. Padrão sem fotos usa a ilustração (HouseArt) no lugar.
+// Fotos reais das casas, por padrão. Cada padrão tem uma ou mais casas; cada casa é um anúncio com as fotos em
+// ordem (a primeira é a capa) e, se houver, um vídeo de tour. Arquivos em public/casas/<padrão>/.
+// Padrão sem casas usa a ilustração (HouseArt) no lugar.
 import type { TierId } from './types';
 
-export const HOUSE_PHOTOS: Record<TierId, string[]> = {
-  basica: ['/casas/basica/basica-1.jpg'],
-  intermediaria: ['/casas/intermediaria/intermediaria-1.jpg'],
-  alto: ['/casas/alto/alto-1.jpg'],
+export interface HouseMedia {
+  photos: string[];
+  /** Vídeo de tour pela casa, mostrado depois das fotos. */
+  video?: string;
+  /** Primeiro quadro do vídeo, enquanto ele carrega. */
+  poster?: string;
+}
+
+const SOBRADO_MEDIO = '/casas/intermediaria/sobrado';
+
+export const HOUSE_MEDIA: Record<TierId, HouseMedia[]> = {
+  basica: [{ photos: ['/casas/basica/basica-1.jpg'] }],
+  intermediaria: [
+    {
+      photos: ['1-fachada', '2-garagem', '3-sala', '4-cozinha', '5-quarto-casal', '6-quarto', '7-banheiro', '8-churrasqueira'].map((f) => `${SOBRADO_MEDIO}/${f}.jpg`),
+      video: `${SOBRADO_MEDIO}/tour.mp4`,
+      poster: `${SOBRADO_MEDIO}/tour-capa.jpg`,
+    },
+  ],
+  alto: [{ photos: ['/casas/alto/alto-1.jpg'] }],
 };
 
 /** Hash inteiro (FNV-1a) para a escolha estável. */
@@ -19,11 +36,16 @@ function hash(s: string): number {
 }
 
 /**
- * Fotos do anúncio da casa `tier` no imóvel `idx`: a lista do padrão, girada para começar numa foto escolhida
- * pelo imóvel (a mesma em todos os celulares). A primeira é a capa. Lista vazia = sem fotos (usa a ilustração).
+ * Anúncio da casa `tier` no imóvel `idx`: uma das casas do padrão, escolhida pelo imóvel (a mesma em todos os
+ * celulares), com as fotos na ordem do anúncio. Sem casas = undefined (usa a ilustração).
  */
-export function housePhotos(idx: number, tier: TierId, list: string[] = HOUSE_PHOTOS[tier] ?? []): string[] {
-  if (!list.length) return [];
-  const start = hash(`${idx}:${tier}`) % list.length;
-  return [...list.slice(start), ...list.slice(0, start)];
+export function houseMedia(idx: number, tier: TierId, list: HouseMedia[] = HOUSE_MEDIA[tier] ?? []): HouseMedia | undefined {
+  const usable = list.filter((m) => m.photos.length);
+  if (!usable.length) return undefined;
+  return usable[hash(`${idx}:${tier}`) % usable.length];
+}
+
+/** Fotos do anúncio (a primeira é a capa); lista vazia = sem fotos. */
+export function housePhotos(idx: number, tier: TierId, list?: HouseMedia[]): string[] {
+  return houseMedia(idx, tier, list)?.photos ?? [];
 }
